@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, shell } = require("electron");
 const { readFile, writeFile, access, mkdir, readdir } = require("node:fs/promises");
 const { createHash, randomBytes } = require("node:crypto");
 const { createServer } = require("node:http");
@@ -21,6 +21,7 @@ const { normalizeSwiftTreeForPdfPage } = require("./swift-page-coordinate.cjs");
 const { buildCodexConnectionPrompt, buildCodexNewThreadUrl, buildCodexSyncPrompt, findCodexProjectThread, runCodexSyncAgent } = require("./codex-sync-agent.cjs");
 const { buildVisualEditPrompt, compareDesignStates, designNodeSnapshotSchema, extractDesignNodes, semanticIntentBatchSchema } = require("./visual-editing.cjs");
 const { abortDesignEditCheckpoint, beginDesignEditCheckpoint, commitDesignEditIteration, resolveDesignEditCheckpoint } = require("./design-edit-checkpoint.cjs");
+const { probeUrl, resolveDevCommand, startDevServer } = require("./dev-server.cjs");
 
 const visualBaselineNodeSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_:/-]{1,500}$/),
@@ -1336,8 +1337,193 @@ async function performSwiftUiVisualEdit(event, safeRoot, unsafeBatch) {
   }
 }
 
+const previewBoundsSchema = z.object({
+  x: z.number().finite().min(0).max(20000),
+  y: z.number().finite().min(0).max(20000),
+  width: z.number().finite().min(0).max(20000),
+  height: z.number().finite().min(0).max(20000)
+});
+
+/** Dev servers are keyed by project root so each project owns exactly one. */
+const devServers = new Map();
+let livePreview = null;
+
+function isLocalPreviewUrl(candidate, allowedOrigin) {
+  try {
+    const url = new URL(candidate);
+    if (url.origin === allowedOrigin) return true;
+    if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol)) return false;
+    return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function ensureDevServer(root) {
+  const running = devServers.get(root);
+  if (running && await probeUrl(running.url)) return running;
+  devServers.delete(root);
+
+  const started = await startDevServer(root);
+  if (!started.ok) {
+    const error = new Error(started.message);
+    error.reason = started.reason;
+    error.output = started.output ?? null;
+    throw error;
+  }
+  const record = {
+    url: started.url,
+    origin: started.origin,
+    command: started.command,
+    attached: started.attached,
+    stop: started.stop ?? null
+  };
+  devServers.set(root, record);
+  return record;
+}
+
+function previewUrlForPath(origin, capturePath) {
+  const url = new URL(origin);
+  const target = typeof capturePath === "string" && capturePath ? capturePath : "/";
+  if (target.startsWith("?")) url.search = target;
+  else if (target.startsWith("#")) url.hash = target;
+  else url.pathname = target.startsWith("/") ? target : `/${target}`;
+  return url.toString();
+}
+
+function destroyLivePreview() {
+  if (!livePreview) return;
+  const { window, view } = livePreview;
+  livePreview = null;
+  try {
+    if (window && !window.isDestroyed()) window.contentView.removeChildView(view);
+    view.webContents.close();
+  } catch {}
+}
+
+function createPreviewView(window, origin) {
+  const view = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      partition: `temporary:ui-sync-live-${randomBytes(12).toString("hex")}`
+    }
+  });
+  const blockedHosts = new Set();
+  const contents = view.webContents;
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.on("will-navigate", (event, url) => {
+    if (!isLocalPreviewUrl(url, origin)) event.preventDefault();
+  });
+  contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  contents.session.webRequest.onBeforeRequest((details, callback) => {
+    if (["data:", "blob:", "devtools:"].some((scheme) => details.url.startsWith(scheme))) {
+      callback({ cancel: false });
+      return;
+    }
+    const allowed = isLocalPreviewUrl(details.url, origin);
+    if (!allowed) {
+      try { blockedHosts.add(new URL(details.url).host); } catch {}
+    }
+    callback({ cancel: !allowed });
+  });
+  return { view, blockedHosts };
+}
+
 function registerIpc() {
   ipcMain.handle("projects:list", () => listProjects());
+
+  ipcMain.handle("preview:start", async (event, root, capturePath, bounds) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const safeBounds = previewBoundsSchema.parse(bounds);
+    const registry = await readRegistry();
+    if (!registry.some((item) => item.root === safeRoot)) throw new Error("Project is not registered");
+
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) throw new Error("No window is available for the preview");
+
+    const server = await ensureDevServer(safeRoot);
+    destroyLivePreview();
+    const { view, blockedHosts } = createPreviewView(window, server.origin);
+    window.contentView.addChildView(view);
+    view.setBounds({
+      x: Math.round(safeBounds.x),
+      y: Math.round(safeBounds.y),
+      width: Math.round(safeBounds.width),
+      height: Math.round(safeBounds.height)
+    });
+    livePreview = { root: safeRoot, view, window, origin: server.origin, blockedHosts };
+
+    const target = previewUrlForPath(server.origin, capturePath);
+    try {
+      await view.webContents.loadURL(target);
+    } catch (error) {
+      destroyLivePreview();
+      throw new Error(`The dev server did not serve ${target}: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+    return {
+      url: target,
+      origin: server.origin,
+      command: server.command,
+      attached: server.attached,
+      blockedHosts: [...blockedHosts].slice(0, 20)
+    };
+  });
+
+  ipcMain.handle("preview:set-bounds", (_event, bounds) => {
+    if (!livePreview) return false;
+    const safeBounds = previewBoundsSchema.parse(bounds);
+    livePreview.view.setBounds({
+      x: Math.round(safeBounds.x),
+      y: Math.round(safeBounds.y),
+      width: Math.round(safeBounds.width),
+      height: Math.round(safeBounds.height)
+    });
+    return true;
+  });
+
+  ipcMain.handle("preview:navigate", async (_event, capturePath) => {
+    if (!livePreview) throw new Error("No live preview is open");
+    const target = previewUrlForPath(livePreview.origin, capturePath);
+    await livePreview.view.webContents.loadURL(target);
+    return { url: target, blockedHosts: [...livePreview.blockedHosts].slice(0, 20) };
+  });
+
+  ipcMain.handle("preview:reload", () => {
+    if (!livePreview) return false;
+    livePreview.view.webContents.reload();
+    return true;
+  });
+
+  ipcMain.handle("preview:stop", () => {
+    destroyLivePreview();
+    return true;
+  });
+
+  ipcMain.handle("preview:status", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const running = devServers.get(safeRoot);
+    const resolved = await resolveDevCommand(safeRoot);
+    return {
+      running: Boolean(running),
+      url: running?.url ?? null,
+      command: resolved.ok ? resolved.command : null,
+      attached: running?.attached ?? false,
+      reason: resolved.ok ? null : resolved.reason,
+      message: resolved.ok ? null : resolved.message
+    };
+  });
+
+  ipcMain.handle("preview:stop-server", (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    if (livePreview?.root === safeRoot) destroyLivePreview();
+    const running = devServers.get(safeRoot);
+    devServers.delete(safeRoot);
+    running?.stop?.();
+    return true;
+  });
 
   ipcMain.handle("projects:previews", async (_event, root) => {
     const safeRoot = projectRootSchema.parse(root);
@@ -1944,6 +2130,9 @@ function createWindow() {
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  window.on("closed", () => {
+    if (livePreview?.window === window) destroyLivePreview();
+  });
   window.webContents.on("did-finish-load", () => {
     if (process.platform !== "darwin") return;
     window.webContents.executeJavaScript("document.documentElement.dataset.platform = 'macos'", true);
@@ -1986,7 +2175,25 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
+/** Dev servers UI Sync spawned must not outlive it; attached ones have no stop. */
+function stopOwnedDevServers() {
+  destroyLivePreview();
+  for (const server of devServers.values()) server.stop?.();
+  devServers.clear();
+}
+
 app.on("before-quit", () => {
   if (figmaBridge) void figmaBridge.stop();
   if (swiftUiRuntimeServer) void swiftUiRuntimeServer.stop();
+  stopOwnedDevServers();
 });
+
+// before-quit does not run when the process is signalled, which would leave the
+// project's dev server running after UI Sync is gone. SIGKILL stays unreachable.
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.on(signal, () => {
+    stopOwnedDevServers();
+    app.quit();
+    process.exit(0);
+  });
+}

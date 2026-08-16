@@ -1,5 +1,6 @@
 import {
   ArrowDownToLine,
+  ArrowLeft,
   ArrowRight,
   ArrowUpFromLine,
   AlertCircle,
@@ -15,6 +16,7 @@ import {
   LoaderCircle,
   MoreHorizontal,
   Monitor,
+  Play,
   Plus,
   RefreshCw,
   Settings,
@@ -31,6 +33,7 @@ import type {
   AutomaticMappingStatus,
   CodexSyncResult,
   DiscoveredScreen,
+  LivePreviewSession,
   ProjectInfo,
   ProjectKind,
   ProjectPreview,
@@ -98,6 +101,7 @@ function App() {
   const [swiftSessionVersion, setSwiftSessionVersion] = useState(0);
   const [projectPreviews, setProjectPreviews] = useState<Record<string, ProjectPreview[]>>({});
   const [previewStates, setPreviewStates] = useState<Record<string, "loading" | "ready" | "unavailable">>({});
+  const [liveScreen, setLiveScreen] = useState<{ root: string; screen: DiscoveredScreen } | null>(null);
   const previewRequests = useRef(new Set<string>());
   const previewRequestVersions = useRef<Record<string, number>>({});
 
@@ -587,11 +591,19 @@ function App() {
             codexSyncResult={codexSyncResult}
             onApplyPull={() => void applyPull()}
           />
+        ) : liveScreen && liveScreen.root === activeProject.root ? (
+          <LivePreviewView
+            project={activeProject}
+            screen={liveScreen.screen}
+            onBack={() => setLiveScreen(null)}
+            onOpenFigmaNode={openFigmaNode}
+          />
         ) : (
           <ProjectMappingView
             project={activeProject}
             onOpenFigmaNode={openFigmaNode}
             onImportScreen={(screenId) => void beginAutomaticMapping(activeProject.root, screenId)}
+            onOpenLivePreview={(screen) => setLiveScreen({ root: activeProject.root, screen })}
             previews={projectPreviews[activeProject.root] ?? []}
             previewState={previewStates[activeProject.root] ?? null}
           />
@@ -1120,16 +1132,163 @@ function ReviewInspector({
   );
 }
 
+/**
+ * Hosts the project's own dev server output. The page itself is rendered by a
+ * WebContentsView in the main process, so this component only reserves the
+ * space and keeps the native view aligned with it.
+ */
+function LivePreviewView({
+  project,
+  screen,
+  onBack,
+  onOpenFigmaNode
+}: {
+  project: ProjectInfo;
+  screen: DiscoveredScreen;
+  onBack: () => void;
+  onOpenFigmaNode: (nodeId: string | null) => void;
+}) {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [status, setStatus] = useState<"starting" | "ready" | "error">("starting");
+  const [session, setSession] = useState<LivePreviewSession | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const routePath = screen.capturePath ?? "/";
+
+  useEffect(() => {
+    const element = frameRef.current;
+    const bridge = window.uiSync;
+    if (!element || !bridge) {
+      setStatus("error");
+      setError("Live preview needs the UI Sync desktop app.");
+      return;
+    }
+
+    const measure = () => {
+      const rect = element.getBoundingClientRect();
+      return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+    };
+
+    let cancelled = false;
+    setStatus("starting");
+    setError(null);
+    setSession(null);
+    void (async () => {
+      try {
+        const started = await bridge.startLivePreview(project.root, routePath, measure());
+        if (cancelled) {
+          void bridge.stopLivePreview();
+          return;
+        }
+        setSession(started);
+        setStatus("ready");
+      } catch (caught) {
+        if (cancelled) return;
+        setError(caught instanceof Error ? caught.message : "The live preview could not start.");
+        setStatus("error");
+      }
+    })();
+
+    const syncBounds = () => { void bridge.setLivePreviewBounds(measure()); };
+    const observer = new ResizeObserver(syncBounds);
+    observer.observe(element);
+    window.addEventListener("resize", syncBounds);
+    window.addEventListener("scroll", syncBounds, true);
+
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+      window.removeEventListener("resize", syncBounds);
+      window.removeEventListener("scroll", syncBounds, true);
+      void bridge.stopLivePreview();
+    };
+  }, [project.root, routePath]);
+
+  return (
+    <section className="live-preview">
+      <header className="live-preview-bar">
+        <button type="button" className="live-preview-back" onClick={onBack}>
+          <ArrowLeft size={14} />
+          Overview
+        </button>
+        <div className="live-preview-identity">
+          <strong>{screen.name}</strong>
+          <code>{routePath}</code>
+        </div>
+        <div className="live-preview-actions">
+          {session && (
+            <span className="live-preview-source" title={`${session.command} · ${session.origin}`}>
+              {session.attached ? "Attached to" : "Started"} {session.origin}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void window.uiSync?.reloadLivePreview()}
+            disabled={status !== "ready"}
+            title="Reload the page"
+          >
+            <RefreshCw size={14} />
+          </button>
+          {screen.figmaNodeId && (
+            <button
+              type="button"
+              className="live-preview-figma"
+              onClick={() => onOpenFigmaNode(screen.figmaNodeId ?? null)}
+              title={screen.figmaFrameName ?? "Open the linked Figma frame"}
+            >
+              <Figma size={13} />
+              Figma
+              <ExternalLink size={11} />
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="live-preview-frame" ref={frameRef}>
+        {status !== "ready" && (
+          <div className="live-preview-status">
+            {status === "starting" ? (
+              <>
+                <LoaderCircle className="spin" size={16} />
+                <strong>Starting the dev server…</strong>
+                <span>UI Sync reuses this project's own dev server, so the first start can take a moment.</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle size={16} />
+                <strong>Live preview is not available</strong>
+                <span>{error}</span>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {session && session.blockedHosts.length > 0 && (
+        <footer className="live-preview-blocked">
+          <AlertCircle size={12} />
+          <span>
+            Blocked {session.blockedHosts.length} external {session.blockedHosts.length === 1 ? "host" : "hosts"}:{" "}
+            {session.blockedHosts.slice(0, 4).join(", ")}
+            {session.blockedHosts.length > 4 ? "…" : ""}
+          </span>
+        </footer>
+      )}
+    </section>
+  );
+}
+
 function ProjectMappingView({
   project,
   onOpenFigmaNode,
   onImportScreen,
+  onOpenLivePreview,
   previews,
   previewState
 }: {
   project: ProjectInfo;
   onOpenFigmaNode: (nodeId: string | null) => void;
   onImportScreen: (screenId: string) => void;
+  onOpenLivePreview: (screen: DiscoveredScreen) => void;
   previews: ProjectPreview[];
   previewState: "loading" | "ready" | "unavailable" | null;
 }) {
@@ -1154,6 +1313,9 @@ function ProjectMappingView({
     figmaFrameName: screen.figmaFrameName ?? (discoveredScreens.length === 1 ? project.frameName : null)
   }));
   const previewsByScreen = new Map(previews.map((preview) => [preview.screenId, preview]));
+  // Live preview drives the project's own dev server, which only web and
+  // Electron renderers expose; SwiftUI screens keep their capture-based flow.
+  const canPreviewLive = project.kind !== "swiftui" && Boolean(window.uiSync);
 
   return (
     <section className="mapping-workspace">
@@ -1167,6 +1329,17 @@ function ProjectMappingView({
                   style={{ aspectRatio: `${previewsByScreen.get(screen.id)?.width} / ${previewsByScreen.get(screen.id)?.height}` }}
                 >
                   <img src={previewsByScreen.get(screen.id)?.screenshotDataUrl} alt={`${screen.name} rendered preview`} />
+                  {canPreviewLive && (
+                    <button
+                      type="button"
+                      className="screen-live-button"
+                      onClick={() => onOpenLivePreview(screen)}
+                      title={`Open ${screen.name} in a live preview`}
+                    >
+                      <Play size={12} />
+                      Live preview
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="screen-import-button"
@@ -1182,6 +1355,17 @@ function ProjectMappingView({
                 <div className="screen-preview-image is-placeholder">
                   {previewState === "loading" ? <LoaderCircle className="spin" size={14} /> : screen.sourceType === "screen" ? <LayoutGrid size={15} /> : <Layers3 size={15} />}
                   <span>{previewState === "loading" ? "Capturing rendered screen…" : "Rendered preview unavailable"}</span>
+                  {canPreviewLive && previewState !== "loading" && (
+                    <button
+                      type="button"
+                      className="screen-live-button is-inline"
+                      onClick={() => onOpenLivePreview(screen)}
+                      title={`Open ${screen.name} in a live preview`}
+                    >
+                      <Play size={12} />
+                      Live preview
+                    </button>
+                  )}
                 </div>
               )}
               <div className="screen-preview-caption">

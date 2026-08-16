@@ -130,6 +130,31 @@ export type ProjectPreview = {
   height: number;
 };
 
+export type LivePreviewBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type LivePreviewSession = {
+  url: string;
+  origin: string;
+  command: string;
+  /** True when an already-running dev server was reused instead of spawned. */
+  attached: boolean;
+  blockedHosts: string[];
+};
+
+export type LivePreviewStatus = {
+  running: boolean;
+  url: string | null;
+  command: string | null;
+  attached: boolean;
+  reason: "no-manifest" | "no-dev-script" | "dependencies-missing" | null;
+  message: string | null;
+};
+
 export type SyncDirection = "to-figma" | "to-local";
 export type AppView = "connections";
 export type ReviewState = "idle" | "checking" | "review" | "syncing" | "complete";

@@ -27,5 +27,12 @@ contextBridge.exposeInMainWorld("uiSync", {
   resolveSwiftUiVisualEdit: (root, resolution) => ipcRenderer.invoke("projects:visual-edit-resolve", root, resolution),
   showFigmaPlugin: () => ipcRenderer.invoke("figma:show-plugin"),
   copyText: (value) => ipcRenderer.invoke("clipboard:write", value),
-  openFigma: (fileKey, nodeId) => ipcRenderer.invoke("figma:open", fileKey, nodeId)
+  openFigma: (fileKey, nodeId) => ipcRenderer.invoke("figma:open", fileKey, nodeId),
+  startLivePreview: (root, capturePath, bounds) => ipcRenderer.invoke("preview:start", root, capturePath, bounds),
+  setLivePreviewBounds: (bounds) => ipcRenderer.invoke("preview:set-bounds", bounds),
+  navigateLivePreview: (capturePath) => ipcRenderer.invoke("preview:navigate", capturePath),
+  reloadLivePreview: () => ipcRenderer.invoke("preview:reload"),
+  stopLivePreview: () => ipcRenderer.invoke("preview:stop"),
+  getLivePreviewStatus: (root) => ipcRenderer.invoke("preview:status", root),
+  stopDevServer: (root) => ipcRenderer.invoke("preview:stop-server", root)
 });

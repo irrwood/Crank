@@ -1,4 +1,4 @@
-import type { AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
+import type { AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
 
 declare global {
   interface Window {
@@ -26,6 +26,13 @@ declare global {
       showFigmaPlugin: () => Promise<void>;
       copyText: (value: string) => Promise<void>;
       openFigma: (fileKey: string, nodeId: string | null) => Promise<void>;
+      startLivePreview: (root: string, capturePath: string, bounds: LivePreviewBounds) => Promise<LivePreviewSession>;
+      setLivePreviewBounds: (bounds: LivePreviewBounds) => Promise<boolean>;
+      navigateLivePreview: (capturePath: string) => Promise<{ url: string; blockedHosts: string[] }>;
+      reloadLivePreview: () => Promise<boolean>;
+      stopLivePreview: () => Promise<boolean>;
+      getLivePreviewStatus: (root: string) => Promise<LivePreviewStatus>;
+      stopDevServer: (root: string) => Promise<boolean>;
     };
   }
 }

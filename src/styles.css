@@ -918,10 +918,184 @@ button {
   opacity: 0;
 }
 
+.screen-live-button {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: flex;
+  min-height: 26px;
+  padding: 0 9px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(32, 33, 31, 0.14);
+  border-radius: 7px;
+  color: #26271f;
+  background: rgba(255, 255, 255, 0.94);
+  font-size: 9px;
+  font-weight: 650;
+  opacity: 0;
+  transform: translateY(-4px);
+  cursor: pointer;
+  transition: opacity 160ms ease, transform 160ms ease, background-color 140ms ease;
+}
+
+.screen-live-button:hover {
+  background: #fff;
+}
+
+.screen-live-button.is-inline {
+  position: static;
+  opacity: 1;
+  transform: none;
+}
+
+.screen-preview-card:hover .screen-live-button,
+.screen-preview-card:focus-within .screen-live-button {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .screen-preview-card:hover .screen-preview-image,
 .screen-preview-card:focus-within .screen-preview-image {
   transform: translateY(-2px);
   box-shadow: 0 17px 34px rgba(32, 33, 31, 0.17);
+}
+
+.live-preview {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: #e8e8e5;
+  animation: fade-up 260ms ease both;
+}
+
+.live-preview-bar {
+  display: flex;
+  padding: 13px 18px;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid rgba(32, 33, 31, 0.1);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.live-preview-back {
+  display: flex;
+  min-height: 28px;
+  padding: 0 10px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(32, 33, 31, 0.14);
+  border-radius: 7px;
+  color: #26271f;
+  background: #fff;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.live-preview-back:hover {
+  background: #f6f6f4;
+}
+
+.live-preview-identity {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.live-preview-identity > strong {
+  overflow: hidden;
+  color: #26271f;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-preview-identity > code {
+  color: #767771;
+  font-size: 10px;
+}
+
+.live-preview-actions {
+  display: flex;
+  margin-left: auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-preview-source {
+  color: #767771;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-preview-actions > button {
+  display: flex;
+  min-height: 28px;
+  padding: 0 9px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(32, 33, 31, 0.14);
+  border-radius: 7px;
+  color: #26271f;
+  background: #fff;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.live-preview-actions > button:hover:not(:disabled) {
+  background: #f6f6f4;
+}
+
+.live-preview-actions > button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.live-preview-frame {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  margin: 14px 18px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid rgba(32, 33, 31, 0.13);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.live-preview-status {
+  display: grid;
+  max-width: 380px;
+  padding: 24px;
+  justify-items: center;
+  gap: 7px;
+  color: #767771;
+  text-align: center;
+}
+
+.live-preview-status > strong {
+  color: #26271f;
+  font-size: 12px;
+}
+
+.live-preview-status > span {
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.live-preview-blocked {
+  display: flex;
+  padding: 0 18px 14px;
+  align-items: center;
+  gap: 6px;
+  color: #8a6d3b;
+  font-size: 9px;
 }
 
 .screen-preview-card:hover .screen-import-button,
