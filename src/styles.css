@@ -3189,3 +3189,117 @@ button.screen-figma-link {
     transition-duration: 1ms !important;
   }
 }
+
+/* ---------- URL-first page inventory ---------- */
+
+.inventory-page {
+  min-height: 100vh;
+  padding: 40px 48px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.inventory-header h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.01em; }
+.inventory-header p { margin: 0; max-width: 62ch; opacity: 0.62; font-size: 13px; line-height: 1.5; }
+
+.inventory-form { display: flex; gap: 10px; flex-wrap: wrap; }
+.inventory-form input {
+  flex: 1 1 240px;
+  min-width: 200px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  border: 1px solid rgba(128, 128, 128, 0.32);
+  background: rgba(128, 128, 128, 0.07);
+  color: inherit;
+  font-size: 13px;
+  font-family: inherit;
+}
+.inventory-form input:focus { outline: 2px solid rgba(96, 132, 255, 0.55); outline-offset: 1px; }
+.inventory-form button {
+  padding: 10px 22px;
+  border-radius: 9px;
+  border: 0;
+  background: #3b6cf6;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 560;
+  cursor: pointer;
+}
+.inventory-form button:disabled { opacity: 0.45; cursor: default; }
+
+.inventory-progress {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 14px 18px;
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.08);
+  font-size: 12px;
+  line-height: 1.75;
+}
+.inventory-progress p { margin: 0; opacity: 0.78; }
+.inventory-progress-count { display: inline-block; min-width: 22px; opacity: 0.45; font-variant-numeric: tabular-nums; }
+
+.inventory-error {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 9px;
+  background: rgba(220, 76, 70, 0.12);
+  color: #d84b45;
+  font-size: 13px;
+}
+
+.inventory-summary { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; font-size: 12px; opacity: 0.72; }
+.inventory-summary strong { font-size: 15px; opacity: 1; }
+.inventory-link { border: 0; background: none; padding: 0; color: #3b6cf6; font-size: 12px; cursor: pointer; text-decoration: underline; }
+
+.inventory-filtered { padding: 14px 18px; border-radius: 10px; background: rgba(128, 128, 128, 0.08); font-size: 12px; }
+.inventory-filtered > p { margin: 0 0 10px; opacity: 0.7; }
+.inventory-filtered ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.inventory-filtered li { display: flex; gap: 12px; align-items: baseline; }
+.inventory-filtered code { min-width: 48px; opacity: 0.55; font-variant-numeric: tabular-nums; }
+.inventory-filtered small { opacity: 0.45; }
+.inventory-note { margin: 12px 0 0; opacity: 0.6; }
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 26px 22px;
+}
+
+.inventory-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.inventory-shot {
+  padding: 0;
+  border: 1px solid rgba(128, 128, 128, 0.26);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(128, 128, 128, 0.07);
+  aspect-ratio: 16 / 10;
+  cursor: zoom-in;
+  display: block;
+}
+.inventory-shot img { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
+.inventory-shot-empty { display: grid; place-items: center; height: 100%; font-size: 12px; opacity: 0.45; }
+
+.inventory-meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.inventory-index { font-size: 11px; opacity: 0.4; font-variant-numeric: tabular-nums; }
+.inventory-meta h3 { margin: 0; font-size: 13px; font-weight: 560; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inventory-address { margin: 0; font-size: 11px; opacity: 0.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.inventory-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  z-index: 40;
+}
+.inventory-overlay figure { margin: 0; max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column; gap: 10px; }
+.inventory-overlay figcaption { display: flex; align-items: baseline; gap: 14px; color: #fff; font-size: 13px; }
+.inventory-overlay figcaption code { opacity: 0.6; font-size: 11px; }
+.inventory-overlay figcaption button {
+  margin-left: auto; border: 0; border-radius: 7px; padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.18); color: #fff; font-size: 12px; cursor: pointer;
+}
+.inventory-overlay img { max-width: 100%; max-height: 78vh; object-fit: contain; border-radius: 10px; background: #fff; }

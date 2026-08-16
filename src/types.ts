@@ -302,3 +302,32 @@ export type SemanticChange = {
   after: string;
   kind: "spacing" | "shape" | "size" | "color";
 };
+
+export type DiscoveredPage = {
+  id: string;
+  name: string;
+  signature: string;
+  /** Address to load first; "/" when the page lives at the app root. */
+  route: string;
+  url: string;
+  /** Clicks to replay after loading `route`. Empty when directly addressable. */
+  recipe: Array<{ kind: string; locator: string; label: string }>;
+  depth: number;
+  thumbnail: { dataUrl: string; width: number; height: number } | null;
+};
+
+export type PageInventory =
+  | { ok: false; message: string }
+  | {
+      ok: true;
+      origin: string;
+      pages: DiscoveredPage[];
+      /** Controls skipped because their label reads as destructive. */
+      skipped: Array<{ label: string; reason: string }>;
+      /** States left out for changing too little, with the measured ratio. */
+      filtered: Array<{ label: string; from: string; reason: string; magnitude: number }>;
+      sources: { sitemap: number; seeds: number; crawled: number };
+      blocked: { mutations: string[]; external: string[] };
+    };
+
+export type ScanProgress = { name: string; route: string; depth: number };

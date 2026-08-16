@@ -1,4 +1,4 @@
-import type { AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
+import type { PageInventory, ScanProgress, AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
 
 declare global {
   interface Window {
@@ -7,6 +7,8 @@ declare global {
       addProject: (kind: ProjectKind) => Promise<ProjectInfo[]>;
       inspectDroppedProjects: (roots: string[]) => Promise<ProjectInfo[]>;
       getProjectPreviews: (root: string) => Promise<ProjectPreview[]>;
+      scanUrl: (url: string, seedPaths?: string[]) => Promise<PageInventory>;
+      onScanProgress: (callback: (value: ScanProgress) => void) => () => void;
       getDroppedPath: (file: File) => string;
       connectFigmaProject: (root: string, figmaUrl: string) => Promise<ProjectInfo>;
       mapProjectScreen: (root: string, screenId: string, figmaUrl: string) => Promise<ProjectInfo>;

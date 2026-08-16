@@ -5,6 +5,12 @@ contextBridge.exposeInMainWorld("uiSync", {
   addProject: (kind) => ipcRenderer.invoke("projects:add", kind),
   inspectDroppedProjects: (roots) => ipcRenderer.invoke("projects:inspect-dropped", roots),
   getProjectPreviews: (root) => ipcRenderer.invoke("projects:previews", root),
+  scanUrl: (url, seedPaths) => ipcRenderer.invoke("inventory:scan", url, seedPaths),
+  onScanProgress: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("inventory:progress", listener);
+    return () => ipcRenderer.removeListener("inventory:progress", listener);
+  },
   getDroppedPath: (file) => webUtils.getPathForFile(file),
   connectFigmaProject: (root, figmaUrl) => ipcRenderer.invoke("projects:connect-figma", root, figmaUrl),
   mapProjectScreen: (root, screenId, figmaUrl) => ipcRenderer.invoke("projects:map-screen", root, screenId, figmaUrl),

@@ -5,6 +5,7 @@ const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
+const { scanUrl } = require("./page-inventory.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
 const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
@@ -1532,6 +1533,18 @@ function registerIpc() {
     devServers.delete(safeRoot);
     running?.stop?.();
     return true;
+  });
+
+  ipcMain.handle("inventory:scan", async (event, url, seedPaths) => {
+    const target = z.string().min(1).max(2000).parse(url);
+    const seeds = z.array(z.string().max(2000)).max(200).optional().parse(seedPaths) ?? [];
+    return scanUrl(target, {
+      seedPaths: seeds,
+      onProgress: (state) => {
+        if (event.sender.isDestroyed()) return;
+        event.sender.send("inventory:progress", { name: state.name, route: state.route, depth: state.depth });
+      }
+    });
   });
 
   ipcMain.handle("projects:previews", async (_event, root) => {
