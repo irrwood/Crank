@@ -540,15 +540,27 @@ function extractJavascriptPages(root, sourceByFile, dependencies, rendererEntry)
     }
   }
 
-  if (dependencies.next) {
-    for (const file of sourceByFile.keys()) {
-      const relative = path.relative(root, file).replaceAll(path.sep, "/");
+  // Next-compatible frameworks (vinext and friends) use the App Router layout
+  // without depending on `next`, so detect the convention as well as the
+  // package. `pages/` stays gated on Next itself, because plenty of plain React
+  // apps keep components in a pages/ folder that are not routes.
+  const relativePaths = [...sourceByFile.keys()].map((file) => path.relative(root, file).replaceAll(path.sep, "/"));
+  const hasAppRouter = relativePaths.some((relative) => /(?:^|\/)app\/(?:.+\/)?page\.(?:js|jsx|ts|tsx)$/.test(relative));
+  const hasNextConfig = relativePaths.some((relative) => /(?:^|\/)next\.config\.(?:js|mjs|cjs|ts|mts)$/.test(relative));
+  const usesPagesRouter = Boolean(dependencies.next) || hasNextConfig;
+
+  if (dependencies.next || hasAppRouter || hasNextConfig) {
+    for (const relative of relativePaths) {
       let route = null;
-      const appMatch = relative.match(/(?:^|\/)app\/(.+)\/(?:page|route)\.(?:js|jsx|ts|tsx)$/);
-      const pagesMatch = relative.match(/(?:^|\/)pages\/(.+)\.(?:js|jsx|ts|tsx)$/);
+      // Only page.* is a rendered page; route.* is an API handler with no UI.
+      const appMatch = relative.match(/(?:^|\/)app\/(.+)\/page\.(?:js|jsx|ts|tsx)$/);
+      const pagesMatch = usesPagesRouter ? relative.match(/(?:^|\/)pages\/(.+)\.(?:js|jsx|ts|tsx)$/) : null;
       if (appMatch) route = `/${appMatch[1].replace(/\([^/]+\)\//g, "").replace(/\/index$/, "")}`;
       else if (pagesMatch && !pagesMatch[1].startsWith("_") && !pagesMatch[1].startsWith("api/")) route = `/${pagesMatch[1].replace(/\/index$/, "")}`;
-      if (route && !/[\[\]]/.test(route)) add(humanizeRoute(route), route, "Next.js route");
+      // Private folders (_name) and route groups are not addressable routes.
+      if (route && !/[\[\]]/.test(route) && !route.split("/").some((segment) => segment.startsWith("_"))) {
+        add(humanizeRoute(route), route, "Next.js route");
+      }
     }
   }
 

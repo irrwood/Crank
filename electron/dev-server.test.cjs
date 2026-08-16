@@ -176,6 +176,35 @@ test("reports a failing dev script instead of hanging", async () => {
   }
 });
 
+test("attaches when the dev script reports an already-running server and exits", async () => {
+  // vinext refuses to start twice: it prints where the running server is, then
+  // exits non-zero. The printed URL is the project's own tooling talking, so it
+  // is trusted once a probe confirms it answers.
+  const server = http.createServer((_request, response) => response.end("ok"));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  const root = await makeProject(
+    {
+      name: "app",
+      scripts: {
+        dev: `node -e "console.log('Another dev server is already running.');`
+          + `console.log('  - Local: http://localhost:${port}');process.exit(1)"`
+      }
+    },
+    { "node_modules/.keep": "" }
+  );
+  try {
+    const started = await startDevServer(root, { startTimeoutMs: 20000 });
+    assert.equal(started.ok, true, `expected attach, got ${started.reason}: ${started.message}`);
+    assert.equal(started.attached, true);
+    assert.equal(started.origin, `http://localhost:${port}`);
+    assert.equal(started.stop, undefined, "a server UI Sync did not start must not be stoppable by it");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("starts a real server and reports its url", async () => {
   const root = await makeProject(
     {

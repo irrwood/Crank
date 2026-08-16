@@ -151,3 +151,27 @@ test("recognizes a Swift UIKit application as a native iOS project", async (t) =
   assert.equal(project.framework, "UIKit · iOS");
   assert.equal(project.screens[0].uiTree.syncId, "uikit/root");
 });
+
+test("discovers App Router pages in Next-compatible frameworks without the next package", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ui-sync-vinext-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      name: "vinext-site",
+      dependencies: { react: "^18.0.0", "react-dom": "^18.0.0" },
+      devDependencies: { vinext: "1.0.0", vite: "^6.0.0" },
+      scripts: { dev: "vinext dev" }
+    }));
+    await writeFile(path.join(root, "next.config.ts"), "export default {};\n");
+    await mkdir(path.join(root, "app/api/notes"), { recursive: true });
+    await writeFile(path.join(root, "app/api/notes/route.ts"), "export function GET() { return new Response(); }\n");
+    for (const relative of ["app/page.tsx", "app/pricing/page.tsx", "app/docs/intro/page.tsx", "app/_internal/page.tsx"]) {
+      await mkdir(path.join(root, path.dirname(relative)), { recursive: true });
+      await writeFile(path.join(root, relative), "export default function Page() { return null; }\n");
+    }
+    const result = await scanJavascriptProject(root);
+    const routes = result.screens.map((screen) => screen.capturePath).sort();
+    assert.deepEqual(routes, ["/", "/docs/intro", "/pricing"], "private _folders and api route handlers must not become pages");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

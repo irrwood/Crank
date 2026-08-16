@@ -243,24 +243,28 @@ async function startDevServer(root, { onLog, startTimeoutMs = 60000 } = {}) {
 
   const deadline = Date.now() + startTimeoutMs;
   while (Date.now() < deadline) {
-    if (exited !== null) {
-      const tail = stripAnsi(output.join("")).trim().split("\n").slice(-3).join(" ").slice(0, 300);
-      return {
-        ok: false,
-        reason: "exited",
-        message: `${resolved.command} exited before serving a page.${tail ? ` Last output: ${tail}` : ""}`,
-        output: output.join("").slice(-4000)
-      };
-    }
+    const hasExited = exited !== null;
     for (const candidate of candidates) {
       if (!await probeUrl(candidate)) continue;
       return {
         ok: true,
         url: candidate,
         origin: new URL(candidate).origin,
-        attached: false,
+        // A server still reachable after the script exited was already running:
+        // tools like vinext refuse to start twice and print where to find it.
+        // It is not ours, so it gets no stop handle.
+        attached: hasExited,
         command: resolved.command,
-        stop: () => stopDevServer(child)
+        ...(hasExited ? {} : { stop: () => stopDevServer(child) })
+      };
+    }
+    if (hasExited) {
+      const tail = stripAnsi(output.join("")).trim().split("\n").slice(-3).join(" ").slice(0, 300);
+      return {
+        ok: false,
+        reason: "exited",
+        message: `${resolved.command} exited before serving a page.${tail ? ` Last output: ${tail}` : ""}`,
+        output: output.join("").slice(-4000)
       };
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
