@@ -99,10 +99,10 @@ test("finds tab and modal states behind one URL", async () => {
         { locator: "#danger", label: "Delete board", to: "gone" }
       ]
     },
-    list: { title: "Board", fingerprint: ["board-list"], controls: [] },
-    calendar: { title: "Board", fingerprint: ["board-calendar"], controls: [] },
-    modal: { title: "Board", fingerprint: ["board-modal"], controls: [] },
-    gone: { title: "Deleted", fingerprint: ["gone"], controls: [] }
+    list: { title: "Board", url: "/", fingerprint: ["board-list"], controls: [] },
+    calendar: { title: "Board", url: "/", fingerprint: ["board-calendar"], controls: [] },
+    modal: { title: "Board", url: "/", fingerprint: ["board-modal"], controls: [] },
+    gone: { title: "Deleted", url: "/", fingerprint: ["gone"], controls: [] }
   });
 
   const { states, skipped } = await discoverStates(session, { routes: ["/"], maxDepth: 2 });
@@ -122,9 +122,9 @@ test("finds tab and modal states behind one URL", async () => {
 
 test("gives every state a replay recipe that starts from a fresh load", async () => {
   const session = fakeSession({
-    "/": { fingerprint: ["home"], controls: [{ locator: "#a", label: "Settings", to: "settings" }] },
-    settings: { fingerprint: ["settings"], controls: [{ locator: "#b", label: "Advanced", to: "advanced" }] },
-    advanced: { fingerprint: ["advanced"], controls: [] }
+    "/": { url: "/", fingerprint: ["home"], controls: [{ locator: "#a", label: "Settings", to: "settings" }] },
+    settings: { url: "/", fingerprint: ["settings"], controls: [{ locator: "#b", label: "Advanced", to: "advanced" }] },
+    advanced: { url: "/", fingerprint: ["advanced"], controls: [] }
   });
   const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 3 });
 
@@ -138,12 +138,13 @@ test("does not record the same visual state twice", async () => {
   const session = fakeSession({
     "/": {
       fingerprint: ["same"],
+      url: "/",
       controls: [
         { locator: "#one", label: "One", to: "dup" },
         { locator: "#two", label: "Two", to: "dup" }
       ]
     },
-    dup: { fingerprint: ["duplicate"], controls: [] }
+    dup: { url: "/", fingerprint: ["duplicate"], controls: [] }
   });
   const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 2 });
   assert.equal(states.length, 2, "identical fingerprints must collapse into one state");
@@ -153,9 +154,9 @@ test("honours the state budget", async () => {
   const controls = Array.from({ length: 20 }, (_, index) => ({
     locator: `#c${index}`, label: `Item ${index}`, to: `s${index}`
   }));
-  const screens = { "/": { fingerprint: ["root"], controls } };
+  const screens = { "/": { url: "/", fingerprint: ["root"], controls } };
   for (let index = 0; index < 20; index += 1) {
-    screens[`s${index}`] = { fingerprint: [`state-${index}`], controls: [] };
+    screens[`s${index}`] = { url: "/", fingerprint: [`state-${index}`], controls: [] };
   }
   const { states } = await discoverStates(fakeSession(screens), { routes: ["/"], maxStates: 5 });
   assert.equal(states.length, 5);
@@ -170,4 +171,18 @@ test("treats framework internals as tooling, not application writes", () => {
   assert.equal(isFrameworkInternalPath("/api/notes"), false);
   assert.equal(isFrameworkInternalPath("/graphql"), false);
   assert.equal(isFrameworkInternalPath(""), false);
+});
+
+test("reduces a link-reached state to a direct address", async () => {
+  // Found by clicking, but /about stands on its own. The recipe collapses so
+  // the page can be recaptured later without replaying how it was first found.
+  const screens = {
+    "/": { url: "/", fingerprint: ["home"], controls: [{ locator: "#nav", label: "About", role: "link", to: "/about" }] },
+    "/about": { url: "/about", fingerprint: ["about"], controls: [] }
+  };
+  const { states } = await discoverStates(fakeSession(screens), { routes: ["/"], maxDepth: 2 });
+  const about = states.find((state) => state.name.includes("about") || state.route === "/about");
+  assert.ok(about, `no /about state in ${JSON.stringify(states.map((s) => s.route))}`);
+  assert.deepEqual(about.recipe, [], "a directly addressable page needs no click recipe");
+  assert.equal(about.route, "/about");
 });

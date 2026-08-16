@@ -115,6 +115,13 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       await settle();
       return read();
     },
+    async capture() {
+      try {
+        return await contents.capturePage();
+      } catch {
+        return null;
+      }
+    },
     close() {
       if (!window.isDestroyed()) window.destroy();
     }

@@ -201,9 +201,22 @@ async function discoverStates(session, {
   const frontier = [];
   const skipped = [];
 
-  const record = (snapshot, recipe, entryRoute) => {
+  /**
+   * A state reached by clicking may simply be another address. Directly
+   * addressable states get the shortest possible recipe, which makes them
+   * cheap to recapture and independent of the path that first found them.
+   */
+  const simplify = async (snapshot, recipe, entryRoute, signature) => {
+    if (recipe.length === 0 || !snapshot.url || snapshot.url === entryRoute) return { recipe, entryRoute };
+    const direct = await session.goto(snapshot.url);
+    if (direct && signatureOf(direct.fingerprint) === signature) return { recipe: [], entryRoute: snapshot.url };
+    return { recipe, entryRoute };
+  };
+
+  const record = async (snapshot, recipe, entryRoute) => {
     const signature = signatureOf(snapshot.fingerprint);
     if (bySignature.has(signature)) return null;
+    ({ recipe, entryRoute } = await simplify(snapshot, recipe, entryRoute, signature));
     const name = humanizeStateName(
       recipe.length === 0
         ? [snapshot.heading || snapshot.title, snapshot.url === "/" ? "" : snapshot.url]
@@ -235,7 +248,7 @@ async function discoverStates(session, {
   for (const route of routes) {
     if (states.length >= maxStates) break;
     const snapshot = await session.goto(route);
-    if (snapshot) record(snapshot, [], route);
+    if (snapshot) await record(snapshot, [], route);
   }
 
   while (states.length < maxStates) {
@@ -253,7 +266,7 @@ async function discoverStates(session, {
       if (!snapshot) { reached = false; break; }
     }
     if (!reached) continue;
-    record(snapshot, recipe, step.from.entryRoute);
+    await record(snapshot, recipe, step.from.entryRoute);
   }
 
   return { states, skipped };
