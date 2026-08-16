@@ -6,6 +6,7 @@ const { discoverStates } = require("./state-discovery.cjs");
 const { startDevServer } = require("./dev-server.cjs");
 const { detectElectronRenderer, startRendererServer } = require("./renderer-server.cjs");
 const { discoverJavascriptProjectRoots, scanJavascriptProject } = require("./project-scanner.cjs");
+const { describeForeignProject } = require("./foreign-project.cjs");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 
 /**
@@ -233,6 +234,20 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
 
   const started = electron ? await startRendererServer(root) : await startDevServer(root, { startTimeoutMs: 90_000 });
   if (!started.ok) {
+    // UI Sync only knows how to start Node projects. Rather than stopping at
+    // "no package.json", report what this project declares about itself so the
+    // address is one command away.
+    if (started.reason === "no-manifest" || started.reason === "no-dev-script") {
+      const foreign = await describeForeignProject(root);
+      if (foreign) {
+        return {
+          ok: false,
+          reason: "foreign",
+          message: `UI Sync cannot start a ${foreign.kind} project itself. Start it with one of these, then scan its address.`,
+          foreign
+        };
+      }
+    }
     return { ok: false, message: started.message, reason: started.reason, output: started.output ?? null };
   }
 

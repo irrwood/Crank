@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DiscoveredPage, PageInventory, ScanProgress, ScanStatus, WorkspacePackage } from "./types";
+import type { DiscoveredPage, PageInventory, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 
 /**
  * The whole product in one screen: give an address, get every page.
@@ -47,6 +47,8 @@ export default function PageInventoryView() {
   const [dragging, setDragging] = useState(false);
   const [showAddress, setShowAddress] = useState(false);
   const [choices, setChoices] = useState<WorkspacePackage[] | null>(null);
+  const [foreign, setForeign] = useState<{ info: ForeignProject; message: string } | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
   const progressRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -81,6 +83,12 @@ export default function PageInventoryView() {
       setChoices(inventory.packages);
       return;
     }
+    if (!inventory.ok && inventory.reason === "foreign" && inventory.foreign) {
+      setForeign({ info: inventory.foreign, message: inventory.message });
+      if (inventory.foreign.port) setAddress(`localhost:${inventory.foreign.port}`);
+      setShowAddress(true);
+      return;
+    }
     setResult(inventory);
     if (!inventory.ok) setError(inventory.message);
   };
@@ -88,6 +96,7 @@ export default function PageInventoryView() {
   const scanFolder = async (root: string) => {
     if (!window.uiSync?.scanFolder || scanning) return;
     setChoices(null);
+    setForeign(null);
     beginScan(root);
     setTitle(`${root.split("/").filter(Boolean).pop() ?? "Design"} handoff`);
     try {
@@ -168,6 +177,31 @@ export default function PageInventoryView() {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {foreign && !scanning && (
+        <section className="inventory-choices">
+          <strong>{foreign.message}</strong>
+          <p>These come from the project itself — nothing here was invented.</p>
+          <ul>
+            {foreign.info.commands.map((entry) => (
+              <li key={entry.command}>
+                <button
+                  onClick={() => { void window.uiSync?.copyText?.(entry.command); setCopied(entry.command); }}
+                  type="button"
+                >
+                  <strong>{entry.command}</strong>
+                  <code>from {entry.source}{copied === entry.command ? " · copied" : " · click to copy"}</code>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {foreign.info.port !== null && (
+            <p className="inventory-note">
+              Once it is running, scan <code>localhost:{foreign.info.port}</code> below.
+            </p>
+          )}
         </section>
       )}
 

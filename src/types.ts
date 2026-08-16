@@ -316,10 +316,16 @@ export type DiscoveredPage = {
   thumbnail: { dataUrl: string; width: number; height: number } | null;
 };
 
+export type ForeignProject = {
+  kind: string;
+  commands: Array<{ source: string; command: string }>;
+  port: number | null;
+};
+
 export type WorkspacePackage = { root: string; name: string };
 
 export type PageInventory =
-  | { ok: false; message: string; reason?: string; packages?: WorkspacePackage[] }
+  | { ok: false; message: string; reason?: string; packages?: WorkspacePackage[]; foreign?: ForeignProject }
   | {
       ok: true;
       origin: string;
