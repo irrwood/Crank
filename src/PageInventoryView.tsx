@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DiscoveredPage, PageInventory, ScanProgress, ScanStatus } from "./types";
+import type { DiscoveredPage, PageInventory, ScanProgress, ScanStatus, WorkspacePackage } from "./types";
 
 /**
  * The whole product in one screen: give an address, get every page.
@@ -46,6 +46,7 @@ export default function PageInventoryView() {
   const [source, setSource] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showAddress, setShowAddress] = useState(false);
+  const [choices, setChoices] = useState<WorkspacePackage[] | null>(null);
   const progressRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,12 +77,17 @@ export default function PageInventoryView() {
   };
 
   const finishScan = (inventory: PageInventory) => {
+    if (!inventory.ok && inventory.reason === "workspace" && inventory.packages?.length) {
+      setChoices(inventory.packages);
+      return;
+    }
     setResult(inventory);
     if (!inventory.ok) setError(inventory.message);
   };
 
   const scanFolder = async (root: string) => {
     if (!window.uiSync?.scanFolder || scanning) return;
+    setChoices(null);
     beginScan(root);
     setTitle(`${root.split("/").filter(Boolean).pop() ?? "Design"} handoff`);
     try {
@@ -148,7 +154,24 @@ export default function PageInventoryView() {
         </div>
       </header>
 
-      {!result?.ok && !scanning && (
+      {choices && !scanning && (
+        <section className="inventory-choices">
+          <strong>This folder holds several runnable projects</strong>
+          <p>Its dev script starts them in parallel, so scanning the folder itself would pick one at random. Choose the one you mean.</p>
+          <ul>
+            {choices.map((item) => (
+              <li key={item.root}>
+                <button onClick={() => void scanFolder(item.root)} type="button">
+                  <strong>{item.name}</strong>
+                  <code>{item.root}</code>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {!result?.ok && !scanning && !choices && (
         <section
           className={`inventory-drop${dragging ? " is-over" : ""}`}
           onDragLeave={() => setDragging(false)}

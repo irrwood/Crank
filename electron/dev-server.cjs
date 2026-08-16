@@ -1,4 +1,6 @@
 const { spawn, spawnSync } = require("node:child_process");
+const os = require("node:os");
+const { mkdtempSync, writeFileSync } = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { access, readFile } = require("node:fs/promises");
@@ -152,6 +154,32 @@ function buildRunArgs(launcher, scriptName) {
   return [...launcher.args, "run", scriptName];
 }
 
+const shimDirectories = new Map();
+
+/**
+ * Puts the package manager on PATH for the script itself.
+ *
+ * Resolving the launcher only fixes how UI Sync starts the script. Monorepo
+ * scripts routinely call the package manager again from inside — a root script
+ * reading `pnpm --parallel --filter … dev` runs under `sh`, where a shell alias
+ * onto corepack does not exist, and fails with "pnpm: command not found".
+ * A tiny forwarding executable makes the name resolve for child processes too.
+ */
+function ensureLauncherOnPath(packageManager, environment) {
+  if (process.platform === "win32") return environment;
+  if (canSpawn(packageManager)) return environment;
+  if (!canSpawn("corepack")) return environment;
+
+  let directory = shimDirectories.get(packageManager);
+  if (!directory) {
+    directory = mkdtempSync(path.join(os.tmpdir(), `ui-sync-${packageManager}-`));
+    const shim = path.join(directory, packageManager);
+    writeFileSync(shim, `#!/bin/sh\nexec corepack ${packageManager} "$@"\n`, { mode: 0o755 });
+    shimDirectories.set(packageManager, directory);
+  }
+  return { ...environment, PATH: `${directory}${path.delimiter}${environment.PATH ?? ""}` };
+}
+
 /**
  * Resolves how a project would be served without starting anything, so callers
  * can surface an actionable error before spawning a process.
@@ -219,7 +247,7 @@ async function startDevServer(root, { onLog, startTimeoutMs = 60000 } = {}) {
 
   const child = spawn(resolved.launcher.command, buildRunArgs(resolved.launcher, resolved.scriptName), {
     cwd: root,
-    env: { ...process.env, BROWSER: "none", FORCE_COLOR: "0" },
+    env: ensureLauncherOnPath(resolved.packageManager, { ...process.env, BROWSER: "none", FORCE_COLOR: "0" }),
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -299,6 +327,7 @@ module.exports = {
   parseServerUrls,
   probeUrl,
   stripAnsi,
+  ensureLauncherOnPath,
   resolveDevCommand,
   resolveLauncher,
   startDevServer,

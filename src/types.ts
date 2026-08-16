@@ -316,8 +316,10 @@ export type DiscoveredPage = {
   thumbnail: { dataUrl: string; width: number; height: number } | null;
 };
 
+export type WorkspacePackage = { root: string; name: string };
+
 export type PageInventory =
-  | { ok: false; message: string }
+  | { ok: false; message: string; reason?: string; packages?: WorkspacePackage[] }
   | {
       ok: true;
       origin: string;

@@ -1,9 +1,11 @@
 const http = require("node:http");
 const https = require("node:https");
+const path = require("node:path");
+const { readFile } = require("node:fs/promises");
 const { discoverStates } = require("./state-discovery.cjs");
 const { startDevServer } = require("./dev-server.cjs");
 const { detectElectronRenderer, startRendererServer } = require("./renderer-server.cjs");
-const { scanJavascriptProject } = require("./project-scanner.cjs");
+const { discoverJavascriptProjectRoots, scanJavascriptProject } = require("./project-scanner.cjs");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 
 /**
@@ -177,7 +179,45 @@ async function scanUrl(target, {
  * the desktop app and ties the dev server to that window, so closing it would
  * end the scan.
  */
-async function scanFolder(root, { onStatus, ...options } = {}) {
+/**
+ * A workspace root is not one app. Its dev script commonly starts several in
+ * parallel, each announcing its own address, and whichever answers first would
+ * be scanned — the choice would be arbitrary and usually wrong. Offer the
+ * runnable packages instead of guessing.
+ */
+async function findWorkspacePackages(root) {
+  let roots = [];
+  try {
+    roots = await discoverJavascriptProjectRoots(root);
+  } catch {
+    return [];
+  }
+  const others = roots.filter((candidate) => path.resolve(candidate) !== path.resolve(root));
+  if (others.length < 2) return [];
+  const packages = [];
+  for (const candidate of others) {
+    try {
+      const manifest = JSON.parse(await readFile(path.join(candidate, "package.json"), "utf8"));
+      if (!manifest.scripts || !["dev", "start", "serve", "preview"].some((name) => manifest.scripts[name])) continue;
+      packages.push({ root: candidate, name: manifest.name || path.basename(candidate) });
+    } catch {}
+  }
+  return packages.length >= 2 ? packages : [];
+}
+
+async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...options } = {}) {
+  if (!allowWorkspaceRoot) {
+    const packages = await findWorkspacePackages(root);
+    if (packages.length > 0) {
+      return {
+        ok: false,
+        reason: "workspace",
+        message: "This folder holds several runnable projects. Pick the one to scan.",
+        packages
+      };
+    }
+  }
+
   // Reading the source finds addresses nothing links to — an Electron app's
   // "?view=settings" window has no link into it, so crawling alone can never
   // reach it. Source analysis proposes addresses; the crawl decides what is

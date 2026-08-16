@@ -2,10 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const { mkdtemp, rm, writeFile, mkdir } = require("node:fs/promises");
+const { existsSync, readFileSync, statSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
   buildRunArgs,
+  ensureLauncherOnPath,
   chooseDevScript,
   detectPackageManager,
   extractConfiguredPort,
@@ -226,4 +228,23 @@ test("starts a real server and reports its url", async () => {
     started?.stop?.();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("puts the package manager on PATH for the script's own child processes", () => {
+  // A monorepo root script like "pnpm --parallel --filter … dev" calls pnpm
+  // again under sh, where a shell alias does not exist.
+  const before = { PATH: "/usr/bin" };
+  const after = ensureLauncherOnPath("pnpm", before);
+  if (after.PATH === before.PATH) return; // pnpm is a real binary here; nothing to shim
+  const [directory] = after.PATH.split(path.delimiter);
+  const shim = path.join(directory, "pnpm");
+  assert.ok(existsSync(shim), "a forwarding executable must exist");
+  assert.match(readFileSync(shim, "utf8"), /exec corepack pnpm/);
+  assert.ok(statSync(shim).mode & 0o111, "the shim must be executable");
+  assert.match(after.PATH, /\/usr\/bin$/, "the original PATH must still be there");
+});
+
+test("leaves PATH alone when the package manager is a real binary", () => {
+  const before = { PATH: "/usr/bin" };
+  assert.equal(ensureLauncherOnPath("npm", before).PATH, "/usr/bin");
 });
