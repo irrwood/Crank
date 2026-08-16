@@ -27,3 +27,12 @@ test("reads page addresses from a sitemap and ignores foreign hosts", () => {
   assert.deepEqual(parseSitemapPaths(null, "http://localhost:8000"), []);
   assert.deepEqual(parseSitemapPaths("not xml", "http://localhost:8000"), []);
 });
+
+test("keeps a query string a query string", () => {
+  // "/?view=settings" must not become the path "/%3Fview=settings", which
+  // loads the default view and silently records the wrong screen.
+  const resolved = new URL("/?view=settings", "http://localhost:5173");
+  assert.equal(resolved.pathname, "/");
+  assert.equal(resolved.search, "?view=settings");
+  assert.equal(normalizeTargetUrl("http://localhost:5173/?view=settings").startPath, "/?view=settings");
+});

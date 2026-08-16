@@ -192,7 +192,7 @@ function collectUiState() {
 async function discoverStates(session, {
   routes = ["/"],
   maxStates = 40,
-  maxDepth = 3,
+  maxDepth = 1,
   maxActionsPerState = 12,
   onProgress
 } = {}) {

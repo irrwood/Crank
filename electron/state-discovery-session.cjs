@@ -85,11 +85,17 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       return { mutations: [...blocked.mutations], external: [...blocked.external] };
     },
     async goto(route) {
-      const target = new URL(origin);
+      // Resolve against the origin rather than assigning to pathname: a route
+      // like "/?view=settings" would otherwise be encoded into the path as
+      // "/%3Fview=settings" and silently load the wrong view.
       const path = typeof route === "string" && route ? route : "/";
-      if (path.startsWith("?")) target.search = path;
-      else if (path.startsWith("#")) target.hash = path;
-      else target.pathname = path.startsWith("/") ? path : `/${path}`;
+      let target;
+      try {
+        target = new URL(path, origin);
+      } catch {
+        return null;
+      }
+      if (target.origin !== origin) return null;
       try {
         await contents.loadURL(target.toString());
       } catch {

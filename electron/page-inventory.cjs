@@ -105,7 +105,7 @@ async function captureThumbnail(session, width = 420) {
 async function scanUrl(target, {
   seedPaths = [],
   maxStates = 60,
-  maxDepth = 2,
+  maxDepth = 1,
   maxActionsPerState = 12,
   withThumbnails = true,
   onProgress
