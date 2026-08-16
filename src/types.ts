@@ -151,7 +151,7 @@ export type LivePreviewStatus = {
   url: string | null;
   command: string | null;
   attached: boolean;
-  reason: "no-manifest" | "no-dev-script" | "dependencies-missing" | null;
+  reason: "no-manifest" | "no-dev-script" | "dependencies-missing" | "package-manager-missing" | null;
   message: string | null;
 };
 

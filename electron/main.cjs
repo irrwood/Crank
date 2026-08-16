@@ -1360,6 +1360,9 @@ function isLocalPreviewUrl(candidate, allowedOrigin) {
 }
 
 async function ensureDevServer(root) {
+  if (path.resolve(root) === path.resolve(app.getAppPath())) {
+    throw new Error("UI Sync cannot open a live preview of itself.");
+  }
   const running = devServers.get(root);
   if (running && await probeUrl(running.url)) return running;
   devServers.delete(root);
@@ -1370,6 +1373,12 @@ async function ensureDevServer(root) {
     error.reason = started.reason;
     error.output = started.output ?? null;
     throw error;
+  }
+  // Never hand back the server rendering UI Sync's own window.
+  const ownDevServer = process.env.UI_SYNC_DEV_SERVER_URL;
+  if (ownDevServer && started.origin === new URL(ownDevServer).origin) {
+    started.stop?.();
+    throw new Error("That project's dev server could not be told apart from UI Sync's own dev server.");
   }
   const record = {
     url: started.url,

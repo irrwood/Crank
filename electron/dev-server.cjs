@@ -1,4 +1,4 @@
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const http = require("node:http");
 const path = require("node:path");
 const { access, readFile } = require("node:fs/promises");
@@ -69,8 +69,15 @@ function stripAnsi(value) {
  */
 function parseServerUrls(chunk) {
   if (typeof chunk !== "string") return [];
+  // npm, pnpm and yarn echo the script source as "> <script>" before running
+  // it. A script that mentions a URL would otherwise be read as the server's
+  // own announcement and probed against whatever already owns that port.
+  const text = stripAnsi(chunk)
+    .split("\n")
+    .filter((line) => !/^\s*[>$]\s/.test(line))
+    .join("\n");
   const found = [];
-  for (const match of stripAnsi(chunk).matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{2,5})(?![\d.])/gi)) {
+  for (const match of text.matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{2,5})(?![\d.])/gi)) {
     let url;
     try {
       url = new URL(match[0]);
@@ -120,9 +127,29 @@ async function waitForServer(url, { attempts = 100, interval = 250, signal } = {
   return false;
 }
 
-function buildRunArgs(packageManager, scriptName) {
-  if (packageManager === "npm") return ["run", scriptName];
-  return ["run", scriptName];
+const launcherProbes = new Map();
+
+function canSpawn(command) {
+  if (!launcherProbes.has(command)) {
+    launcherProbes.set(command, !spawnSync(command, ["--version"], { stdio: "ignore" }).error);
+  }
+  return launcherProbes.get(command);
+}
+
+/**
+ * pnpm and yarn are frequently only shell aliases onto corepack, so they
+ * resolve when typed in a terminal but are ENOENT when spawned without a shell.
+ * Fall back to corepack rather than silently running the wrong package manager,
+ * which would resolve dependencies differently.
+ */
+function resolveLauncher(packageManager) {
+  if (canSpawn(packageManager)) return { command: packageManager, args: [] };
+  if (packageManager !== "npm" && canSpawn("corepack")) return { command: "corepack", args: [packageManager] };
+  return null;
+}
+
+function buildRunArgs(launcher, scriptName) {
+  return [...launcher.args, "run", scriptName];
 }
 
 /**
@@ -154,12 +181,22 @@ async function resolveDevCommand(root) {
     };
   }
   const packageManager = await detectPackageManager(root);
+  const launcher = resolveLauncher(packageManager);
+  if (!launcher) {
+    return {
+      ok: false,
+      reason: "package-manager-missing",
+      message: `This project uses ${packageManager}, which is not available to run directly. `
+        + `Install ${packageManager}, or enable it with "corepack enable".`
+    };
+  }
   const script = manifest.scripts[scriptName];
   return {
     ok: true,
     scriptName,
     script,
     packageManager,
+    launcher,
     configuredPort: extractConfiguredPort(script),
     command: `${packageManager} run ${scriptName}`
   };
@@ -180,7 +217,7 @@ async function startDevServer(root, { onLog, startTimeoutMs = 60000 } = {}) {
     }
   }
 
-  const child = spawn(resolved.packageManager, buildRunArgs(resolved.packageManager, resolved.scriptName), {
+  const child = spawn(resolved.launcher.command, buildRunArgs(resolved.launcher, resolved.scriptName), {
     cwd: root,
     env: { ...process.env, BROWSER: "none", FORCE_COLOR: "0" },
     detached: process.platform !== "win32",
@@ -207,10 +244,11 @@ async function startDevServer(root, { onLog, startTimeoutMs = 60000 } = {}) {
   const deadline = Date.now() + startTimeoutMs;
   while (Date.now() < deadline) {
     if (exited !== null) {
+      const tail = stripAnsi(output.join("")).trim().split("\n").slice(-3).join(" ").slice(0, 300);
       return {
         ok: false,
         reason: "exited",
-        message: `${resolved.command} exited before serving a page.`,
+        message: `${resolved.command} exited before serving a page.${tail ? ` Last output: ${tail}` : ""}`,
         output: output.join("").slice(-4000)
       };
     }
@@ -258,6 +296,7 @@ module.exports = {
   probeUrl,
   stripAnsi,
   resolveDevCommand,
+  resolveLauncher,
   startDevServer,
   stopDevServer,
   waitForServer

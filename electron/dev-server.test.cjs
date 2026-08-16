@@ -5,6 +5,7 @@ const { mkdtemp, rm, writeFile, mkdir } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const {
+  buildRunArgs,
   chooseDevScript,
   detectPackageManager,
   extractConfiguredPort,
@@ -12,6 +13,7 @@ const {
   parseServerUrls,
   probeUrl,
   resolveDevCommand,
+  resolveLauncher,
   startDevServer
 } = require("./dev-server.cjs");
 
@@ -80,6 +82,35 @@ test("parses the coloured url vite actually prints", () => {
     + "\u001B[36mhttp://localhost:\u001B[1m4319\u001B[22m/\u001B[39m\n"
     + "\u001B[2m  \u001B[32m➜\u001B[39m  \u001B[1mNetwork\u001B[22m\u001B[2m: use \u001B[22m\u001B[1m--host\u001B[22m\u001B[2m to expose\u001B[22m\n";
   assert.deepEqual(parseServerUrls(viteOutput), ["http://localhost:4319/"]);
+});
+
+test("ignores a url echoed inside the script source, port and all", () => {
+  // UI Sync's own dev script mentions 127.0.0.1:5173, so previewing a project
+  // whose script names a URL must not latch onto whoever owns that port.
+  const banner = "\n> ui-sync-desktop@0.1.0 dev\n"
+    + "> concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && "
+    + "UI_SYNC_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"\n\n";
+  assert.deepEqual(parseServerUrls(banner), []);
+  assert.deepEqual(
+    parseServerUrls(`${banner}  ➜  Local:   http://localhost:5199/`),
+    ["http://localhost:5199/"]
+  );
+});
+
+test("falls back to corepack when a package manager is only a shell alias", () => {
+  // pnpm/yarn are commonly aliases onto corepack, so spawning them directly is
+  // ENOENT even though they work when typed into a terminal.
+  const npm = resolveLauncher("npm");
+  assert.equal(npm.command, "npm");
+  assert.deepEqual(npm.args, []);
+
+  const pnpm = resolveLauncher("pnpm");
+  assert.ok(pnpm, "pnpm must resolve either directly or through corepack");
+  assert.ok(
+    pnpm.command === "pnpm" || (pnpm.command === "corepack" && pnpm.args[0] === "pnpm"),
+    `unexpected launcher: ${JSON.stringify(pnpm)}`
+  );
+  assert.deepEqual(buildRunArgs(pnpm, "dev").slice(-2), ["run", "dev"]);
 });
 
 test("refuses to start without a dev script or dependencies", async () => {
