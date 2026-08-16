@@ -7,6 +7,7 @@ const { startDevServer } = require("./dev-server.cjs");
 const { detectElectronRenderer, startRendererServer } = require("./renderer-server.cjs");
 const { discoverJavascriptProjectRoots, scanJavascriptProject } = require("./project-scanner.cjs");
 const { describeForeignProject } = require("./foreign-project.cjs");
+const { startForeignServer } = require("./foreign-server.cjs");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 
 /**
@@ -239,6 +240,26 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
     // address is one command away.
     if (started.reason === "no-manifest" || started.reason === "no-dev-script") {
       const foreign = await describeForeignProject(root);
+      if (foreign?.commands?.length) {
+        onStatus?.({ phase: "starting", detail: `Running this ${foreign.kind} project's own command` });
+        const ran = await startForeignServer(root, foreign, { startTimeoutMs: 90_000 });
+        if (ran.ok) {
+          onStatus?.({ phase: "scanning", detail: ran.attached ? `Reusing ${ran.url}` : `Serving at ${ran.url}` });
+          try {
+            const inventory = await scanUrl(ran.url, { ...options, seedPaths });
+            return inventory.ok ? { ...inventory, servedBy: ran.command, attached: Boolean(ran.attached) } : inventory;
+          } finally {
+            ran.stop?.();
+          }
+        }
+        // Could not run it after all — hand back what the project declares.
+        return {
+          ok: false,
+          reason: "foreign",
+          message: `${ran.message} Start this ${foreign.kind} project yourself, then scan its address.`,
+          foreign
+        };
+      }
       if (foreign) {
         return {
           ok: false,
