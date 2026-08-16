@@ -1,0 +1,1 @@
+// Minimal fixture used only for project discovery tests.

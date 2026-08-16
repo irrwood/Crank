@@ -1,0 +1,31 @@
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
+
+contextBridge.exposeInMainWorld("uiSync", {
+  listProjects: () => ipcRenderer.invoke("projects:list"),
+  addProject: (kind) => ipcRenderer.invoke("projects:add", kind),
+  inspectDroppedProjects: (roots) => ipcRenderer.invoke("projects:inspect-dropped", roots),
+  getProjectPreviews: (root) => ipcRenderer.invoke("projects:previews", root),
+  getDroppedPath: (file) => webUtils.getPathForFile(file),
+  connectFigmaProject: (root, figmaUrl) => ipcRenderer.invoke("projects:connect-figma", root, figmaUrl),
+  mapProjectScreen: (root, screenId, figmaUrl) => ipcRenderer.invoke("projects:map-screen", root, screenId, figmaUrl),
+  beginAutomaticMapping: (root, targetId) => ipcRenderer.invoke("projects:auto-map", root, targetId),
+  beginPull: (root) => ipcRenderer.invoke("projects:pull", root),
+  applyPull: (root) => ipcRenderer.invoke("projects:apply-pull", root),
+  syncFromFigmaWithCodex: (root) => ipcRenderer.invoke("projects:sync-from-figma-with-codex", root),
+  openCodexConversation: (root) => ipcRenderer.invoke("projects:open-codex-conversation", root),
+  onCodexThreadStarted: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("projects:codex-thread-started", listener);
+    return () => ipcRenderer.removeListener("projects:codex-thread-started", listener);
+  },
+  openCodexThread: (threadId) => ipcRenderer.invoke("codex:open-thread", threadId),
+  getAutomaticMappingStatus: (root, pairingCode) => ipcRenderer.invoke("projects:auto-map-status", root, pairingCode),
+  refreshProject: (root) => ipcRenderer.invoke("projects:refresh", root),
+  runSwiftUiDesignBuild: (root) => ipcRenderer.invoke("projects:design-build", root),
+  getSwiftUiDesignSession: (root) => ipcRenderer.invoke("projects:design-session", root),
+  applySwiftUiVisualEdits: (root, batch) => ipcRenderer.invoke("projects:visual-edit", root, batch),
+  resolveSwiftUiVisualEdit: (root, resolution) => ipcRenderer.invoke("projects:visual-edit-resolve", root, resolution),
+  showFigmaPlugin: () => ipcRenderer.invoke("figma:show-plugin"),
+  copyText: (value) => ipcRenderer.invoke("clipboard:write", value),
+  openFigma: (fileKey, nodeId) => ipcRenderer.invoke("figma:open", fileKey, nodeId)
+});

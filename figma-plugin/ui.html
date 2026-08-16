@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: var(--figma-color-text);
+        background: var(--figma-color-bg);
+        font: 12px/1.45 Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+      main { padding: 20px; }
+      .mark {
+        width: 34px; height: 34px; display: grid; place-items: center;
+        border: 1px solid var(--figma-color-border); border-radius: 9px;
+        background: var(--figma-color-bg-secondary); font-size: 17px; font-weight: 700;
+      }
+      h1 { margin: 18px 0 5px; font-size: 16px; line-height: 1.25; }
+      p { margin: 0; color: var(--figma-color-text-secondary); }
+      label { display: block; margin-top: 22px; color: var(--figma-color-text-secondary); }
+      input {
+        width: 100%; margin-top: 7px; height: 44px; padding: 0 12px;
+        border: 1px solid var(--figma-color-border-strong); border-radius: 8px;
+        color: var(--figma-color-text); background: var(--figma-color-bg);
+        font: 600 20px/1 Inter, sans-serif; letter-spacing: .22em; text-align: center;
+        outline: none;
+      }
+      input:focus { border-color: var(--figma-color-border-selected); box-shadow: 0 0 0 1px var(--figma-color-border-selected); }
+      .status {
+        min-height: 56px; margin-top: 14px; padding: 11px 12px; border-radius: 8px;
+        background: var(--figma-color-bg-secondary); color: var(--figma-color-text-secondary);
+      }
+      .status.error { color: var(--figma-color-text-danger); background: var(--figma-color-bg-danger-tertiary); }
+      .status.success { color: var(--figma-color-text-success); background: var(--figma-color-bg-success-tertiary); }
+      .status strong { display: block; margin-bottom: 2px; color: inherit; }
+      .actions { display: flex; gap: 8px; margin-top: 18px; }
+      button {
+        height: 36px; padding: 0 14px; border: 0; border-radius: 7px;
+        color: var(--figma-color-text-onbrand); background: var(--figma-color-bg-brand);
+        font: 600 12px Inter, sans-serif; cursor: pointer;
+      }
+      button.secondary { color: var(--figma-color-text); background: var(--figma-color-bg-secondary); }
+      button.primary { flex: 1; }
+      button:disabled { opacity: .45; cursor: default; }
+      .privacy { margin-top: 16px; font-size: 11px; }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark">⌁</div>
+      <h1>UI Sync</h1>
+      <p>Connect this Figma plugin to UI Sync on your Mac. You only need to do this once.</p>
+      <label id="pairing-field">
+        One-time code
+        <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" autofocus />
+      </label>
+      <div id="status" class="status">Enter the one-time code from the UI Sync app.</div>
+      <div class="actions">
+        <button id="close" class="secondary" type="button">Close</button>
+        <button id="forget" class="secondary hidden" type="button">Disconnect device</button>
+        <button id="connect" class="primary" type="button">Connect</button>
+      </div>
+      <p class="privacy">After connecting, open this plugin whenever you want to sync. Swift source stays local.</p>
+    </main>
+    <script>
+      const code = document.getElementById("code");
+      const status = document.getElementById("status");
+      const connect = document.getElementById("connect");
+      const pairingField = document.getElementById("pairing-field");
+      const forget = document.getElementById("forget");
+
+      function showPairing() {
+        pairingField.classList.remove("hidden");
+        connect.classList.remove("hidden");
+        connect.disabled = false;
+        forget.classList.add("hidden");
+        status.className = "status";
+        status.textContent = "Enter the one-time code shown in UI Sync.";
+      }
+
+      function showConnected(message = "Connected. Waiting for a sync from UI Sync…") {
+        pairingField.classList.add("hidden");
+        connect.classList.add("hidden");
+        forget.classList.remove("hidden");
+        status.className = "status success";
+        status.innerHTML = `<strong>Connected</strong>${message}`;
+      }
+
+      code.addEventListener("input", () => {
+        code.value = code.value.replace(/\D/g, "").slice(0, 6);
+      });
+      code.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") connect.click();
+      });
+      connect.addEventListener("click", () => {
+        connect.disabled = true;
+        status.className = "status";
+        status.textContent = "Connecting…";
+        parent.postMessage({ pluginMessage: { type: "connect", pairingCode: code.value } }, "*");
+      });
+      document.getElementById("close").addEventListener("click", () => {
+        parent.postMessage({ pluginMessage: { type: "close" } }, "*");
+      });
+      forget.addEventListener("click", () => {
+        parent.postMessage({ pluginMessage: { type: "forget" } }, "*");
+      });
+      window.onmessage = (event) => {
+        const message = event.data.pluginMessage;
+        if (!message) return;
+        if (message.type === "progress") {
+          status.className = "status";
+          status.textContent = message.message;
+        }
+        if (message.type === "pairing-required") showPairing();
+        if (message.type === "connected") showConnected();
+        if (message.type === "offline") {
+          showConnected(message.message || "Open the UI Sync desktop app to continue.");
+          status.className = "status";
+        }
+        if (message.type === "error") {
+          connect.disabled = false;
+          status.className = "status error";
+          status.textContent = message.message;
+        }
+        if (message.type === "complete") {
+          pairingField.classList.add("hidden");
+          connect.classList.add("hidden");
+          forget.classList.remove("hidden");
+          status.className = "status success";
+          status.innerHTML = `<strong>Sync complete</strong>${message.renderedCount} screens rendered · ${message.createdCount} frames created · ${message.reusedCount} restored. This connection is remembered.`;
+        }
+      };
+      parent.postMessage({ pluginMessage: { type: "resume" } }, "*");
+      window.setInterval(() => {
+        parent.postMessage({ pluginMessage: { type: "resume" } }, "*");
+      }, 2000);
+    </script>
+  </body>
+</html>

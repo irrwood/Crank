@@ -1,0 +1,14 @@
+{
+  "name": "UI Sync Bridge",
+  "id": "1533373984774514799",
+  "api": "1.0.0",
+  "editorType": ["figma"],
+  "main": "code.js",
+  "ui": "ui.html",
+  "documentAccess": "dynamic-page",
+  "permissions": ["teamlibrary"],
+  "networkAccess": {
+    "allowedDomains": ["http://localhost:38457"],
+    "reasoning": "Connects to the UI Sync desktop app on this Mac to receive local mapping jobs and return Figma node IDs."
+  }
+}

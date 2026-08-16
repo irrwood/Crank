@@ -1,0 +1,1992 @@
+const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
+const { readFile, writeFile, access, mkdir, readdir } = require("node:fs/promises");
+const { createHash, randomBytes } = require("node:crypto");
+const { createServer } = require("node:http");
+const path = require("node:path");
+const { z } = require("zod");
+const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
+const { parseFigmaDesignUrl } = require("./figma-link.cjs");
+const { createFigmaBridge } = require("./figma-bridge.cjs");
+const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
+const { createSwiftUiRuntimeServer, mergeRuntimeSnapshot, runSwiftUiDesignBuild, runtimeSnapshotSchema } = require("./swiftui-design-runtime.cjs");
+const { buildSwiftVisualPayload } = require("./swift-visual-assets.cjs");
+const { isTextCleanPdfSafe } = require("./pdf-text-clean.cjs");
+const { convertPdfToFigmaSvg } = require("./swift-pdf-vector.cjs");
+const { extractPdfTextRuns } = require("./swift-pdf-text.cjs");
+const { prepareNativeSvgShadows } = require("./svg-native-shadows.cjs");
+const { resolveCapturedSwiftVectorEffects, sourceVectorEffectSchema } = require("./swift-vector-effects.cjs");
+const { resolveSwiftSourceImages } = require("./swift-source-images.cjs");
+const { associatePdfPagesWithScreens } = require("./pdf-page-association.cjs");
+const { normalizeSwiftTreeForPdfPage } = require("./swift-page-coordinate.cjs");
+const { buildCodexConnectionPrompt, buildCodexNewThreadUrl, buildCodexSyncPrompt, findCodexProjectThread, runCodexSyncAgent } = require("./codex-sync-agent.cjs");
+const { buildVisualEditPrompt, compareDesignStates, designNodeSnapshotSchema, extractDesignNodes, semanticIntentBatchSchema } = require("./visual-editing.cjs");
+const { abortDesignEditCheckpoint, beginDesignEditCheckpoint, commitDesignEditIteration, resolveDesignEditCheckpoint } = require("./design-edit-checkpoint.cjs");
+
+const visualBaselineNodeSchema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9_:/-]{1,500}$/),
+  selector: z.string().min(1).max(240).nullable(),
+  kind: z.enum(["element", "text", "svg", "image"]),
+  width: z.number().finite().min(0).max(10000),
+  height: z.number().finite().min(0).max(10000),
+  backgroundColor: z.string().max(80).nullable(),
+  radius: z.number().finite().min(0).max(5000).nullable(),
+  fontSize: z.number().finite().min(0).max(400).nullable(),
+  fontWeight: z.number().int().min(0).max(1000).nullable(),
+  text: z.string().max(4000).nullable()
+});
+
+const syncStateSchema = z.object({
+  version: z.number(),
+  revision: z.number().int().nonnegative(),
+  figma: z.object({
+    fileKey: z.string().min(1),
+    frameNodeId: z.string().optional(),
+    frameName: z.string().optional()
+  }),
+  elements: z.record(
+    z.object({
+      code: z.object({
+        file: z.string(),
+        component: z.string().optional()
+      }),
+      figma: z.object({ nodeId: z.string() }),
+      lastSync: z.unknown()
+    })
+  ),
+  lastRevision: z
+    .object({
+      origin: z.string(),
+      timestamp: z.string()
+    })
+    .optional()
+});
+
+const registrySchema = z.array(
+  z.object({
+    root: z.string().min(1),
+    figmaFileName: z.string().optional(),
+    figmaFileKey: z.string().optional(),
+    figmaNodeId: z.string().optional(),
+    figmaMappings: z.record(
+      z.object({
+        nodeId: z.string(),
+        frameName: z.string()
+      })
+    ).optional(),
+    visualBaselines: z.record(z.array(visualBaselineNodeSchema).max(5000)).optional(),
+    swiftRuntimeSnapshot: runtimeSnapshotSchema.optional(),
+    swiftRuntimeScreenshot: z.object({
+      path: z.string().min(1).refine(path.isAbsolute),
+      capturedAt: z.string().datetime(),
+      viewport: z.object({
+        x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive()
+      }).strict(),
+      displayScale: z.number().finite().min(0.5).max(8)
+    }).strict().optional(),
+    swiftRuntimeVector: z.object({
+      pdfPath: z.string().min(1).refine(path.isAbsolute),
+      svgPath: z.string().min(1).refine(path.isAbsolute),
+      capturedAt: z.string().datetime(),
+      viewport: z.object({
+        x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive()
+      }).strict()
+    }).strict().optional(),
+    swiftRuntimeVectorMessage: z.string().min(1).max(1000).optional(),
+    swiftRuntimePdf: z.object({
+      path: z.string().min(1).refine(path.isAbsolute),
+      capturedAt: z.string().datetime(),
+      viewport: z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict(),
+      pages: z.array(z.object({
+        id: z.string().regex(/^pdf-page-\d+$/),
+        pageNumber: z.number().int().positive().max(500),
+        name: z.string().min(1).max(160),
+        width: z.number().positive().max(10000),
+        height: z.number().positive().max(10000),
+        previewPath: z.string().min(1).refine(path.isAbsolute),
+        pdfPath: z.string().min(1).refine(path.isAbsolute).optional(),
+        cleanPdfPath: z.string().min(1).refine(path.isAbsolute).optional(),
+        textCleanPdfPath: z.string().min(1).refine(path.isAbsolute).optional(),
+        nativeEffectIds: z.array(z.string().regex(/^swift\/[a-f0-9]{16}\/(?:shadow|blur)$/)).max(2000).optional(),
+        nativeEffects: z.array(sourceVectorEffectSchema).max(2000).optional(),
+        pdfPageNumber: z.number().int().positive().max(500).optional(),
+        renderSource: z.enum(["image-renderer", "window-fallback"]).optional(),
+        sourceName: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,159}$/).optional(),
+        systemTabBar: z.object({
+          designKit: z.string().regex(/^iOS \d+$/).optional(),
+          appearance: z.enum(["classic", "liquid-glass"]).optional(),
+          selectedIndex: z.number().int().nonnegative().max(20),
+          items: z.array(z.object({
+            title: z.string().min(1).max(120),
+            systemImage: z.string().regex(/^[A-Za-z0-9._-]{1,120}$/),
+            sourceName: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,159}$/)
+          }).strict()).min(2).max(20)
+        }).strict().optional(),
+        contentFrame: z.object({
+          x: z.number().finite().min(-10000).max(10000),
+          y: z.number().finite().min(-10000).max(10000),
+          width: z.number().positive().max(10000),
+          height: z.number().positive().max(10000)
+        }).strict().optional(),
+        sourceScreenId: z.string().regex(/^[A-Za-z0-9_-]{1,120}$/).optional(),
+        sourceScreenName: z.string().min(1).max(160).optional()
+      }).strict()).min(1).max(500)
+    }).strict().optional(),
+    codexThreadId: z.string().uuid().optional(),
+    codexThreadBindingVersion: z.literal(2).optional(),
+    codexThreadRequestedAt: z.string().datetime().optional()
+  })
+);
+
+const deviceConnectionSchema = z.object({
+  token: z.string().regex(/^[a-f0-9]{64}$/),
+  confirmed: z.boolean()
+});
+
+const projectRootSchema = z.string().min(1).refine(path.isAbsolute);
+const expectedProjectKindSchema = z.enum(["web", "desktop", "swiftui"]).optional();
+const screenIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/);
+const pairingCodeSchema = z.string().regex(/^\d{6}$/);
+const projectPreviewSchema = z.object({
+  screenId: screenIdSchema,
+  screenshotDataUrl: z.string().startsWith("data:image/jpeg;base64,").max(3_000_000),
+  width: z.number().finite().positive().max(10000),
+  height: z.number().finite().positive().max(10000)
+}).strict();
+const appIconPath = path.join(__dirname, "..", "assets", "app-icon.png");
+const figmaPluginManifestPath = path.join(__dirname, "..", "figma-plugin", "manifest.json");
+let figmaBridge = null;
+let swiftUiRuntimeServer = null;
+const pendingPulls = new Map();
+const pendingDesignEdits = new Map();
+
+const registryPath = () => path.join(app.getPath("userData"), "projects.json");
+const deviceConnectionPath = () => path.join(app.getPath("userData"), "figma-device-connection.json");
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    window.focus();
+  });
+}
+
+async function pathExists(target) {
+  try {
+    await access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function snapshotEditableFiles(root) {
+  const files = await collectFiles(root, (target) => /\.(?:css|h|html|js|json|jsx|less|m|pbxproj|plist|sass|scss|strings|svelte|swift|ts|tsx|vue|xcconfig)$/i.test(target), 5000);
+  return new Map(await Promise.all(files.map(async (target) => {
+    try {
+      const content = await readFile(target);
+      return [path.relative(root, target), createHash("sha256").update(content).digest("hex")];
+    } catch {
+      return [path.relative(root, target), null];
+    }
+  })));
+}
+
+function changedEditableFiles(before, after) {
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((file) => before.get(file) !== after.get(file))
+    .sort();
+}
+
+async function readRegistry() {
+  try {
+    return registrySchema.parse(JSON.parse(await readFile(registryPath(), "utf8")));
+  } catch {
+    return [];
+  }
+}
+
+async function writeRegistry(projects) {
+  await writeFile(registryPath(), `${JSON.stringify(registrySchema.parse(projects), null, 2)}\n`);
+}
+
+async function updateCodexThreadMetadata(root, update) {
+  const registry = await readRegistry();
+  const index = registry.findIndex((entry) => entry.root === root);
+  if (index < 0) throw new Error("Project is no longer registered");
+  const nextRegistry = [...registry];
+  nextRegistry[index] = update(registry[index]);
+  await writeRegistry(nextRegistry);
+  return nextRegistry[index];
+}
+
+async function rememberProjectCodexThread(root, threadId) {
+  return await updateCodexThreadMetadata(root, (current) => {
+    const { codexThreadRequestedAt: _requestedAt, ...rest } = current;
+    return {
+      ...rest,
+      codexThreadId: threadId,
+      codexThreadBindingVersion: 2
+    };
+  });
+}
+
+async function requestProjectCodexThread(root, prompt) {
+  const requestedAt = new Date().toISOString();
+  const metadata = await updateCodexThreadMetadata(root, (current) => {
+    const { codexThreadId: _legacyThreadId, codexThreadBindingVersion: _legacyBinding, ...rest } = current;
+    return { ...rest, codexThreadRequestedAt: requestedAt };
+  });
+  await shell.openExternal(buildCodexNewThreadUrl({ root, prompt }));
+  return metadata;
+}
+
+async function resolveProjectCodexThread(root, project, current) {
+  if (current.codexThreadBindingVersion === 2 && current.codexThreadId) {
+    return { threadId: current.codexThreadId, metadata: current };
+  }
+  if (!current.codexThreadRequestedAt) return null;
+  const thread = await findCodexProjectThread({
+    root,
+    threadName: `UI Sync · ${project.name}`,
+    notBefore: current.codexThreadRequestedAt
+  });
+  if (!thread?.id) return null;
+  return {
+    threadId: thread.id,
+    metadata: await rememberProjectCodexThread(root, thread.id)
+  };
+}
+
+async function readDeviceConnection() {
+  try {
+    return deviceConnectionSchema.parse(JSON.parse(await readFile(deviceConnectionPath(), "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+async function writeDeviceConnection(connection) {
+  await writeFile(deviceConnectionPath(), `${JSON.stringify(deviceConnectionSchema.parse(connection), null, 2)}\n`);
+}
+
+async function ensureDeviceConnection() {
+  const existing = await readDeviceConnection();
+  if (existing) return existing;
+  const connection = { token: randomBytes(32).toString("hex"), confirmed: false };
+  await writeDeviceConnection(connection);
+  return connection;
+}
+
+async function confirmDeviceConnection(token) {
+  const current = await readDeviceConnection();
+  if (current?.token === token && !current.confirmed) await writeDeviceConnection({ ...current, confirmed: true });
+}
+
+async function resetDeviceConnection(token) {
+  const current = await readDeviceConnection();
+  if (current?.token !== token) return;
+  await writeDeviceConnection({ token: randomBytes(32).toString("hex"), confirmed: false });
+}
+
+async function saveAutomaticMappings(context, result) {
+  const registry = await readRegistry();
+  const index = registry.findIndex((item) => item.root === context.root);
+  if (index < 0) throw new Error("Project is no longer registered");
+  const current = registry[index];
+  if (current.figmaFileKey !== context.figmaFileKey) {
+    throw new Error("The connected Figma file changed while frames were being linked");
+  }
+  const figmaMappings = { ...(current.figmaMappings ?? {}) };
+  for (const mapping of result.mappings) {
+    figmaMappings[mapping.screenId] = {
+      nodeId: mapping.nodeId,
+      frameName: mapping.frameName
+    };
+  }
+  const renderedBaselines = Object.fromEntries(
+    (result.screens ?? [])
+      .filter((screen) => screen.nodes.length > 0)
+      .map((screen) => [screen.screenId, screen.nodes])
+  );
+  const visualBaselines = {
+    ...(context.visualBaselines ?? {}),
+    ...renderedBaselines
+  };
+  const nextRegistry = [...registry];
+  nextRegistry[index] = {
+    ...current,
+    figmaMappings,
+    ...(Object.keys(visualBaselines).length > 0 ? { visualBaselines } : {})
+  };
+  await writeRegistry(nextRegistry);
+}
+
+async function preparePullPreview(context, result) {
+  const registry = await readRegistry();
+  const current = registry.find((entry) => entry.root === context.root);
+  if (!current?.visualBaselines) throw new Error("Push this project to Figma once before pulling changes back");
+  const figmaScreens = Object.fromEntries(result.screens.map((screen) => [screen.screenId, screen.nodes]));
+  const preview = buildPullPreview(current.visualBaselines, context.codeScreens, figmaScreens);
+  const patchPlan = context.projectKind === "swiftui"
+    ? await createSwiftPatchPlan(context.root, preview.changes)
+    : await createPatchPlan(context.root, preview.changes);
+  const automaticChangeIds = new Set(patchPlan.mutations.map((mutation) => mutation.changeId));
+  const pullPreview = {
+    changes: preview.changes.map((change) => ({
+      id: change.id,
+      screenId: change.screenId,
+      area: context.screenNames[change.screenId] ?? "Screen",
+      property: change.property,
+      before: change.code,
+      after: change.figma,
+      route: automaticChangeIds.has(change.id) ? "automatic" : "codex"
+    })),
+    conflicts: preview.conflicts,
+    rejected: patchPlan.rejected.map(({ id, reason }) => ({ id, reason }))
+  };
+  pendingPulls.set(context.root, { patchPlan, preview, figmaScreens, pullPreview });
+  return { pullPreview };
+}
+
+async function readJsonIfPresent(target) {
+  try {
+    return JSON.parse(await readFile(target, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function detectProjectRuntime(root, state) {
+  const javascript = await scanJavascriptProject(root);
+  if (javascript) return javascript;
+  const hasSwiftMapping = Object.values(state.elements).some((element) => element.code.file.endsWith(".swift"));
+  if (hasSwiftMapping) {
+    const swiftUi = await scanSwiftUiProject(root, { cacheDirectory: path.join(app.getPath("userData"), "tools") });
+    if (swiftUi) return swiftUi;
+  }
+
+  const manifestPaths = new Set([path.join(root, "package.json")]);
+  for (const element of Object.values(state.elements)) {
+    let directory = path.dirname(path.resolve(root, element.code.file));
+    while (directory.startsWith(root)) {
+      manifestPaths.add(path.join(directory, "package.json"));
+      if (directory === root) break;
+      directory = path.dirname(directory);
+    }
+  }
+
+  const manifests = (
+    await Promise.all([...manifestPaths].map((manifestPath) => readJsonIfPresent(manifestPath)))
+  ).filter(Boolean);
+  const dependencyNames = new Set();
+  for (const manifest of manifests) {
+    for (const field of ["dependencies", "devDependencies"]) {
+      Object.keys(manifest[field] ?? {}).forEach((name) => dependencyNames.add(name));
+    }
+  }
+
+  const has = (name) => dependencyNames.has(name);
+  const isDesktop = has("electron") || has("electron-vite") || has("@electron/remote");
+  const hasTailwind = has("tailwindcss") || has("@tailwindcss/vite");
+  let framework = "React";
+  if (has("next")) framework = "Next.js";
+  else if (has("@remix-run/react")) framework = "Remix";
+  else if (has("gatsby")) framework = "Gatsby";
+  else if (has("vite")) framework = "React + Vite";
+
+  return {
+    kind: isDesktop ? "desktop" : "web",
+    framework: `${framework}${hasTailwind ? " + Tailwind" : ""}`,
+    analysisEngine: "Static project scan",
+    detectedName: path.basename(root),
+    sourceFileCount: 0,
+    screens: []
+  };
+}
+
+function applyRegistryMetadata(project, metadata) {
+  if (!metadata?.figmaFileKey) return project;
+  const mappings = metadata.figmaMappings ?? {};
+  return {
+    ...project,
+    connectionStatus: "connected",
+    figmaFileName: metadata.figmaFileName ?? "Figma file",
+    fileKey: metadata.figmaFileKey,
+    frameNodeId: metadata.figmaNodeId ?? null,
+    frameName: metadata.figmaNodeId ? `Node ${metadata.figmaNodeId}` : null,
+    linkedCount: Object.keys(mappings).length,
+    screens: project.screens.map((screen) => ({
+      ...screen,
+      figmaNodeId: mappings[screen.id]?.nodeId ?? null,
+      figmaFrameName: mappings[screen.id]?.frameName ?? null
+    }))
+  };
+}
+
+function figmaSwiftTree(node) {
+  if (!node || typeof node !== "object") return node;
+  const { sourceExpression: _localSourceExpression, children, ...safeNode } = node;
+  return {
+    ...safeNode,
+    ...(children ? { children: children.map(figmaSwiftTree) } : {})
+  };
+}
+
+function createUnlinkedProject(root, runtime, metadata) {
+  let screens = runtime.screens ?? [];
+  let runtimeCapture = runtime.kind === "swiftui" ? { state: "not-run" } : undefined;
+  let analysisEngine = runtime.analysisEngine;
+  if (runtime.kind === "swiftui" && metadata?.swiftRuntimeSnapshot) {
+    const merged = mergeRuntimeSnapshot(screens, metadata.swiftRuntimeSnapshot);
+    screens = merged.screens;
+    analysisEngine = `${runtime.analysisEngine} + Design Runtime`;
+    runtimeCapture = {
+      state: "captured",
+      capturedAt: metadata.swiftRuntimeSnapshot.capturedAt,
+      capturedNodeCount: Math.max(merged.coverage.capturedNodeCount, metadata.swiftRuntimeSnapshot.nodes.filter((node) => !node.syncId.startsWith("swift/")).length),
+      screenCount: Math.max(merged.coverage.screenCount, metadata.swiftRuntimeSnapshot.nodes.some((node) => !node.syncId.startsWith("swift/")) ? 1 : 0),
+      deviceName: metadata.swiftRuntimeSnapshot.deviceName
+    };
+  }
+  const project = {
+    id: Buffer.from(root).toString("base64url"),
+    root,
+    name: runtime.detectedName ?? path.basename(root),
+    kind: runtime.kind,
+    framework: runtime.framework,
+    analysisEngine,
+    ...(runtimeCapture ? { runtimeCapture } : {}),
+    figmaFileName: null,
+    frameName: null,
+    frameNodeId: null,
+    fileKey: null,
+    linkedCount: 0,
+    revision: 0,
+    snapshotCount: 0,
+    lastOrigin: "discovery",
+    lastSyncedAt: null,
+    connectionStatus: "setup",
+    sourceFileCount: runtime.sourceFileCount ?? 0,
+    codexThreadId: metadata?.codexThreadId ?? null,
+    screens
+  };
+  return applyRegistryMetadata(project, metadata);
+}
+
+async function inspectProject(root, metadata) {
+  const safeRoot = projectRootSchema.parse(root);
+  if (await pathExists(path.join(safeRoot, ".ui-sync", "state.json"))) {
+    return loadProject(safeRoot, metadata);
+  }
+  const javascript = await scanJavascriptProject(safeRoot);
+  if (javascript) {
+    if (path.resolve(safeRoot) === path.resolve(app.getAppPath())) {
+      const registered = await readRegistry();
+      const available = [];
+      for (const entry of registered) {
+        if (await pathExists(entry.root)) available.push(entry);
+      }
+      if (available.length > 0) {
+        javascript.screens = available.map((entry) => {
+          const projectId = Buffer.from(entry.root).toString("base64url");
+          return createJavascriptScreen(
+            safeRoot,
+            path.basename(entry.root) || "Project",
+            projectId,
+            null,
+            "/",
+            ["Editable rendered state", "Project selection"]
+          );
+        });
+      }
+    }
+    return createUnlinkedProject(safeRoot, javascript, metadata);
+  }
+  const swiftUi = await scanSwiftUiProject(safeRoot, { cacheDirectory: path.join(app.getPath("userData"), "tools") });
+  if (swiftUi) return createUnlinkedProject(safeRoot, swiftUi, metadata);
+  throw new Error("unsupported-project");
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function serializeRenderedApplication() {
+  const root = document.querySelector("[data-ui-sync-root], .app-frame, #root, #app") || document.body;
+  if (!root) throw new Error("The application root is not available");
+
+  const rounded = (value) => Math.round(value * 100) / 100;
+  const pixels = (value) => {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const visible = (style, rect) => style.display !== "none"
+    && style.visibility !== "hidden"
+    && Number.parseFloat(style.opacity || "1") > 0
+    && rect.width >= 0.5
+    && rect.height >= 0.5;
+  const bounds = (rect, parentRect) => ({
+    x: rounded(rect.left - parentRect.left),
+    y: rounded(rect.top - parentRect.top),
+    width: rounded(rect.width),
+    height: rounded(rect.height)
+  });
+  const safeName = (element) => {
+    const label = element.getAttribute("aria-label") || element.getAttribute("title");
+    if (label) return label.slice(0, 100);
+    const className = typeof element.className === "string" ? element.className.split(/\s+/)[0] : "";
+    return `${element.tagName.toLowerCase()}${className ? ` · ${className}` : ""}`.slice(0, 100);
+  };
+  const imageData = (element) => {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, element.naturalWidth || element.width);
+      canvas.height = Math.max(1, element.naturalHeight || element.height);
+      canvas.getContext("2d")?.drawImage(element, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/png");
+    } catch {
+      return null;
+    }
+  };
+  const nodeStyle = (style) => ({
+    backgroundColor: style.backgroundColor,
+    borderTopColor: style.borderTopColor,
+    borderRightColor: style.borderRightColor,
+    borderBottomColor: style.borderBottomColor,
+    borderLeftColor: style.borderLeftColor,
+    borderTopWidth: pixels(style.borderTopWidth),
+    borderRightWidth: pixels(style.borderRightWidth),
+    borderBottomWidth: pixels(style.borderBottomWidth),
+    borderLeftWidth: pixels(style.borderLeftWidth),
+    borderRadius: Math.max(
+      pixels(style.borderTopLeftRadius),
+      pixels(style.borderTopRightRadius),
+      pixels(style.borderBottomRightRadius),
+      pixels(style.borderBottomLeftRadius)
+    ),
+    opacity: Number.parseFloat(style.opacity || "1"),
+    clipsContent: ["hidden", "clip", "scroll", "auto"].includes(style.overflow)
+      || ["hidden", "clip"].includes(style.overflowX)
+      || ["hidden", "clip"].includes(style.overflowY)
+  });
+  const textStyle = (style) => {
+    const direction = style.direction === "rtl" ? "rtl" : "ltr";
+    const logicalAlign = style.textAlign === "start"
+      ? direction === "rtl" ? "right" : "left"
+      : style.textAlign === "end"
+        ? direction === "rtl" ? "left" : "right"
+        : style.textAlign;
+    return {
+      color: style.color,
+      fontSize: pixels(style.fontSize),
+      fontWeight: Number.parseInt(style.fontWeight, 10) || 400,
+      lineHeight: style.lineHeight === "normal" ? pixels(style.fontSize) * 1.2 : pixels(style.lineHeight),
+      letterSpacing: style.letterSpacing === "normal" ? 0 : pixels(style.letterSpacing),
+      textAlign: ["left", "center", "right", "justify"].includes(logicalAlign) ? logicalAlign : "left",
+      fontFamilies: String(style.fontFamily || "system-ui").split(",")
+        .map((family) => family.trim().replace(/^['"]|['"]$/g, ""))
+        .filter(Boolean),
+      fontStyle: style.fontStyle === "italic" ? "italic" : style.fontStyle.startsWith("oblique") ? "oblique" : "normal",
+      fontStretch: style.fontStretch || "100%",
+      whiteSpace: style.whiteSpace || "normal",
+      wordBreak: style.wordBreak || "normal",
+      overflowWrap: style.overflowWrap || "normal",
+      direction,
+      writingMode: style.writingMode || "horizontal-tb"
+    };
+  };
+
+  const normalizedText = (value, whiteSpace) => {
+    const source = String(value || "").replace(/\r\n?/g, "\n");
+    if (["pre", "pre-wrap", "break-spaces"].includes(whiteSpace)) return source;
+    if (whiteSpace === "pre-line") {
+      return source.split("\n").map((line) => line.replace(/[\t\f ]+/g, " ").trim()).join("\n").trim();
+    }
+    return source.replace(/\s+/g, " ").trim();
+  };
+
+  const textLines = (range, parentRect) => {
+    const rects = [...range.getClientRects()]
+      .filter((rect) => rect.width > 0 || rect.height > 0)
+      .sort((left, right) => left.top - right.top || left.left - right.left);
+    const lines = [];
+    for (const rect of rects) {
+      const previous = lines.at(-1);
+      if (previous && Math.abs((previous.top + previous.height / 2) - (rect.top + rect.height / 2)) < 1) {
+        const right = Math.max(previous.left + previous.width, rect.right);
+        previous.left = Math.min(previous.left, rect.left);
+        previous.top = Math.min(previous.top, rect.top);
+        previous.width = right - previous.left;
+        previous.height = Math.max(previous.height, rect.height);
+      } else {
+        lines.push({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+      }
+    }
+    return lines.map((rect) => bounds(rect, parentRect));
+  };
+
+  const rangeLineCount = (range) => {
+    const rects = [...range.getClientRects()]
+      .filter((rect) => rect.width > 0 || rect.height > 0)
+      .sort((left, right) => left.top - right.top || left.left - right.left);
+    let count = 0;
+    let previousCenter = -Infinity;
+    for (const rect of rects) {
+      const center = rect.top + rect.height / 2;
+      if (Math.abs(center - previousCenter) >= 1) {
+        count += 1;
+        previousCenter = center;
+      }
+    }
+    return count;
+  };
+
+  const normalizedOffset = (source, offset, whiteSpace) => {
+    const prefix = source.slice(0, offset).replace(/\r\n?/g, "\n");
+    if (["pre", "pre-wrap", "break-spaces"].includes(whiteSpace)) return prefix.length;
+    if (whiteSpace === "pre-line") {
+      return prefix.split("\n").map((line) => line.replace(/[\t\f ]+/g, " ")).join("\n").trimStart().length;
+    }
+    return prefix.replace(/\s+/g, " ").trimStart().length;
+  };
+
+  const textLineBreakOffsets = (textNode, source, normalized, whiteSpace, lineCount) => {
+    if (lineCount <= 1 || normalized.length <= 1) return [];
+    const segments = typeof Intl.Segmenter === "function"
+      ? [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(source)]
+      : (() => {
+          const result = [];
+          let index = 0;
+          for (const segment of source) {
+            result.push({ segment, index });
+            index += segment.length;
+          }
+          return result;
+        })();
+    const breaks = [];
+    for (let targetLine = 2; targetLine <= lineCount; targetLine += 1) {
+      let low = 0;
+      let high = segments.length - 1;
+      let found = -1;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        const segment = segments[middle];
+        const range = document.createRange();
+        range.setStart(textNode, 0);
+        range.setEnd(textNode, segment.index + segment.segment.length);
+        const prefixLines = rangeLineCount(range);
+        range.detach();
+        if (prefixLines >= targetLine) {
+          found = middle;
+          high = middle - 1;
+        } else {
+          low = middle + 1;
+        }
+      }
+      if (found < 0) continue;
+      const offset = normalizedOffset(source, segments[found].index, whiteSpace);
+      if (offset > 0 && offset < normalized.length && breaks.at(-1) !== offset) breaks.push(offset);
+    }
+    return breaks;
+  };
+
+  const resolvedFontFamily = (style, text) => {
+    const families = String(style.fontFamily || "system-ui").split(",")
+      .map((family) => family.trim().replace(/^['"]|['"]$/g, ""))
+      .filter(Boolean);
+    const contentSample = String(text || "Hg").trim().slice(0, 32) || "Hg";
+    const sample = families.length === 1
+      ? Array.from(contentSample.repeat(32)).slice(0, 32).join("")
+      : "mmmmmmmmmmlli";
+    const specification = `${style.fontStyle || "normal"} ${style.fontWeight || "400"} ${style.fontSize || "16px"}`;
+    const generic = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif", "ui-sans-serif", "ui-monospace", "-apple-system", "BlinkMacSystemFont"]);
+    const fontAvailable = (family) => {
+      if (!document.fonts.check(`${specification} "${family}"`, sample)) return false;
+      const context = document.createElement("canvas").getContext("2d");
+      if (!context) return false;
+      const comparisonSize = "72px";
+      for (const fallback of ["monospace", "sans-serif", "serif"]) {
+        context.font = `${style.fontStyle || "normal"} ${style.fontWeight || "400"} ${comparisonSize} ${fallback}`;
+        const fallbackWidth = context.measureText(sample).width;
+        context.font = `${style.fontStyle || "normal"} ${style.fontWeight || "400"} ${comparisonSize} "${family}", ${fallback}`;
+        if (context.measureText(sample).width !== fallbackWidth) return true;
+      }
+      return false;
+    };
+    const unavailable = [];
+    for (const family of families) {
+      if (generic.has(family)) {
+        if (unavailable.length > 0) {
+          throw new Error(`Font “${unavailable.join("”, “")}” is unavailable in the captured renderer. Install or bundle it, then sync again.`);
+        }
+        return family;
+      }
+      if (fontAvailable(family)) return family;
+      unavailable.push(family);
+    }
+    if (unavailable.length > 0) {
+      throw new Error(`Font “${unavailable.join("”, “")}” is unavailable in the captured renderer. Install or bundle it, then sync again.`);
+    }
+    return "system-ui";
+  };
+
+  const sourceSelector = (element, inherited) => {
+    if (element.id) return `#${element.id}`;
+    const className = typeof element.className === "string"
+      ? element.className.split(/\s+/).find(Boolean)
+      : null;
+    return className ? `.${className}` : inherited;
+  };
+
+  function serializeElement(element, parentRect, identity, inheritedSelector = null) {
+    if (!(element instanceof Element)) return null;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (!visible(style, rect)) return null;
+    const selector = sourceSelector(element, inheritedSelector);
+    const common = { ...bounds(rect, parentRect), id: identity, selector, name: safeName(element) };
+
+    if (element instanceof SVGElement && element.tagName.toLowerCase() === "svg") {
+      return {
+        kind: "svg",
+        ...common,
+        svg: element.outerHTML.replaceAll("currentColor", style.color)
+      };
+    }
+    if (element instanceof HTMLImageElement) {
+      const dataUrl = imageData(element);
+      return dataUrl ? { kind: "image", ...common, dataUrl } : null;
+    }
+
+    const children = [];
+    let elementIndex = 0;
+    let textIndex = 0;
+    for (const child of element.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const sourceText = String(child.textContent || "").replace(/\r\n?/g, "\n");
+        const text = normalizedText(sourceText, style.whiteSpace);
+        if (!text) continue;
+        const range = document.createRange();
+        range.selectNodeContents(child);
+        const textRect = range.getBoundingClientRect();
+        if (!visible(style, textRect)) continue;
+        const lineRects = textLines(range, rect);
+        const lineCount = Math.max(1, lineRects.length);
+        const wrapMode = ["nowrap", "pre"].includes(style.whiteSpace)
+          ? "nowrap"
+          : sourceText.includes("\n") && ["pre", "pre-wrap", "pre-line", "break-spaces"].includes(style.whiteSpace)
+            ? "explicit"
+            : "wrap";
+        const horizontalPadding = pixels(style.paddingLeft) + pixels(style.paddingRight);
+        const layoutWidth = lineCount > 1
+          ? Math.max(textRect.width, element.clientWidth - horizontalPadding)
+          : textRect.width;
+        const measuredStyle = textStyle(style);
+        const extraWidth = Math.max(0, layoutWidth - textRect.width);
+        const layoutX = rounded((textRect.left - rect.left) - (measuredStyle.textAlign === "right" ? extraWidth : measuredStyle.textAlign === "center" ? extraWidth / 2 : 0));
+        const lineBreakOffsets = wrapMode === "wrap"
+          ? textLineBreakOffsets(child, sourceText, text, style.whiteSpace, lineCount)
+          : [];
+        measuredStyle.resolvedFontFamily = resolvedFontFamily(style, text);
+        children.push({
+          kind: "text",
+          id: `${identity}/text:${textIndex++}`,
+          selector,
+          name: "Text",
+          text: text.slice(0, 4000),
+          sourceText: sourceText.slice(0, 4000),
+          wrapMode,
+          lineCount,
+          ...(lineRects.length > 0 ? { lineRects } : {}),
+          ...(lineBreakOffsets.length > 0 ? { lineBreakOffsets } : {}),
+          layoutWidth: rounded(layoutWidth),
+          layoutX,
+          ...bounds(textRect, rect),
+          style: measuredStyle
+        });
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const serialized = serializeElement(child, rect, `${identity}/element:${elementIndex++}`, selector);
+        if (serialized) children.push(serialized);
+      }
+    }
+    return {
+      kind: "element",
+      ...common,
+      style: nodeStyle(style),
+      children
+    };
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  return {
+    width: rounded(rootRect.width),
+    height: rounded(rootRect.height),
+    tree: serializeElement(root, rootRect, "root")
+  };
+}
+
+const captureMimeTypes = {
+  ".css": "text/css; charset=utf-8",
+  ".gif": "image/gif",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2"
+};
+
+async function startLocalRendererServer(entryPath) {
+  const rendererRoot = path.dirname(entryPath);
+  const entryName = path.basename(entryPath);
+  const server = createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url || "/", "http://127.0.0.1");
+      const requestedName = decodeURIComponent(url.pathname).replace(/^\/+/, "") || entryName;
+      let target = path.resolve(rendererRoot, requestedName);
+      if (target !== rendererRoot && !target.startsWith(`${rendererRoot}${path.sep}`)) {
+        response.writeHead(403).end();
+        return;
+      }
+      let body;
+      try {
+        body = await readFile(target);
+      } catch {
+        target = entryPath;
+        body = await readFile(target);
+      }
+      response.writeHead(200, {
+        "Content-Type": captureMimeTypes[path.extname(target).toLowerCase()] || "application/octet-stream",
+        "Cache-Control": "no-store",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Connection": "close"
+      });
+      response.end(body);
+    } catch (error) {
+      response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end(error instanceof Error ? error.message : "Renderer server error");
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Could not start the local renderer server");
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    url: `http://127.0.0.1:${address.port}/${encodeURIComponent(entryName)}`,
+    close: () => new Promise((resolve) => {
+      server.close(resolve);
+      server.closeAllConnections?.();
+    })
+  };
+}
+
+async function captureApplicationScreens(root, screens, { includeScreenshots = false } = {}) {
+  const appRoot = path.resolve(app.getAppPath());
+  const capturesSelf = path.resolve(root) === appRoot && screens.every((screen) => screen.captureView);
+  if (!capturesSelf && screens.some((screen) => !screen.captureEntry)) {
+    throw new Error("No built renderer was found. Run this Electron project's build command once, then refresh the project.");
+  }
+
+  const captureWindow = new BrowserWindow({
+    show: false,
+    frame: false,
+    width: 1220,
+    height: 790,
+    useContentSize: true,
+    backgroundColor: "#f4f4f2",
+    webPreferences: {
+      ...(capturesSelf ? { preload: path.join(__dirname, "preload.cjs") } : {}),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: `temporary:ui-sync-capture-${randomBytes(12).toString("hex")}`
+    }
+  });
+  captureWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  captureWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+  captureWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+
+  const captures = new Map();
+  try {
+    for (const screen of screens) {
+      let rendererServer = null;
+      try {
+        if (capturesSelf) {
+          await captureWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"), {
+            query: { "ui-sync-capture": "1", "capture-project-id": screen.captureView }
+          });
+        } else {
+          const entryPath = path.resolve(root, screen.captureEntry);
+          if (entryPath !== path.resolve(root) && !entryPath.startsWith(`${path.resolve(root)}${path.sep}`)) {
+            throw new Error("Renderer entry escaped the selected project folder");
+          }
+          rendererServer = await startLocalRendererServer(entryPath);
+          captureWindow.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+            try {
+              const requestUrl = new URL(details.url);
+              const allowed = ["data:", "blob:", "devtools:"].includes(requestUrl.protocol)
+                || requestUrl.origin === rendererServer.origin;
+              callback({ cancel: !allowed });
+            } catch {
+              callback({ cancel: true });
+            }
+          });
+          const captureUrl = new URL(rendererServer.url);
+          const capturePath = typeof screen.capturePath === "string" ? screen.capturePath : "/";
+          if (capturePath.startsWith("?")) captureUrl.search = capturePath;
+          else if (capturePath.startsWith("#")) captureUrl.hash = capturePath;
+          else if (capturePath !== "/") captureUrl.pathname = capturePath.startsWith("/") ? capturePath : `/${capturePath}`;
+          await captureWindow.loadURL(captureUrl.toString());
+        }
+        await captureWindow.webContents.executeJavaScript(
+          "document.documentElement.dataset.platform = 'macos'; Promise.race([document.fonts.ready, new Promise((_, reject) => setTimeout(() => reject(new Error('Fonts did not finish loading within 10 seconds')), 10000))])",
+          true
+        );
+        for (let attempt = 0; attempt < 75; attempt += 1) {
+          const ready = capturesSelf
+            ? await captureWindow.webContents.executeJavaScript("document.documentElement.dataset.captureReady === 'true'", true)
+            : await captureWindow.webContents.executeJavaScript(
+              "Boolean((document.querySelector('[data-ui-sync-root], .app-frame, #root, #app') || document.body)?.childNodes.length)",
+              true
+            );
+          if (ready) break;
+          await wait(40);
+        }
+        await wait(capturesSelf ? 120 : 350);
+        const editableDom = await captureWindow.webContents.executeJavaScript(
+          `(${serializeRenderedApplication.toString()})()`,
+          true
+        );
+        if (!editableDom?.tree || editableDom.width < 1 || editableDom.height < 1) {
+          throw new Error("The Electron renderer opened but did not produce a visible DOM");
+        }
+        let screenshotDataUrl = null;
+        if (includeScreenshots) {
+          const screenshot = await captureWindow.webContents.capturePage();
+          const thumbnail = screenshot.resize({ width: 420, quality: "good" });
+          screenshotDataUrl = `data:image/jpeg;base64,${thumbnail.toJPEG(68).toString("base64")}`;
+        }
+        captures.set(screen.id, { ...editableDom, ...(screenshotDataUrl ? { screenshotDataUrl } : {}) });
+      } finally {
+        if (rendererServer) await rendererServer.close();
+      }
+    }
+  } finally {
+    captureWindow.destroy();
+  }
+  return captures;
+}
+
+async function loadProject(root, metadata = {}) {
+  const safeRoot = projectRootSchema.parse(root);
+  const statePath = path.join(safeRoot, ".ui-sync", "state.json");
+  const state = syncStateSchema.parse(JSON.parse(await readFile(statePath, "utf8")));
+  const runtime = await detectProjectRuntime(safeRoot, state);
+  const snapshotsPath = path.join(safeRoot, ".ui-sync", "snapshots");
+  let snapshotCount = 0;
+  try {
+    snapshotCount = (await readdir(snapshotsPath)).filter((name) => name.endsWith(".json")).length;
+  } catch {
+    snapshotCount = 0;
+  }
+
+  return {
+    id: Buffer.from(safeRoot).toString("base64url"),
+    root: safeRoot,
+    name: runtime.detectedName ?? path.basename(safeRoot),
+    kind: runtime.kind,
+    framework: runtime.framework,
+    analysisEngine: runtime.analysisEngine,
+    figmaFileName: metadata.figmaFileName ?? state.figma.frameName ?? "Figma",
+    frameName: state.figma.frameName ?? "Linked frame",
+    frameNodeId: state.figma.frameNodeId ?? Object.values(state.elements)[0]?.figma.nodeId ?? null,
+    fileKey: state.figma.fileKey,
+    linkedCount: Object.keys(state.elements).length,
+    revision: state.revision,
+    snapshotCount,
+    lastOrigin: state.lastRevision?.origin ?? "setup",
+    lastSyncedAt: state.lastRevision?.timestamp ?? null,
+    connectionStatus: "connected",
+    sourceFileCount: runtime.sourceFileCount ?? 0,
+    codexThreadId: metadata.codexThreadId ?? null,
+    screens: runtime.screens ?? []
+  };
+}
+
+async function listProjects() {
+  const projects = await readRegistry();
+  const loaded = await Promise.all(
+    projects.map(async (entry) => {
+      const { root } = entry;
+      try {
+        if (await pathExists(path.join(root, ".ui-sync", "state.json"))) {
+          return await loadProject(root, entry);
+        }
+        return await inspectProject(root, entry);
+      } catch {
+        return null;
+      }
+    })
+  );
+  return omitWorkspaceContainers(loaded.filter(Boolean));
+}
+
+async function inspectAndRegisterProjectFolders(roots, expectedKind = null) {
+  const registry = await readRegistry();
+  const candidateRoots = [];
+  for (const selectedRoot of roots) {
+    if (await pathExists(path.join(selectedRoot, ".ui-sync", "state.json"))) candidateRoots.push(selectedRoot);
+    const [javascriptRoots, swiftUiRoots] = await Promise.all([
+      expectedKind === "swiftui" ? [] : discoverJavascriptProjectRoots(selectedRoot),
+      expectedKind === "web" || expectedKind === "desktop" ? [] : discoverSwiftUiProjectRoots(selectedRoot)
+    ]);
+    candidateRoots.push(...javascriptRoots, ...swiftUiRoots);
+  }
+
+  const projects = [];
+  for (const root of [...new Set(candidateRoots)]) {
+    try {
+      const registered = registry.find((item) => item.root === root);
+      projects.push(await inspectProject(root, registered));
+    } catch {
+      continue;
+    }
+  }
+  projects.sort((left, right) => {
+    const leftMatch = expectedKind && left.kind === expectedKind ? 0 : 1;
+    const rightMatch = expectedKind && right.kind === expectedKind ? 0 : 1;
+    return leftMatch - rightMatch || left.root.localeCompare(right.root);
+  });
+
+  const registeredRoots = new Set(registry.map((entry) => entry.root));
+  const additions = projects
+    .filter((project) => !registeredRoots.has(project.root))
+    .map((project) => ({ root: project.root }));
+  if (additions.length > 0) await writeRegistry([...registry, ...additions]);
+  return projects;
+}
+
+async function performSwiftUiDesignBuild(safeRoot) {
+  if (!swiftUiRuntimeServer) throw new Error("The local SwiftUI runtime bridge is not running");
+  const registry = await readRegistry();
+  const index = registry.findIndex((item) => item.root === safeRoot);
+  if (index < 0) throw new Error("Project is not registered");
+  const currentProject = await inspectProject(safeRoot, registry[index]);
+  if (currentProject.kind !== "swiftui") throw new Error("Design Build is only available for SwiftUI projects");
+  const result = await runSwiftUiDesignBuild({
+    root: safeRoot,
+    cacheDirectory: path.join(app.getPath("userData"), "design-build"),
+    runtimeServer: swiftUiRuntimeServer
+  });
+  if (result.pdfDocument) {
+    result.pdfDocument.pages = associatePdfPagesWithScreens(result.pdfDocument.pages, currentProject.screens, result.snapshot);
+  }
+  const nextRegistry = [...registry];
+  nextRegistry[index] = {
+    ...registry[index],
+    swiftRuntimeSnapshot: result.snapshot,
+    swiftRuntimeScreenshot: result.screenshot,
+    ...(result.pdfDocument ? { swiftRuntimePdf: result.pdfDocument } : {}),
+    ...(result.vectorMessage ? { swiftRuntimeVectorMessage: result.vectorMessage } : {})
+  };
+  delete nextRegistry[index].swiftRuntimeVector;
+  if (!result.pdfDocument) delete nextRegistry[index].swiftRuntimePdf;
+  if (!result.vectorMessage) delete nextRegistry[index].swiftRuntimeVectorMessage;
+  await writeRegistry(nextRegistry);
+  const project = await inspectProject(safeRoot, nextRegistry[index]);
+  return {
+    project,
+    capturedNodeCount: project.runtimeCapture?.capturedNodeCount ?? 0,
+    screenCount: project.runtimeCapture?.screenCount ?? 0,
+    deviceName: result.snapshot.deviceName ?? "iPhone Simulator",
+    vectorReady: Boolean(result.pdfDocument),
+    vectorMessage: result.vectorMessage
+  };
+}
+
+async function createSwiftUiDesignSession(safeRoot) {
+  const registry = await readRegistry();
+  const metadata = registry.find((item) => item.root === safeRoot);
+  if (!metadata) throw new Error("Project is not registered");
+  const project = await inspectProject(safeRoot, metadata);
+  if (project.kind !== "swiftui") throw new Error("Design Studio is only available for SwiftUI projects");
+  const explicitNodes = [...new Map((metadata.swiftRuntimeSnapshot?.nodes ?? [])
+    .filter((node) => !node.syncId.startsWith("swift/"))
+    .map((node) => ({
+      id: node.syncId,
+      name: node.syncId.replace(/[-_.:/]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      frame: node.frame,
+      cornerRadius: node.cornerRadius ?? null,
+      backgroundColor: node.backgroundColor ?? null,
+      fontSize: node.fontSize ?? null,
+      sourceHint: node.sourceHint ?? `${node.sourceFile}:1`,
+      ...(node.text ? { text: node.text } : {}),
+      pageName: node.sourceName || project.screens[0]?.name || "Current screen",
+      measurement: {
+        frame: "runtime",
+        properties: node.cornerRadius != null || node.backgroundColor != null || node.fontSize != null ? "runtime" : "unavailable"
+      }
+    }))
+    .map((node) => [node.id, node])).values()];
+  const nodes = z.array(designNodeSnapshotSchema).max(30).parse((explicitNodes.length > 0 ? explicitNodes : extractDesignNodes(project)).slice(0, 30));
+  if (!metadata.swiftRuntimePdf) {
+    return {
+      state: "needs-capture",
+      project,
+      nodes: [],
+      pdfDataUrl: null,
+      pdfReady: false,
+      screenshotDataUrl: null,
+      vectorSvgDataUrl: null,
+      vectorReady: false,
+      vectorMessage: metadata.swiftRuntimeVectorMessage ?? null,
+      viewport: null,
+      deviceName: null,
+      capturedAt: null
+    };
+  }
+  const pdf = await readFile(metadata.swiftRuntimePdf.path);
+  const screenshot = metadata.swiftRuntimeScreenshot?.path
+    ? await readFile(metadata.swiftRuntimeScreenshot.path).catch(() => null)
+    : null;
+  const pages = await Promise.all(metadata.swiftRuntimePdf.pages.map(async (page) => {
+    const pagePdfPath = page.pdfPath ?? metadata.swiftRuntimePdf.path;
+    const [pagePdf, fallbackPreview] = await Promise.all([
+      readFile(pagePdfPath),
+      readFile(page.previewPath)
+    ]);
+    return {
+      id: page.id,
+      pageNumber: page.pageNumber,
+      name: page.name,
+      sourceScreenId: page.sourceScreenId,
+      sourceScreenName: page.sourceScreenName,
+      renderSource: page.renderSource,
+      width: page.width,
+      height: page.height,
+      pdfDataUrl: `data:application/pdf;base64,${pagePdf.toString("base64")}`,
+      pdfPageNumber: page.pdfPageNumber ?? page.pageNumber,
+      previewDataUrl: `data:image/png;base64,${fallbackPreview.toString("base64")}`
+    };
+  }));
+  return {
+    state: "ready",
+    project,
+    nodes,
+    pdfDataUrl: `data:application/pdf;base64,${pdf.toString("base64")}`,
+    pdfReady: true,
+    screenshotDataUrl: screenshot ? `data:image/png;base64,${screenshot.toString("base64")}` : null,
+    vectorSvgDataUrl: null,
+    vectorReady: true,
+    pages,
+    vectorMessage: metadata.swiftRuntimeVectorMessage ?? null,
+    viewport: metadata.swiftRuntimePdf.viewport,
+    deviceName: metadata.swiftRuntimeSnapshot?.deviceName ?? "iPhone Simulator",
+    capturedAt: metadata.swiftRuntimePdf.capturedAt
+  };
+}
+
+async function performSwiftUiVisualEdit(event, safeRoot, unsafeBatch) {
+  if (pendingDesignEdits.has(safeRoot)) throw new Error("Accept or reject the current visual edit before starting another one");
+  const batch = semanticIntentBatchSchema.parse(unsafeBatch);
+  if (batch.projectRoot !== safeRoot) throw new Error("The visual edit batch does not belong to this project");
+  const beforeSession = await createSwiftUiDesignSession(safeRoot);
+  const editNodes = batch.nodes?.length ? batch.nodes : beforeSession.nodes;
+  if (editNodes.length === 0) throw new Error("This page has no source-linked SwiftUI layers to edit");
+
+  const registry = await readRegistry();
+  const current = registry.find((entry) => entry.root === safeRoot);
+  if (!current) throw new Error("Project is not registered");
+  const project = beforeSession.project;
+  const linkedCodexThread = await resolveProjectCodexThread(safeRoot, project, current);
+  if (!linkedCodexThread) {
+    const connectionPrompt = buildCodexConnectionPrompt({ project });
+    if (current.codexThreadRequestedAt) await shell.openExternal(buildCodexNewThreadUrl({ root: safeRoot, prompt: connectionPrompt }));
+    else await requestProjectCodexThread(safeRoot, connectionPrompt);
+    throw new Error("Codex opened this project in the correct folder. Send the prefilled connection message once, then confirm the visual edit again.");
+  }
+
+  let checkpoint = null;
+  try {
+    checkpoint = await beginDesignEditCheckpoint(safeRoot);
+    const geometryOperations = batch.operations.filter((operation) => operation.operation === "resize" || operation.operation === "move_after");
+    let comparison = null;
+    let summary = "";
+    let iterations = 0;
+    const changedFiles = new Set();
+    let metadataAfterCodex = linkedCodexThread.metadata;
+    const rememberThread = async (threadId) => {
+      metadataAfterCodex = await rememberProjectCodexThread(safeRoot, threadId);
+      event.sender.send("projects:codex-thread-started", { root: safeRoot, threadId });
+    };
+
+    for (let iteration = 1; iteration <= 3; iteration += 1) {
+      iterations = iteration;
+      const prompt = buildVisualEditPrompt({
+        project,
+        batch,
+        nodes: editNodes,
+        iteration,
+        previousDiff: comparison ? { checks: comparison.checks.filter((check) => check.passed === false) } : null
+      });
+      const beforeFiles = await snapshotEditableFiles(safeRoot);
+      const agentResult = await runCodexSyncAgent({
+        root: safeRoot,
+        prompt,
+        threadId: linkedCodexThread.threadId,
+        threadName: `UI Sync · ${project.name}`,
+        onThreadStarted: rememberThread
+      });
+      summary = agentResult.summary.slice(-12000);
+      const afterFiles = await snapshotEditableFiles(safeRoot);
+      for (const file of changedEditableFiles(beforeFiles, afterFiles)) changedFiles.add(file);
+      const committed = await commitDesignEditIteration(checkpoint, iteration);
+      for (const file of committed.changedFiles) changedFiles.add(file);
+
+      await performSwiftUiDesignBuild(safeRoot);
+      const actualSession = await createSwiftUiDesignSession(safeRoot);
+      if (actualSession.state !== "ready") throw new Error("Design Build completed without a readable runtime session");
+      const actualIds = new Set(actualSession.nodes.map((node) => node.id));
+      const runtimeObservable = batch.operations.every((operation) => actualIds.has(operation.node));
+      if (!runtimeObservable) {
+        comparison = {
+          before: editNodes,
+          desired: editNodes,
+          actual: actualSession.nodes,
+          tolerance: 2,
+          converged: false,
+          checks: batch.operations.map((operation) => ({
+            operationId: operation.id,
+            node: operation.node,
+            property: operation.operation === "resize" ? (operation.axis === "horizontal" ? "width" : "height") : operation.operation === "set_property" ? operation.property : operation.operation,
+            desired: operation.operation === "resize" ? operation.to : operation.operation === "set_property" ? operation.value : "source change",
+            actual: "Build passed; this page is not active in the runtime capture",
+            delta: null,
+            passed: null
+          }))
+        };
+        summary = `${summary}\n\nUI Sync compiled the edit successfully. Runtime pixel comparison is unavailable because ${batch.pageName} is not the app's active launch route; review the editable structure before accepting.`.trim();
+        break;
+      }
+      comparison = compareDesignStates(editNodes, batch.operations, actualSession.nodes);
+      if (comparison.converged) break;
+    }
+
+    if (!comparison) throw new Error("No visual diff was produced");
+    if (comparison.converged && geometryOperations.length > 0) {
+      const secondary = await runSwiftUiDesignBuild({
+        root: safeRoot,
+        cacheDirectory: path.join(app.getPath("userData"), "design-build-secondary"),
+        runtimeServer: swiftUiRuntimeServer,
+        simulatorPreference: { preferTablet: true }
+      });
+      const secondaryMerged = mergeRuntimeSnapshot(project.screens, secondary.snapshot);
+      const secondaryNodes = extractDesignNodes({ ...project, screens: secondaryMerged.screens });
+      const primaryById = new Map(comparison.actual.map((node) => [node.id, node]));
+      const secondaryById = new Map(secondaryNodes.map((node) => [node.id, node]));
+      for (const operation of geometryOperations) {
+        const primaryNode = primaryById.get(operation.node);
+        const secondaryNode = secondaryById.get(operation.node);
+        const primaryWidth = primaryNode?.frame.width ?? null;
+        const secondaryWidth = secondaryNode?.frame.width ?? null;
+        const canvasDelta = Math.abs((secondary.snapshot.environment?.viewport.width ?? 0) - (beforeSession.viewport?.width ?? 0));
+        const scales = primaryWidth != null && secondaryWidth != null && (canvasDelta < 80 || Math.abs(secondaryWidth - primaryWidth) > comparison.tolerance);
+        comparison.checks.push({
+          operationId: operation.id,
+          node: operation.node,
+          property: "adaptive-layout",
+          desired: "responds on a second canvas",
+          actual: primaryWidth == null || secondaryWidth == null ? "node missing" : `${primaryWidth}pt → ${secondaryWidth}pt on ${secondary.snapshot.deviceName}`,
+          delta: primaryWidth == null || secondaryWidth == null ? null : Math.round((secondaryWidth - primaryWidth) * 100) / 100,
+          passed: scales
+        });
+      }
+      comparison.converged = comparison.checks.every((check) => check.passed !== false);
+    }
+
+    const result = {
+      state: "awaiting-review",
+      branchName: checkpoint.branchName,
+      iterations,
+      converged: comparison.converged,
+      changedFiles: [...changedFiles].sort(),
+      checks: comparison.checks,
+      summary
+    };
+    pendingDesignEdits.set(safeRoot, { checkpoint, result, metadataAfterCodex });
+    return result;
+  } catch (error) {
+    if (checkpoint) {
+      try { await abortDesignEditCheckpoint(checkpoint); } catch {}
+    }
+    throw error;
+  }
+}
+
+function registerIpc() {
+  ipcMain.handle("projects:list", () => listProjects());
+
+  ipcMain.handle("projects:previews", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const registry = await readRegistry();
+    const registered = registry.find((item) => item.root === safeRoot);
+    if (!registered) throw new Error("Project is not registered");
+    const project = await inspectProject(safeRoot, registered);
+    if (project.kind === "swiftui") return [];
+    const screens = project.screens.filter((screen) => screen.sourceType !== "component");
+    if (screens.length === 0) return [];
+    const captures = await captureApplicationScreens(safeRoot, screens, { includeScreenshots: true });
+    return z.array(projectPreviewSchema).max(60).parse(screens.map((screen) => {
+      const capture = captures.get(screen.id);
+      return {
+        screenId: screen.id,
+        screenshotDataUrl: capture.screenshotDataUrl,
+        width: capture.width,
+        height: capture.height
+      };
+    }));
+  });
+
+  ipcMain.handle("projects:add", async (_event, expectedKind) => {
+    const safeExpectedKind = expectedProjectKindSchema.parse(expectedKind);
+    const result = await dialog.showOpenDialog({
+      title:
+        safeExpectedKind === "web"
+          ? "Connect a website project"
+          : safeExpectedKind === "swiftui"
+            ? "Connect SwiftUI projects"
+            : "Connect Electron projects",
+      properties: ["openDirectory", "multiSelections"]
+    });
+    if (result.canceled || result.filePaths.length === 0) return [];
+
+    const roots = z.array(projectRootSchema).min(1).max(12).parse(result.filePaths);
+    try {
+      const projects = await inspectAndRegisterProjectFolders(roots, safeExpectedKind);
+      if (projects.length > 0) return projects;
+      throw new Error("No independently runnable application package was detected");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Unknown project inspection error";
+      await dialog.showMessageBox({
+        type: "warning",
+        title: "This project is not connected yet",
+        message: "No supported UI project was found in this folder.",
+        detail: `Choose a folder containing one or more runnable application packages.\n\nTechnical detail: ${reason.slice(0, 1200)}`
+      });
+      return [];
+    }
+  });
+
+  ipcMain.handle("projects:refresh", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const registry = await readRegistry();
+    const registered = registry.find((item) => item.root === safeRoot);
+    if (!registered) throw new Error("Project is not registered");
+    if (await pathExists(path.join(safeRoot, ".ui-sync", "state.json"))) {
+      return loadProject(safeRoot, registered);
+    }
+    return inspectProject(safeRoot, registered);
+  });
+
+  ipcMain.handle("projects:design-build", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    return performSwiftUiDesignBuild(safeRoot);
+  });
+
+  ipcMain.handle("projects:design-session", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    return createSwiftUiDesignSession(safeRoot);
+  });
+
+  ipcMain.handle("projects:visual-edit", async (event, root, batch) => {
+    const safeRoot = projectRootSchema.parse(root);
+    return performSwiftUiVisualEdit(event, safeRoot, batch);
+  });
+
+  ipcMain.handle("projects:visual-edit-resolve", async (_event, root, resolution) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const safeResolution = z.enum(["accept", "reject"]).parse(resolution);
+    const pending = pendingDesignEdits.get(safeRoot);
+    if (!pending) throw new Error("There is no visual edit awaiting review");
+    await resolveDesignEditCheckpoint(pending.checkpoint, safeResolution);
+    pendingDesignEdits.delete(safeRoot);
+  });
+
+  ipcMain.handle("projects:inspect-dropped", async (_event, roots) => {
+    const safeRoots = z.array(projectRootSchema).min(1).max(12).parse(roots);
+    return inspectAndRegisterProjectFolders(safeRoots);
+  });
+
+  ipcMain.handle("projects:connect-figma", async (_event, root, figmaUrl) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const parsed = parseFigmaDesignUrl(figmaUrl, false);
+    const registry = await readRegistry();
+    const index = registry.findIndex((item) => item.root === safeRoot);
+    if (index < 0) throw new Error("Project is not registered");
+    const current = registry[index];
+    const fileChanged = current.figmaFileKey !== parsed.fileKey;
+    const nextEntry = {
+      ...current,
+      figmaFileName: parsed.fileName,
+      figmaFileKey: parsed.fileKey,
+      figmaNodeId: parsed.nodeId ?? undefined,
+      figmaMappings: fileChanged ? {} : current.figmaMappings,
+      visualBaselines: fileChanged ? undefined : current.visualBaselines
+    };
+    const nextRegistry = [...registry];
+    nextRegistry[index] = nextEntry;
+    await writeRegistry(nextRegistry);
+    return inspectProject(safeRoot, nextEntry);
+  });
+
+  ipcMain.handle("projects:map-screen", async (_event, root, screenId, figmaUrl) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const safeScreenId = screenIdSchema.parse(screenId);
+    const parsed = parseFigmaDesignUrl(figmaUrl, true);
+    const registry = await readRegistry();
+    const index = registry.findIndex((item) => item.root === safeRoot);
+    if (index < 0) throw new Error("Project is not registered");
+    const current = registry[index];
+    if (!current.figmaFileKey) throw new Error("Choose a Figma file first");
+    if (current.figmaFileKey !== parsed.fileKey) throw new Error("Use a frame from the connected Figma file");
+    const project = await inspectProject(safeRoot, current);
+    if (!project.screens.some((screen) => screen.id === safeScreenId)) {
+      throw new Error("This SwiftUI page is no longer present");
+    }
+    const nextEntry = {
+      ...current,
+      figmaMappings: {
+        ...(current.figmaMappings ?? {}),
+        [safeScreenId]: {
+          nodeId: parsed.nodeId,
+          frameName: `Frame ${parsed.nodeId}`
+        }
+      }
+    };
+    const nextRegistry = [...registry];
+    nextRegistry[index] = nextEntry;
+    await writeRegistry(nextRegistry);
+    return inspectProject(safeRoot, nextEntry);
+  });
+
+  ipcMain.handle("projects:auto-map", async (_event, root, unsafeTargetId) => {
+    if (!figmaBridge) throw new Error("The local Figma bridge is not running");
+    const safeRoot = projectRootSchema.parse(root);
+    const registry = await readRegistry();
+    const current = registry.find((item) => item.root === safeRoot);
+    if (!current?.figmaFileKey || !current.figmaFileName) throw new Error("Choose a Figma file first");
+    const deviceConnection = await ensureDeviceConnection();
+    const requiresPairing = !deviceConnection.confirmed;
+    const project = await inspectProject(safeRoot, current);
+    const discoveredScreens = project.screens.filter((screen) => screen.sourceType !== "component");
+    const runtimeScreen = discoveredScreens.find((screen) => screen.runtimeCapture?.isVisualReference);
+    let selectedPdfPage = null;
+    let selectedSourceScreen = null;
+    let pageVector = null;
+    if (project.kind === "swiftui") {
+      if (!current.swiftRuntimePdf) throw new Error(current.swiftRuntimeVectorMessage || "Export the iOS project to PDF before importing a page into Figma.");
+      const pdfPageId = z.string().regex(/^pdf-page-\d+$/).parse(unsafeTargetId);
+      selectedPdfPage = current.swiftRuntimePdf.pages.find((page) => page.id === pdfPageId);
+      if (!selectedPdfPage) throw new Error("That PDF page is no longer available. Export the project again.");
+      selectedSourceScreen = discoveredScreens.find((screen) => screen.id === selectedPdfPage.sourceScreenId) ?? runtimeScreen ?? discoveredScreens[0] ?? null;
+      if (selectedSourceScreen && selectedPdfPage.renderSource === "image-renderer" && selectedPdfPage.contentFrame) {
+        selectedSourceScreen = {
+          ...selectedSourceScreen,
+          runtimeCapture: selectedSourceScreen.runtimeCapture
+            ? { ...selectedSourceScreen.runtimeCapture, isVisualReference: false }
+            : selectedSourceScreen.runtimeCapture,
+          uiTree: normalizeSwiftTreeForPdfPage(
+            selectedSourceScreen.uiTree,
+            selectedPdfPage.contentFrame,
+            { width: selectedPdfPage.width, height: selectedPdfPage.height }
+          )
+        };
+      }
+      const svgDirectory = path.join(
+        path.dirname(current.swiftRuntimePdf.path),
+        "figma-pages",
+        createHash("sha256").update(safeRoot).digest("hex").slice(0, 16)
+      );
+      await mkdir(svgDirectory, { recursive: true });
+      const svgPath = path.join(svgDirectory, `${selectedPdfPage.id}.svg`);
+      const sourceTexts = [];
+      const collectSourceTexts = (node) => {
+        if (!node || typeof node !== "object") return;
+        if (typeof node.text === "string" && node.text.trim()) sourceTexts.push(node.text.trim());
+        for (const child of node.children ?? []) collectSourceTexts(child);
+      };
+      if (selectedSourceScreen) collectSourceTexts(selectedSourceScreen.uiTree);
+      const capturedRuntimeTextFrames = [];
+      const collectCapturedRuntimeText = (node) => {
+        if (!node || typeof node !== "object") return;
+        if (node.runtimeTextCaptured === true && node.runtimeFrame?.width > 0 && node.runtimeFrame?.height > 0 && typeof node.text === "string" && node.text.length > 0) {
+          capturedRuntimeTextFrames.push(node.runtimeFrame);
+        }
+        for (const child of node.children ?? []) collectCapturedRuntimeText(child);
+      };
+      if (selectedSourceScreen) collectCapturedRuntimeText(selectedSourceScreen.uiTree);
+      const extractedText = selectedPdfPage.renderSource === "image-renderer"
+        ? await extractPdfTextRuns(selectedPdfPage.pdfPath ?? current.swiftRuntimePdf.path, {
+          pageNumber: selectedPdfPage.pdfPageNumber ?? selectedPdfPage.pageNumber,
+          width: selectedPdfPage.width,
+          height: selectedPdfPage.height,
+          sourceTexts
+        }).catch(() => null)
+        : null;
+      const hasCompleteEditableText = Boolean(extractedText?.complete && extractedText.runs.length > 0);
+      const textCleanValidation = selectedPdfPage.renderSource === "window-fallback"
+        && selectedPdfPage.textCleanPdfPath
+        && capturedRuntimeTextFrames.length > 0
+        ? await isTextCleanPdfSafe({
+          normalPdfPath: selectedPdfPage.pdfPath ?? current.swiftRuntimePdf.path,
+          normalPageNumber: selectedPdfPage.pdfPageNumber ?? selectedPdfPage.pageNumber,
+          cleanPdfPath: selectedPdfPage.textCleanPdfPath,
+          frames: capturedRuntimeTextFrames,
+          viewport: current.swiftRuntimeSnapshot?.environment?.viewport ?? { x: 0, y: 0, width: selectedPdfPage.width, height: selectedPdfPage.height }
+        })
+        : { safe: false };
+      const hasCapturedRuntimeText = Boolean(
+        selectedPdfPage.renderSource === "window-fallback"
+        && selectedPdfPage.textCleanPdfPath
+        && textCleanValidation.safe
+      );
+      const sourcePdfPath = selectedPdfPage.pdfPath ?? current.swiftRuntimePdf.path;
+      const coordinateSpace = selectedPdfPage.contentFrame
+        ? { ...selectedPdfPage.contentFrame, outputWidth: selectedPdfPage.width, outputHeight: selectedPdfPage.height }
+        : current.swiftRuntimeSnapshot?.environment?.viewport
+          ? { ...current.swiftRuntimeSnapshot.environment.viewport, outputWidth: selectedPdfPage.width, outputHeight: selectedPdfPage.height }
+          : null;
+      const vectorEffects = selectedPdfPage.cleanPdfPath && current.swiftRuntimeSnapshot
+        ? resolveCapturedSwiftVectorEffects(selectedPdfPage.nativeEffects ?? [], current.swiftRuntimeSnapshot, selectedPdfPage.sourceName, coordinateSpace)
+        : [];
+      const sourceImages = current.swiftRuntimeSnapshot
+        ? await resolveSwiftSourceImages(safeRoot, current.swiftRuntimeSnapshot, selectedPdfPage.sourceName, coordinateSpace)
+        : [];
+      const vectorPdfPath = hasCapturedRuntimeText
+        ? selectedPdfPage.textCleanPdfPath
+        : vectorEffects.length > 0
+          ? selectedPdfPage.cleanPdfPath
+          : sourcePdfPath;
+      const vectorPageNumber = hasCapturedRuntimeText ? 1 : selectedPdfPage.pdfPageNumber ?? selectedPdfPage.pageNumber;
+      await convertPdfToFigmaSvg(vectorPdfPath, svgPath, {
+        pageNumber: vectorPageNumber,
+        stripTextGlyphs: hasCompleteEditableText,
+        sourceImages
+      });
+      const nativeShadowPlan = prepareNativeSvgShadows(await readFile(svgPath, "utf8"));
+      if (nativeShadowPlan.shadows.length > 0) await writeFile(svgPath, nativeShadowPlan.svg, "utf8");
+      let semanticFallbackSvg = null;
+      if (vectorEffects.length > 0 || hasCapturedRuntimeText) {
+        const fallbackPath = path.join(svgDirectory, `${selectedPdfPage.id}-visual-fallback.svg`);
+        await convertPdfToFigmaSvg(sourcePdfPath, fallbackPath, {
+          pageNumber: selectedPdfPage.pdfPageNumber ?? selectedPdfPage.pageNumber,
+          stripTextGlyphs: hasCompleteEditableText,
+          sourceImages
+        });
+        semanticFallbackSvg = await readFile(fallbackPath, "utf8");
+      }
+      pageVector = {
+        svgPath,
+        textMode: hasCapturedRuntimeText ? "editable-runtime" : hasCompleteEditableText ? "editable-pdf" : "pdf-glyphs",
+        textRuns: hasCompleteEditableText ? extractedText.runs : [],
+        fallbackSvg: semanticFallbackSvg ?? nativeShadowPlan.fallbackSvg,
+        nativeShadows: nativeShadowPlan.shadows,
+        vectorEffects
+      };
+    }
+    const selectedScreenId = project.kind === "swiftui" || unsafeTargetId === undefined
+      ? null
+      : screenIdSchema.parse(unsafeTargetId);
+    const screens = project.kind === "swiftui" && selectedSourceScreen && selectedPdfPage
+      ? [{ ...selectedSourceScreen, id: selectedPdfPage.id, name: selectedPdfPage.name, figmaNodeId: current.figmaMappings?.[selectedPdfPage.id]?.nodeId ?? null }]
+      : selectedScreenId
+        ? discoveredScreens.filter((screen) => screen.id === selectedScreenId)
+        : discoveredScreens;
+    if (selectedScreenId && screens.length === 0) throw new Error("That rendered screen is no longer available. Refresh the project and try again.");
+    if (screens.length === 0) {
+      const typeSummary = project.screens.reduce((summary, screen) => {
+        summary[screen.sourceType] = (summary[screen.sourceType] || 0) + 1;
+        return summary;
+      }, {});
+      throw new Error(`No application screens were found for ${project.name} at ${safeRoot}. Scanned ${project.screens.length} views (${JSON.stringify(typeSummary)}).`);
+    }
+    const captures = project.kind === "swiftui" ? null : await captureApplicationScreens(safeRoot, screens);
+    const swiftVisualPayloads = new Map();
+    const swiftVisualAssets = new Map();
+    if (project.kind === "swiftui") {
+      for (const screen of screens) {
+        let payload = { uiTree: screen.uiTree, assets: new Map(), visualReferenceAssetId: null, vectorSvg: null, vectorFallbackSvg: null, vectorNativeShadows: [], vectorEffects: [], vectorTextMode: null, vectorTextRuns: [] };
+        payload = await buildSwiftVisualPayload(screen, current.swiftRuntimeScreenshot ?? null, { vector: pageVector });
+        if (pageVector?.svgPath && !payload.vectorSvg) throw new Error(`The ${screen.name} PDF vector could not be prepared for Figma.`);
+        swiftVisualPayloads.set(screen.id, payload);
+        for (const [assetId, asset] of payload.assets) swiftVisualAssets.set(assetId, asset);
+      }
+    }
+    const visualBaselines = captures
+      ? Object.fromEntries(screens.map((screen) => [screen.id, flattenEditableDom(captures.get(screen.id).tree)]))
+      : null;
+    const projectId = createHash("sha256").update(safeRoot).digest("hex").slice(0, 24);
+    const session = figmaBridge.enqueue({
+      projectId,
+      projectName: project.name,
+      figmaFileName: current.figmaFileName,
+      screens: screens.map((screen) => {
+        if (project.kind === "swiftui") {
+          const visualPayload = swiftVisualPayloads.get(screen.id);
+          return {
+            id: screen.id,
+            name: screen.name,
+            sourceType: screen.sourceType,
+            currentNodeId: screen.figmaNodeId ?? null,
+            renderMode: "structured",
+            uiTree: figmaSwiftTree(visualPayload?.uiTree ?? screen.uiTree),
+            visualReferenceAssetId: visualPayload?.visualReferenceAssetId ?? null,
+            vectorSvg: visualPayload?.vectorSvg ?? null,
+            vectorFallbackSvg: visualPayload?.vectorFallbackSvg ?? null,
+            vectorNativeShadows: visualPayload?.vectorNativeShadows ?? [],
+            vectorEffects: visualPayload?.vectorEffects ?? [],
+            vectorTextMode: visualPayload?.vectorTextMode ?? null,
+            vectorTextRuns: visualPayload?.vectorTextRuns ?? [],
+            systemTabBar: selectedPdfPage?.systemTabBar
+              ? {
+                designKit: selectedPdfPage.systemTabBar.designKit,
+                appearance: selectedPdfPage.systemTabBar.appearance,
+                selectedIndex: selectedPdfPage.systemTabBar.selectedIndex,
+                items: selectedPdfPage.systemTabBar.items.map(({ title, systemImage }) => ({ title, systemImage }))
+              }
+              : null,
+            semanticAutoLayout: false
+          };
+        }
+        const capture = captures.get(screen.id);
+        if (!capture) throw new Error(`Could not capture ${screen.name}`);
+        return {
+          id: screen.id,
+          name: screen.name,
+          sourceType: screen.sourceType,
+          currentNodeId: screen.figmaNodeId ?? null,
+          renderMode: "editable-dom",
+          width: capture.width,
+          height: capture.height,
+          domTree: capture.tree
+        };
+      })
+    }, {
+      root: safeRoot,
+      figmaFileKey: current.figmaFileKey,
+      connectionToken: deviceConnection.token,
+      visualBaselines
+    }, deviceConnection.token, project.kind === "swiftui" ? swiftVisualAssets : new Map());
+    return { ...session, requiresPairing };
+  });
+
+  ipcMain.handle("projects:pull", async (_event, root) => {
+    if (!figmaBridge) throw new Error("The local Figma bridge is not running");
+    const safeRoot = projectRootSchema.parse(root);
+    const registry = await readRegistry();
+    const current = registry.find((item) => item.root === safeRoot);
+    if (!current?.figmaFileKey || !current.figmaFileName) throw new Error("Choose a Figma file first");
+    if (!current.visualBaselines) throw new Error("Sync to Figma once to establish an editable baseline");
+    const project = await inspectProject(safeRoot, current);
+    const screens = project.screens.filter((screen) => screen.sourceType !== "component");
+    const captures = project.kind === "swiftui" ? null : await captureApplicationScreens(safeRoot, screens);
+    const codeScreens = project.kind === "swiftui"
+      ? buildSwiftCodeScreens(current.visualBaselines, screens)
+      : Object.fromEntries(screens.map((screen) => [screen.id, flattenEditableDom(captures.get(screen.id).tree)]));
+    const screenNames = Object.fromEntries(screens.map((screen) => [screen.id, screen.name]));
+    const deviceConnection = await ensureDeviceConnection();
+    const requiresPairing = !deviceConnection.confirmed;
+    const projectId = createHash("sha256").update(safeRoot).digest("hex").slice(0, 24);
+    const session = figmaBridge.enqueue({
+      operation: "pull",
+      projectId,
+      projectName: project.name,
+      figmaFileName: current.figmaFileName,
+      screens: screens.map((screen) => {
+        if (project.kind === "swiftui") {
+          return {
+            id: screen.id,
+            name: screen.name,
+            sourceType: screen.sourceType,
+            currentNodeId: screen.figmaNodeId ?? null,
+            renderMode: "structured",
+            uiTree: figmaSwiftTree(screen.uiTree)
+          };
+        }
+        const capture = captures.get(screen.id);
+        return {
+          id: screen.id,
+          name: screen.name,
+          sourceType: screen.sourceType,
+          currentNodeId: screen.figmaNodeId ?? null,
+          renderMode: "editable-dom",
+          width: capture.width,
+          height: capture.height,
+          domTree: capture.tree
+        };
+      })
+    }, {
+      operation: "pull",
+      projectKind: project.kind,
+      root: safeRoot,
+      figmaFileKey: current.figmaFileKey,
+      connectionToken: deviceConnection.token,
+      codeScreens,
+      screenNames
+    }, deviceConnection.token);
+    return { ...session, requiresPairing };
+  });
+
+  ipcMain.handle("projects:apply-pull", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const pending = pendingPulls.get(safeRoot);
+    if (!pending) throw new Error("Run To local preview first");
+    const needsCodex = pending.preview.conflicts.length > 0 || pending.patchPlan.rejected.length > 0;
+    const result = pending.patchPlan.mutations.length > 0
+      ? await applyPatchPlan(safeRoot, pending.patchPlan)
+      : { changedFiles: [], validation: [] };
+    const registry = await readRegistry();
+    const index = registry.findIndex((entry) => entry.root === safeRoot);
+    if (index >= 0 && !needsCodex) {
+      const nextRegistry = [...registry];
+      nextRegistry[index] = { ...registry[index], visualBaselines: pending.figmaScreens };
+      await writeRegistry(nextRegistry);
+    }
+    if (needsCodex) {
+      const automaticIds = new Set(pending.patchPlan.mutations.map((mutation) => mutation.changeId));
+      pending.pullPreview = {
+        ...pending.pullPreview,
+        changes: pending.pullPreview.changes.filter((change) => !automaticIds.has(change.id))
+      };
+      pending.patchPlan = { mutations: [], rejected: pending.patchPlan.rejected, changedFiles: [] };
+    } else {
+      pendingPulls.delete(safeRoot);
+    }
+    return { ...result, needsCodex };
+  });
+
+  ipcMain.handle("projects:sync-from-figma-with-codex", async (event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const pending = pendingPulls.get(safeRoot);
+    const registry = await readRegistry();
+    const current = registry.find((entry) => entry.root === safeRoot);
+    if (!current?.figmaFileKey) throw new Error("Choose a Figma file first");
+    const project = await inspectProject(safeRoot, current);
+    let mappings = Object.entries(current.figmaMappings ?? {}).map(([screenId, mapping]) => ({
+      screenId,
+      nodeId: mapping.nodeId,
+      frameName: mapping.frameName
+    }));
+    if (mappings.length === 0 && current.figmaNodeId) {
+      mappings = [{ screenId: "project", nodeId: current.figmaNodeId, frameName: current.figmaFileName ?? "Project frame" }];
+    }
+    if (mappings.length === 0) throw new Error("Map at least one app page to an exact Figma frame before syncing with Codex");
+    const prompt = buildCodexSyncPrompt({
+      project,
+      figmaFileKey: current.figmaFileKey,
+      figmaFileName: current.figmaFileName ?? "Figma file",
+      mappings,
+      pullPreview: pending?.pullPreview ?? null
+    });
+    const linkedCodexThread = await resolveProjectCodexThread(safeRoot, project, current);
+    if (!linkedCodexThread) {
+      const connectionPrompt = buildCodexConnectionPrompt({ project });
+      if (current.codexThreadRequestedAt) {
+        await shell.openExternal(buildCodexNewThreadUrl({ root: safeRoot, prompt: connectionPrompt }));
+      } else {
+        await requestProjectCodexThread(safeRoot, connectionPrompt);
+      }
+      throw new Error("Codex opened this project in the correct folder. Send the prefilled connection message once, then click Sync from Figma again.");
+    }
+    const before = await snapshotEditableFiles(safeRoot);
+    let metadataAfterCodex = linkedCodexThread.metadata;
+    const rememberThread = async (threadId) => {
+      metadataAfterCodex = await rememberProjectCodexThread(safeRoot, threadId);
+      event.sender.send("projects:codex-thread-started", { root: safeRoot, threadId });
+    };
+    const agentResult = await runCodexSyncAgent({
+      root: safeRoot,
+      prompt,
+      threadId: linkedCodexThread.threadId,
+      threadName: `UI Sync · ${project.name}`,
+      onThreadStarted: rememberThread
+    });
+    const after = await snapshotEditableFiles(safeRoot);
+    const changedFiles = changedEditableFiles(before, after);
+    if (pending) {
+      const latestRegistry = await readRegistry();
+      const latestIndex = latestRegistry.findIndex((entry) => entry.root === safeRoot);
+      if (latestIndex >= 0) {
+        const nextRegistry = [...latestRegistry];
+        nextRegistry[latestIndex] = { ...latestRegistry[latestIndex], visualBaselines: pending.figmaScreens };
+        await writeRegistry(nextRegistry);
+        metadataAfterCodex = nextRegistry[latestIndex];
+      }
+      pendingPulls.delete(safeRoot);
+    }
+
+    let refreshedProject = await inspectProject(safeRoot, metadataAfterCodex);
+    const validation = [];
+    if (project.kind === "swiftui" && changedFiles.length > 0) {
+      try {
+        const designBuild = await performSwiftUiDesignBuild(safeRoot);
+        refreshedProject = designBuild.project;
+        validation.push(`Design Build captured ${designBuild.capturedNodeCount} runtime nodes on ${designBuild.deviceName}`);
+      } catch (error) {
+        validation.push(`Codex finished, but Design Build needs attention: ${error instanceof Error ? error.message : "Unknown validation error"}`);
+      }
+    }
+    return {
+      project: refreshedProject,
+      changedFiles,
+      validation,
+      summary: agentResult.summary.slice(-12000),
+      codexThreadId: agentResult.threadId
+    };
+  });
+
+  ipcMain.handle("projects:open-codex-conversation", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const registry = await readRegistry();
+    const current = registry.find((entry) => entry.root === safeRoot);
+    if (!current) throw new Error("Add this project to UI Sync before opening its Codex conversation");
+    const project = await inspectProject(safeRoot, current);
+    const linkedCodexThread = await resolveProjectCodexThread(safeRoot, project, current);
+    if (linkedCodexThread) {
+      await shell.openExternal(`codex://threads/${linkedCodexThread.threadId}`);
+      return {
+        project: await inspectProject(safeRoot, linkedCodexThread.metadata),
+        needsSend: false
+      };
+    }
+
+    const connectionPrompt = buildCodexConnectionPrompt({ project });
+    const metadata = current.codexThreadRequestedAt
+      ? current
+      : await requestProjectCodexThread(safeRoot, connectionPrompt);
+    if (current.codexThreadRequestedAt) {
+      await shell.openExternal(buildCodexNewThreadUrl({ root: safeRoot, prompt: connectionPrompt }));
+    }
+    return {
+      project: await inspectProject(safeRoot, metadata),
+      needsSend: true
+    };
+  });
+
+  ipcMain.handle("projects:auto-map-status", async (_event, root, pairingCode) => {
+    if (!figmaBridge) return { state: "error", message: "The local Figma bridge is not running" };
+    const safeRoot = projectRootSchema.parse(root);
+    const safeCode = pairingCodeSchema.parse(pairingCode);
+    const status = figmaBridge.getStatus(safeCode);
+    if (status.state !== "complete") return status;
+    const registry = await readRegistry();
+    const current = registry.find((item) => item.root === safeRoot);
+    return { ...status, project: await inspectProject(safeRoot, current) };
+  });
+
+  ipcMain.handle("figma:show-plugin", async () => {
+    shell.showItemInFolder(figmaPluginManifestPath);
+  });
+
+  ipcMain.handle("codex:open-thread", async (_event, threadId) => {
+    const safeThreadId = z.string().uuid().parse(threadId);
+    await shell.openExternal(`codex://threads/${safeThreadId}`);
+  });
+
+  ipcMain.handle("clipboard:write", (_event, value) => {
+    clipboard.writeText(z.string().max(2048).parse(value));
+  });
+
+  ipcMain.handle("figma:open", async (_event, fileKey, nodeId) => {
+    const safeFileKey = z.string().regex(/^[A-Za-z0-9_-]+$/).parse(fileKey);
+    const safeNodeId = z.string().regex(/^\d+[:\-]\d+$/).nullable().parse(nodeId);
+    const url = safeNodeId
+      ? `https://www.figma.com/design/${safeFileKey}?node-id=${safeNodeId.replace(":", "-")}`
+      : `https://www.figma.com/design/${safeFileKey}`;
+    await shell.openExternal(url);
+  });
+}
+
+function createWindow() {
+  const window = new BrowserWindow({
+    width: 1220,
+    height: 790,
+    minWidth: 980,
+    minHeight: 680,
+    backgroundColor: "#f4f4f2",
+    icon: appIconPath,
+    title: "UI Sync",
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 18, y: 18 },
+    vibrancy: "under-window",
+    visualEffectState: "active",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  window.webContents.on("did-finish-load", () => {
+    if (process.platform !== "darwin") return;
+    window.webContents.executeJavaScript("document.documentElement.dataset.platform = 'macos'", true);
+  });
+
+  if (process.env.UI_SYNC_DEV_SERVER_URL) {
+    window.loadURL(process.env.UI_SYNC_DEV_SERVER_URL);
+  } else {
+    window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+  }
+}
+
+app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
+  if (process.platform === "darwin") app.dock.setIcon(appIconPath);
+  figmaBridge = createFigmaBridge({
+    onComplete: async (context, result) => {
+      const completion = result.operation === "pull"
+        ? await preparePullPreview(context, result)
+        : await saveAutomaticMappings(context, result);
+      await confirmDeviceConnection(context.connectionToken);
+      return completion;
+    },
+    onDisconnect: resetDeviceConnection
+  });
+  swiftUiRuntimeServer = createSwiftUiRuntimeServer();
+  try {
+    await Promise.all([figmaBridge.start(), swiftUiRuntimeServer.start()]);
+  } catch (error) {
+    console.error("Could not start a local UI Sync bridge", error);
+  }
+  registerIpc();
+  createWindow();
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  if (figmaBridge) void figmaBridge.stop();
+  if (swiftUiRuntimeServer) void swiftUiRuntimeServer.stop();
+});
