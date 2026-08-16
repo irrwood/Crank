@@ -5,7 +5,7 @@ const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
-const { scanUrl } = require("./page-inventory.cjs");
+const { scanFolder, scanUrl } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
@@ -1562,6 +1562,22 @@ function registerIpc() {
     devServers.delete(safeRoot);
     running?.stop?.();
     return true;
+  });
+
+  ipcMain.handle("inventory:choose-folder", async () => {
+    const chosen = await dialog.showOpenDialog({ properties: ["openDirectory"], title: "Choose a project folder" });
+    return chosen.canceled ? null : chosen.filePaths[0] ?? null;
+  });
+
+  ipcMain.handle("inventory:scan-folder", async (event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const send = (channel, value) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, value);
+    };
+    return scanFolder(safeRoot, {
+      onStatus: (status) => send("inventory:status", status),
+      onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
+    });
   });
 
   ipcMain.handle("inventory:export", async (_event, inventory, title) => {

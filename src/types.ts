@@ -332,4 +332,6 @@ export type PageInventory =
 
 export type PageInventoryFiltered = { label: string; from: string; reason: string; magnitude: number };
 
+export type ScanStatus = { phase: "starting" | "scanning"; detail: string };
+
 export type ScanProgress = { name: string; route: string; depth: number };

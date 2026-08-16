@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DiscoveredPage, PageInventory, ScanProgress } from "./types";
+import type { DiscoveredPage, PageInventory, ScanProgress, ScanStatus } from "./types";
 
 /**
  * The whole product in one screen: give an address, get every page.
@@ -42,6 +42,10 @@ export default function PageInventoryView() {
   const [showFiltered, setShowFiltered] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [title, setTitle] = useState("Design handoff");
+  const [status, setStatus] = useState<ScanStatus | null>(null);
+  const [source, setSource] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [showAddress, setShowAddress] = useState(false);
   const progressRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -52,26 +56,71 @@ export default function PageInventoryView() {
   }, []);
 
   useEffect(() => {
+    const off = window.uiSync?.onScanStatus?.(setStatus);
+    return () => { off?.(); };
+  }, []);
+
+  useEffect(() => {
     progressRef.current?.scrollTo({ top: progressRef.current.scrollHeight });
   }, [progress]);
 
-  const scan = async () => {
-    if (!window.uiSync?.scanUrl || scanning) return;
+  const beginScan = (label: string) => {
     setScanning(true);
     setError(null);
     setResult(null);
     setProgress([]);
+    setStatus(null);
+    setSaved(null);
     setFocused(null);
+    setSource(label);
+  };
+
+  const finishScan = (inventory: PageInventory) => {
+    setResult(inventory);
+    if (!inventory.ok) setError(inventory.message);
+  };
+
+  const scanFolder = async (root: string) => {
+    if (!window.uiSync?.scanFolder || scanning) return;
+    beginScan(root);
+    setTitle(`${root.split("/").filter(Boolean).pop() ?? "Design"} handoff`);
     try {
-      const seedPaths = seeds.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean);
-      const inventory = await window.uiSync.scanUrl(address, seedPaths);
-      setResult(inventory);
-      if (!inventory.ok) setError(inventory.message);
+      finishScan(await window.uiSync.scanFolder(root));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The scan failed.");
     } finally {
       setScanning(false);
+      setStatus(null);
     }
+  };
+
+  const scan = async () => {
+    if (!window.uiSync?.scanUrl || scanning) return;
+    beginScan(address);
+    try {
+      const seedPaths = seeds.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean);
+      finishScan(await window.uiSync.scanUrl(address, seedPaths));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The scan failed.");
+    } finally {
+      setScanning(false);
+      setStatus(null);
+    }
+  };
+
+  const onDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    setDragging(false);
+    if (scanning) return;
+    const file = event.dataTransfer.files[0];
+    const dropped = file && window.uiSync?.getDroppedPath?.(file);
+    if (dropped) void scanFolder(dropped);
+    else setError("Drop a project folder.");
+  };
+
+  const chooseFolder = async () => {
+    const chosen = await window.uiSync?.chooseFolder?.();
+    if (chosen) void scanFolder(chosen);
   };
 
   const exportPage = async () => {
@@ -95,37 +144,50 @@ export default function PageInventoryView() {
       <header className="inventory-header">
         <div>
           <h1>Page inventory</h1>
-          <p>Point it at a running app. Anything a browser can open works — React, Python, a static folder, an Electron renderer.</p>
+          <p>Drop a project folder. It gets served and walked, and every page comes back.</p>
         </div>
       </header>
 
-      <form
-        className="inventory-form"
-        onSubmit={(event) => { event.preventDefault(); void scan(); }}
-      >
-        <input
-          aria-label="Address"
-          disabled={scanning}
-          onChange={(event) => setAddress(event.target.value)}
-          placeholder="localhost:5173"
-          value={address}
-        />
-        <input
-          aria-label="Extra addresses"
-          disabled={scanning}
-          onChange={(event) => setSeeds(event.target.value)}
-          placeholder="Extra paths, optional — /?view=settings /about"
-          value={seeds}
-        />
-        <button disabled={scanning || !address.trim()} type="submit">
-          {scanning ? "Scanning…" : "Scan"}
-        </button>
-      </form>
+      {!result?.ok && !scanning && (
+        <section
+          className={`inventory-drop${dragging ? " is-over" : ""}`}
+          onDragLeave={() => setDragging(false)}
+          onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+          onDrop={onDrop}
+        >
+          <strong>Drop a project folder here</strong>
+          <span>React, Vue, Next, Electron, a static site — it gets started for you.</span>
+          <button className="inventory-export" onClick={() => void chooseFolder()} type="button">Choose folder…</button>
+          <button className="inventory-link" onClick={() => setShowAddress((value) => !value)} type="button">
+            {showAddress ? "Hide" : "Already running? Scan an address instead"}
+          </button>
+          {showAddress && (
+            <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scan(); }}>
+              <input
+                aria-label="Address"
+                onChange={(event) => setAddress(event.target.value)}
+                placeholder="localhost:5173"
+                value={address}
+              />
+              <input
+                aria-label="Extra addresses"
+                onChange={(event) => setSeeds(event.target.value)}
+                placeholder="Extra paths, optional — /?view=settings"
+                value={seeds}
+              />
+              <button disabled={!address.trim()} type="submit">Scan</button>
+            </form>
+          )}
+        </section>
+      )}
 
       {scanning && (
         <section className="inventory-progress" ref={progressRef}>
+          <p className="inventory-phase">
+            {status ? status.detail : `Opening ${source ?? ""}…`}
+          </p>
           {progress.length === 0
-            ? <p>Opening {address}…</p>
+            ? <p>Looking for pages…</p>
             : progress.map((item, index) => (
                 <p key={`${item.route}-${index}`}>
                   <span className="inventory-progress-count">{index + 1}</span> {item.name}
@@ -140,7 +202,10 @@ export default function PageInventoryView() {
         <>
           <div className="inventory-summary">
             <strong>{pages.length} pages</strong>
-            <span>{result.origin}</span>
+            <span title={source ?? undefined}>{source?.split("/").filter(Boolean).pop() ?? result.origin}</span>
+            <button className="inventory-link" onClick={() => { setResult(null); setSource(null); }} type="button">
+              Scan something else
+            </button>
             {result.sources.sitemap > 0 && <span>{result.sources.sitemap} from sitemap</span>}
             {result.sources.crawled > 0 && <span>{result.sources.crawled} found by crawling</span>}
             <input

@@ -3323,3 +3323,16 @@ button.screen-figma-link {
   border: 0; background: rgba(60, 170, 110, 0.2); color: inherit;
   border-radius: 6px; padding: 4px 12px; font-size: 11.5px; cursor: pointer;
 }
+
+.inventory-drop {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 56px 32px; border-radius: 14px; text-align: center;
+  border: 2px dashed rgba(128, 128, 128, 0.34);
+  background: rgba(128, 128, 128, 0.05);
+  transition: border-color 0.12s, background 0.12s;
+}
+.inventory-drop.is-over { border-color: #3b6cf6; background: rgba(59, 108, 246, 0.09); }
+.inventory-drop strong { font-size: 16px; }
+.inventory-drop > span { font-size: 12.5px; opacity: 0.6; margin-bottom: 6px; }
+.inventory-drop .inventory-form { width: 100%; max-width: 620px; margin-top: 8px; }
+.inventory-phase { font-weight: 560; opacity: 1 !important; margin-bottom: 6px !important; }

@@ -1,6 +1,9 @@
 const http = require("node:http");
 const https = require("node:https");
 const { discoverStates } = require("./state-discovery.cjs");
+const { startDevServer } = require("./dev-server.cjs");
+const { detectElectronRenderer, startRendererServer } = require("./renderer-server.cjs");
+const { scanJavascriptProject } = require("./project-scanner.cjs");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 
 /**
@@ -166,4 +169,41 @@ async function scanUrl(target, {
   }
 }
 
-module.exports = { normalizeTargetUrl, parseSitemapPaths, scanUrl };
+/**
+ * Scans a project folder: works out how to serve it, serves it, scans it, and
+ * shuts down whatever it started.
+ *
+ * Electron projects are served renderer-only. Running their dev script opens
+ * the desktop app and ties the dev server to that window, so closing it would
+ * end the scan.
+ */
+async function scanFolder(root, { onStatus, ...options } = {}) {
+  // Reading the source finds addresses nothing links to — an Electron app's
+  // "?view=settings" window has no link into it, so crawling alone can never
+  // reach it. Source analysis proposes addresses; the crawl decides what is
+  // really there.
+  let seedPaths = [];
+  try {
+    const scanned = await scanJavascriptProject(root);
+    seedPaths = [...new Set((scanned?.screens ?? []).map((screen) => screen.capturePath).filter(Boolean))];
+  } catch {}
+
+  const electron = await detectElectronRenderer(root);
+  onStatus?.({ phase: "starting", detail: electron ? "Serving the Electron renderer" : "Starting the project's dev server" });
+
+  const started = electron ? await startRendererServer(root) : await startDevServer(root, { startTimeoutMs: 90_000 });
+  if (!started.ok) {
+    return { ok: false, message: started.message, reason: started.reason, output: started.output ?? null };
+  }
+
+  onStatus?.({ phase: "scanning", detail: started.attached ? `Reusing ${started.url}` : `Serving at ${started.url}` });
+  try {
+    const inventory = await scanUrl(started.url, { ...options, seedPaths: [...seedPaths, ...(options.seedPaths ?? [])] });
+    return inventory.ok ? { ...inventory, servedBy: started.command, attached: Boolean(started.attached) } : inventory;
+  } finally {
+    // Never stop a server this scan did not start.
+    started.stop?.();
+  }
+}
+
+module.exports = { normalizeTargetUrl, parseSitemapPaths, scanFolder, scanUrl };
