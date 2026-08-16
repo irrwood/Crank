@@ -6,6 +6,7 @@ const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
 const { scanUrl } = require("./page-inventory.cjs");
+const { renderHandoffPage } = require("./handoff-page.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
 const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
@@ -142,6 +143,34 @@ const registrySchema = z.array(
 const deviceConnectionSchema = z.object({
   token: z.string().regex(/^[a-f0-9]{64}$/),
   confirmed: z.boolean()
+});
+
+const handoffPageSchema = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(300),
+  route: z.string().max(2000),
+  recipe: z.array(z.object({
+    kind: z.string().max(40),
+    locator: z.string().max(2000),
+    label: z.string().max(300)
+  })).max(20),
+  depth: z.number().int().nonnegative().max(20),
+  thumbnail: z.object({
+    dataUrl: z.string().startsWith("data:image/").max(20_000_000),
+    width: z.number().finite(),
+    height: z.number().finite()
+  }).nullable()
+});
+
+const handoffInventorySchema = z.object({
+  origin: z.string().max(2000).optional(),
+  pages: z.array(handoffPageSchema).max(500),
+  filtered: z.array(z.object({
+    label: z.string().max(300),
+    from: z.string().max(300),
+    reason: z.string().max(200),
+    magnitude: z.number().finite()
+  })).max(500).optional()
 });
 
 const projectRootSchema = z.string().min(1).refine(path.isAbsolute);
@@ -1533,6 +1562,25 @@ function registerIpc() {
     devServers.delete(safeRoot);
     running?.stop?.();
     return true;
+  });
+
+  ipcMain.handle("inventory:export", async (_event, inventory, title) => {
+    const safeTitle = z.string().min(1).max(120).optional().parse(title) ?? "Design handoff";
+    const parsed = handoffInventorySchema.parse(inventory);
+    const suggested = `${safeTitle.replace(/[^\w\u4e00-\u9fa5-]+/g, "-").replace(/^-+|-+$/g, "") || "handoff"}.html`;
+    const target = await dialog.showSaveDialog({
+      title: "Save handoff page",
+      defaultPath: path.join(app.getPath("documents"), suggested),
+      filters: [{ name: "HTML", extensions: ["html"] }]
+    });
+    if (target.canceled || !target.filePath) return { saved: false };
+    await writeFile(target.filePath, renderHandoffPage(parsed, { title: safeTitle }), "utf8");
+    return { saved: true, filePath: target.filePath };
+  });
+
+  ipcMain.handle("inventory:reveal", async (_event, filePath) => {
+    const safePath = z.string().min(1).refine(path.isAbsolute).parse(filePath);
+    shell.showItemInFolder(safePath);
   });
 
   ipcMain.handle("inventory:scan", async (event, url, seedPaths) => {

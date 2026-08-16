@@ -40,6 +40,8 @@ export default function PageInventoryView() {
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState<DiscoveredPage | null>(null);
   const [showFiltered, setShowFiltered] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [title, setTitle] = useState("Design handoff");
   const progressRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,6 +71,20 @@ export default function PageInventoryView() {
       setError(cause instanceof Error ? cause.message : "The scan failed.");
     } finally {
       setScanning(false);
+    }
+  };
+
+  const exportPage = async () => {
+    if (!result?.ok || !window.uiSync?.exportHandoffPage) return;
+    setError(null);
+    try {
+      const outcome = await window.uiSync.exportHandoffPage(
+        { origin: result.origin, pages: result.pages, filtered: result.filtered },
+        title.trim() || "Design handoff"
+      );
+      if (outcome.saved && outcome.filePath) setSaved(outcome.filePath);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The page could not be saved.");
     }
   };
 
@@ -127,12 +143,28 @@ export default function PageInventoryView() {
             <span>{result.origin}</span>
             {result.sources.sitemap > 0 && <span>{result.sources.sitemap} from sitemap</span>}
             {result.sources.crawled > 0 && <span>{result.sources.crawled} found by crawling</span>}
+            <input
+              aria-label="Handoff page title"
+              className="inventory-title-input"
+              onChange={(event) => setTitle(event.target.value)}
+              value={title}
+            />
+            <button className="inventory-export" onClick={() => void exportPage()} type="button">
+              Save handoff page…
+            </button>
             {result.filtered.length > 0 && (
               <button className="inventory-link" onClick={() => setShowFiltered((value) => !value)} type="button">
                 {showFiltered ? "Hide" : "Show"} {result.filtered.length} left out
               </button>
             )}
           </div>
+
+          {saved && (
+            <p className="inventory-saved">
+              Saved to <code>{saved}</code>
+              <button onClick={() => void window.uiSync?.revealFile?.(saved)} type="button">Show in Finder</button>
+            </p>
+          )}
 
           {showFiltered && (
             <section className="inventory-filtered">

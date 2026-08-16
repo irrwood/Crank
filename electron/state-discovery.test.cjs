@@ -263,3 +263,19 @@ test("keeps small-change states out of the inventory but reports them", async ()
   assert.equal(filtered.length, 1);
   assert.match(filtered[0].label, /tooltip/i);
 });
+
+test("a different address is a page even when it looks almost identical", async () => {
+  // Sibling pages from one template differ by a heading. Judging them by how
+  // much moved would filter out the entire nav bar of a templated site.
+  const nav = { locator: "#about", label: "About", role: "link", to: "/about" };
+  const session = fakeSession({
+    "/": { url: "/", fingerprint: ["main|page||125x100", "h1|title|Home|30x4"], controls: [nav] },
+    "/about": { url: "/about", fingerprint: ["main|page||125x100", "h1|title|About|30x4"], controls: [] }
+  });
+  const { states, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(filtered.length, 0, `nothing should be filtered, got ${JSON.stringify(filtered)}`);
+  assert.ok(
+    states.some((state) => state.route === "/about"),
+    `/about missing from ${JSON.stringify(states.map((s) => s.route))}`
+  );
+});

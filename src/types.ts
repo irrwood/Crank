@@ -330,4 +330,6 @@ export type PageInventory =
       blocked: { mutations: string[]; external: string[] };
     };
 
+export type PageInventoryFiltered = { label: string; from: string; reason: string; magnitude: number };
+
 export type ScanProgress = { name: string; route: string; depth: number };

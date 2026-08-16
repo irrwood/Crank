@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("uiSync", {
   inspectDroppedProjects: (roots) => ipcRenderer.invoke("projects:inspect-dropped", roots),
   getProjectPreviews: (root) => ipcRenderer.invoke("projects:previews", root),
   scanUrl: (url, seedPaths) => ipcRenderer.invoke("inventory:scan", url, seedPaths),
+  exportHandoffPage: (inventory, title) => ipcRenderer.invoke("inventory:export", inventory, title),
+  revealFile: (filePath) => ipcRenderer.invoke("inventory:reveal", filePath),
   onScanProgress: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("inventory:progress", listener);

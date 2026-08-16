@@ -353,8 +353,13 @@ async function discoverStates(session, {
     // A control that only opened a dropdown or a tooltip did not produce a
     // page. Judge by how much of the screen moved, not by whether the DOM
     // differs at all — almost any click changes something.
+    //
+    // Navigation is exempt: a different address is a different page however
+    // similar it looks. Sibling pages of one template can differ by a single
+    // heading, and judging those by pixels would delete a whole nav bar.
+    const navigated = Boolean(snapshot.url) && snapshot.url !== step.from.state.url;
     const magnitude = changeMagnitude(step.from.state.fingerprint, snapshot.fingerprint, snapshot.viewport);
-    if (magnitude < minChangeRatio) {
+    if (!navigated && magnitude < minChangeRatio) {
       filtered.push({
         label: step.action.label,
         from: step.from.state.name,
