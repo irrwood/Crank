@@ -1,7 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  changeMagnitude,
+  chooseStateName,
   discoverStates,
+  humanizeStateName,
+  isVolatileText,
   isDestructiveLabel,
   isFrameworkInternalPath,
   planNextStep,
@@ -23,7 +27,11 @@ function fakeSession(screens, { startRoute = "/" } = {}) {
       title: screen.title ?? key,
       heading: screen.title ?? key,
       url: screen.url ?? key,
-      fingerprint: screen.fingerprint ?? [key],
+      // Real fingerprints always carry element size; give bare test entries a
+      // page-sized one so they read as real changes rather than tooltips.
+      fingerprint: (screen.fingerprint ?? [key]).map(
+        (entry) => (entry.includes("|") ? entry : `div|${entry}||120x90`)
+      ),
       candidates: (screen.controls ?? []).map((control) => ({
         locator: control.locator,
         label: control.label,
@@ -185,4 +193,73 @@ test("reduces a link-reached state to a direct address", async () => {
   assert.ok(about, `no /about state in ${JSON.stringify(states.map((s) => s.route))}`);
   assert.deepEqual(about.recipe, [], "a directly addressable page needs no click recipe");
   assert.equal(about.route, "/about");
+});
+
+test("rejects names that rename themselves tomorrow", () => {
+  // The real trigger: this app's <h1> is "Today, Sunday, 16 August".
+  assert.equal(isVolatileText("Today, Sunday, 16 August"), true);
+  assert.equal(isVolatileText("今天 星期日"), true);
+  assert.equal(isVolatileText("2026-08-16"), true);
+  assert.equal(isVolatileText("10:30"), true);
+  assert.equal(isVolatileText("3 分钟前"), true);
+  assert.equal(isVolatileText(""), true);
+  assert.equal(isVolatileText("全部记录"), false);
+  assert.equal(isVolatileText("Settings"), false);
+  assert.equal(isVolatileText("Raw Data"), false);
+});
+
+test("names a state from the control that opened it, not a drifting heading", () => {
+  assert.equal(
+    chooseStateName({
+      recipe: [{ label: "全部记录" }],
+      route: "/",
+      heading: "Today, Sunday, 16 August",
+      title: "Research Memory"
+    }),
+    "全部记录 · Research Memory"
+  );
+  // With no stable signal anywhere, the address still identifies the page.
+  assert.equal(
+    chooseStateName({ recipe: [], route: "/?view=settings", heading: "Today, Sunday, 16 August", title: "9:41" }),
+    "Settings"
+  );
+  assert.equal(chooseStateName({ recipe: [], route: "/" }), "Home");
+  assert.equal(chooseStateName({ recipe: [], route: "/holdings/detail" }), "Holdings Detail");
+});
+
+test("does not repeat an identical name part", () => {
+  assert.equal(humanizeStateName(["新任务", "新任务"]), "新任务");
+});
+
+test("measures change by the largest moved region", () => {
+  const viewport = { width: 1000, height: 800 };
+  const base = ["div|app||125x100"];
+  // A dropdown: 160x120 css px out of 800k.
+  const dropdown = [...base, "ul|menu||20x15"];
+  assert.ok(changeMagnitude(base, dropdown, viewport) < 0.12, "a dropdown is not a page");
+  // A modal covering most of the viewport.
+  const modal = [...base, "div|modal||100x75"];
+  assert.ok(changeMagnitude(base, modal, viewport) > 0.12, "a modal is a page");
+  assert.equal(changeMagnitude(base, base, viewport), 0);
+});
+
+test("keeps small-change states out of the inventory but reports them", async () => {
+  const session = fakeSession({
+    "/": {
+      url: "/",
+      fingerprint: ["main|app||125x100"],
+      controls: [
+        { locator: "#tip", label: "Show tooltip", to: "tooltip" },
+        { locator: "#tab", label: "Reports", role: "tab", to: "reports" }
+      ]
+    },
+    tooltip: { url: "/", fingerprint: ["main|app||125x100", "span|tip||8x4"], controls: [] },
+    reports: { url: "/", fingerprint: ["main|app||125x100", "section|reports||120x90"], controls: [] }
+  });
+  const { states, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  const names = states.map((state) => state.name);
+  assert.equal(states.length, 2, `expected Home + Reports, got ${JSON.stringify(names)}`);
+  assert.ok(names.some((name) => name.includes("Reports")));
+  assert.equal(filtered.length, 1);
+  assert.match(filtered[0].label, /tooltip/i);
 });

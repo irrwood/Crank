@@ -124,7 +124,7 @@ async function scanUrl(target, {
     const sitemapPaths = await readSitemap(origin);
     const routes = [...new Set([startPath, ...seedPaths, ...sitemapPaths])];
 
-    const { states, skipped } = await discoverStates(session, {
+    const { states, skipped, filtered } = await discoverStates(session, {
       routes,
       maxStates,
       maxDepth,
@@ -153,6 +153,7 @@ async function scanUrl(target, {
       origin,
       pages,
       skipped,
+      filtered,
       sources: {
         sitemap: sitemapPaths.length,
         seeds: seedPaths.length,

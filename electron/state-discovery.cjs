@@ -64,8 +64,86 @@ function rankCandidates(candidates) {
 }
 
 function humanizeStateName(parts) {
-  const label = parts.filter(Boolean).join(" · ").replace(/\s+/g, " ").trim();
-  return label.slice(0, 80) || "State";
+  const seen = new Set();
+  const unique = parts
+    .map((part) => String(part ?? "").replace(/\s+/g, " ").trim())
+    .filter((part) => part && !seen.has(part) && seen.add(part));
+  return unique.join(" · ").slice(0, 80) || "State";
+}
+
+const volatilePatterns = [
+  /\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b/i,
+  /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i,
+  /\b(?:today|yesterday|tomorrow|now|just now)\b/i,
+  /今天|昨天|明天|刚刚|星期|周[一二三四五六日天]|\d+\s*(?:年|月|日|分钟|小时)前/,
+  /\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}/
+];
+
+/**
+ * Text that changes on its own is unusable as a page name: this app's <h1> is
+ * "Today, Sunday, 16 August", so names taken from it would rename every page
+ * tomorrow and break the identity that baselines depend on.
+ */
+function isVolatileText(text) {
+  const value = String(text ?? "").trim();
+  if (!value) return true;
+  if (volatilePatterns.some((pattern) => pattern.test(value))) return true;
+  const digits = (value.match(/\d/g) ?? []).length;
+  return digits > 0 && digits / value.length > 0.3;
+}
+
+function humanizeRoute(route) {
+  const value = String(route ?? "").trim();
+  if (!value || value === "/") return "Home";
+  const [path, query] = value.split("?");
+  const fromQuery = query ? query.split("&").map((pair) => pair.split("=").pop()).join(" ") : "";
+  const fromPath = path.split("/").filter(Boolean).join(" ");
+  return (fromPath || fromQuery || "Home")
+    .replace(/[-_]+/g, " ")
+    .replace(/\.\w+$/, "")
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+    .trim();
+}
+
+/**
+ * Names a state from the most stable signal available. The label of the
+ * control that opened it ("全部记录", "常规") is written by the app's authors
+ * and does not drift; headings and titles are used only when they look stable.
+ */
+function chooseStateName({ recipe = [], route, heading, title }) {
+  const label = recipe.length > 0 ? recipe[recipe.length - 1].label : null;
+  const parts = [];
+  if (label && !isVolatileText(label)) parts.push(label);
+  if (parts.length === 0 && route) parts.push(humanizeRoute(route));
+  for (const candidate of [heading, title]) {
+    if (parts.length >= 2) break;
+    if (candidate && !isVolatileText(candidate)) parts.push(candidate);
+  }
+  return humanizeStateName(parts);
+}
+
+function areaOfFingerprintEntry(entry) {
+  const match = String(entry ?? "").match(/\|(\d+)x(\d+)$/);
+  if (!match) return 0;
+  // Stored in eighth-of-a-pixel buckets by collectUiState.
+  return Number(match[1]) * 8 * Number(match[2]) * 8;
+}
+
+/**
+ * How much of the screen a state changed, as a fraction of the viewport, using
+ * the largest single changed element rather than a sum so nesting does not
+ * inflate it. A dropdown or tooltip moves a sliver; a tab, modal or route
+ * change moves a large region.
+ */
+function changeMagnitude(before, after, viewport) {
+  const viewportArea = Math.max(1, (viewport?.width ?? 1220) * (viewport?.height ?? 790));
+  const previous = new Set(before ?? []);
+  let largest = 0;
+  for (const entry of after ?? []) {
+    if (previous.has(entry)) continue;
+    largest = Math.max(largest, areaOfFingerprintEntry(entry));
+  }
+  return Math.min(1, largest / viewportArea);
 }
 
 function recipeKey(recipe) {
@@ -179,6 +257,7 @@ function collectUiState() {
     title: document.title || "",
     heading: (document.querySelector("h1,h2")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60),
     url: location.pathname + location.search + location.hash,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
     fingerprint,
     candidates
   };
@@ -194,12 +273,14 @@ async function discoverStates(session, {
   maxStates = 40,
   maxDepth = 1,
   maxActionsPerState = 12,
+  minChangeRatio = 0.12,
   onProgress
 } = {}) {
   const states = [];
   const bySignature = new Map();
   const frontier = [];
   const skipped = [];
+  const filtered = [];
 
   /**
    * A state reached by clicking may simply be another address. Directly
@@ -217,11 +298,12 @@ async function discoverStates(session, {
     const signature = signatureOf(snapshot.fingerprint);
     if (bySignature.has(signature)) return null;
     ({ recipe, entryRoute } = await simplify(snapshot, recipe, entryRoute, signature));
-    const name = humanizeStateName(
-      recipe.length === 0
-        ? [snapshot.heading || snapshot.title, snapshot.url === "/" ? "" : snapshot.url]
-        : [snapshot.heading || snapshot.title, recipe[recipe.length - 1].label]
-    );
+    const name = chooseStateName({
+      recipe,
+      route: entryRoute,
+      heading: snapshot.heading,
+      title: snapshot.title
+    });
     const state = {
       id: `state-${signature}`,
       name,
@@ -229,7 +311,8 @@ async function discoverStates(session, {
       route: entryRoute,
       url: snapshot.url,
       recipe,
-      depth: recipe.length
+      depth: recipe.length,
+      fingerprint: snapshot.fingerprint
     };
     bySignature.set(signature, state);
     states.push(state);
@@ -266,17 +349,35 @@ async function discoverStates(session, {
       if (!snapshot) { reached = false; break; }
     }
     if (!reached) continue;
+
+    // A control that only opened a dropdown or a tooltip did not produce a
+    // page. Judge by how much of the screen moved, not by whether the DOM
+    // differs at all — almost any click changes something.
+    const magnitude = changeMagnitude(step.from.state.fingerprint, snapshot.fingerprint, snapshot.viewport);
+    if (magnitude < minChangeRatio) {
+      filtered.push({
+        label: step.action.label,
+        from: step.from.state.name,
+        reason: "changed too little to be a page",
+        magnitude: Number(magnitude.toFixed(3))
+      });
+      continue;
+    }
     await record(snapshot, recipe, step.from.entryRoute);
   }
 
-  return { states, skipped };
+  return { states, skipped, filtered };
 }
 
 module.exports = {
   collectUiState,
   discoverStates,
+  changeMagnitude,
+  chooseStateName,
+  humanizeRoute,
   humanizeStateName,
   isDestructiveLabel,
+  isVolatileText,
   isFrameworkInternalPath,
   planNextStep,
   rankCandidates,
