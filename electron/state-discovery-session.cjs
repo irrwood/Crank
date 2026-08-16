@@ -44,9 +44,11 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       callback({ cancel: true });
       return;
     }
-    // Compare host, not origin: HMR uses ws:// against the same host and would
-    // otherwise be treated as a foreign origin and cut off.
-    if (url.host !== originHost || !["http:", "https:", "ws:", "wss:"].includes(url.protocol)) {
+    // Not origin, and not host either: Vite serves HMR from a separate port
+    // (127.0.0.1:24678), so anything on the loopback interface counts as local.
+    const isLoopback = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
+    const isLocal = url.host === originHost || isLoopback;
+    if (!isLocal || !["http:", "https:", "ws:", "wss:"].includes(url.protocol)) {
       blocked.external.add(url.host);
       callback({ cancel: true });
       return;
