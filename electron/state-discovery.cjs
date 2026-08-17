@@ -102,6 +102,23 @@ function isVolatileText(text) {
   return digits > 0 && digits / value.length > 0.3;
 }
 
+const appearanceWords = [
+  "light mode", "dark mode", "light theme", "dark theme", "toggle theme",
+  "switch to", "language", "english", "中文", "简体", "繁體", "日本語", "한국어",
+  "深色", "浅色", "夜间", "日间", "主题", "语言", "切换"
+];
+
+/**
+ * A control that changes how the app looks describes an appearance, not a
+ * page. Naming a page "Light Mode" after the button that reached it hides
+ * which page it actually is.
+ */
+function isAppearanceLabel(label) {
+  const value = String(label ?? "").trim().toLowerCase();
+  if (!value) return false;
+  return appearanceWords.some((word) => value.includes(word));
+}
+
 function humanizeRoute(route) {
   const value = String(route ?? "").trim();
   if (!value || value === "/") return "Home";
@@ -123,7 +140,7 @@ function humanizeRoute(route) {
 function chooseStateName({ recipe = [], route, heading, title }) {
   const label = recipe.length > 0 ? recipe[recipe.length - 1].label : null;
   const parts = [];
-  if (label && !isVolatileText(label)) parts.push(label);
+  if (label && !isVolatileText(label) && !isAppearanceLabel(label)) parts.push(label);
   if (parts.length === 0 && route) parts.push(humanizeRoute(route));
   for (const candidate of [heading, title]) {
     if (parts.length >= 2) break;
@@ -351,7 +368,9 @@ async function discoverStates(session, {
       const label = recipe.length > 0 ? recipe[recipe.length - 1].label : null;
       const variant = {
         id: `${existing.id}-variant-${existing.variants.length + 1}`,
-        name: label && !isVolatileText(label) ? label : `Variant ${existing.variants.length + 2}`,
+        name: label && !isVolatileText(label)
+          ? label
+          : (snapshot.title || snapshot.heading || `Variant ${existing.variants.length + 2}`).slice(0, 40),
         signature,
         route: entryRoute,
         recipe
@@ -414,6 +433,9 @@ async function discoverStates(session, {
 
     // Replay from a fresh load every time. A state that cannot be reached
     // deterministically is worthless as a baseline, so determinism beats speed.
+    // Persisted choices are cleared too, or a language switch clicked earlier
+    // would still be in effect and every later page recorded in that language.
+    await session.reset?.();
     let snapshot = await session.goto(step.from.entryRoute);
     if (!snapshot) continue;
     let reached = true;
@@ -454,6 +476,7 @@ module.exports = {
   chooseStateName,
   humanizeRoute,
   humanizeStateName,
+  isAppearanceLabel,
   isDestructiveLabel,
   isVolatileText,
   isFrameworkInternalPath,

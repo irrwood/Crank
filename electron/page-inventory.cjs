@@ -144,6 +144,9 @@ async function scanUrl(target, {
     // than whatever the crawl happened to leave on screen.
     const shoot = async (route, recipe) => {
       if (!withThumbnails) return { thumbnail: null, snapshot: null };
+      // Start from the app's default: an earlier click may have switched the
+      // language or theme, and that would be baked into every later capture.
+      await session.reset?.();
       let reached = await session.goto(route, { patient: true });
       for (const step of recipe) {
         if (!reached) break;

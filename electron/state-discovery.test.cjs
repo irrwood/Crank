@@ -6,6 +6,7 @@ const {
   discoverStates,
   humanizeStateName,
   isVolatileText,
+  isAppearanceLabel,
   isDestructiveLabel,
   isFrameworkInternalPath,
   isHtmlContentType,
@@ -379,4 +380,39 @@ test("an endpoint that answers with JSON is not a page", async () => {
   const { states, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
   assert.deepEqual(states.map((state) => state.route), ["/"]);
   assert.match(filtered.map((item) => item.reason).join(" "), /application\/json/);
+});
+
+test("clears what a page remembered before each replay", async () => {
+  // Language and theme switches persist. Without a reset the first such click
+  // re-skins every page found afterwards, and their names come out polluted.
+  const resets = [];
+  const base = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#a", label: "Reports", role: "tab", to: "reports" }]
+    },
+    reports: { url: "/", fingerprint: ["reports"], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+  const session = { ...base, reset: async () => { resets.push(Date.now()); } };
+  await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.ok(resets.length > 0, "a replay must start from the app's default state");
+});
+
+test("an appearance switch does not get to name a page", () => {
+  // "Light Mode · Comparison" hides which page it is behind how it looks.
+  assert.equal(isAppearanceLabel("Light Mode"), true);
+  assert.equal(isAppearanceLabel("Switch to Chinese"), true);
+  assert.equal(isAppearanceLabel("切换语言"), true);
+  assert.equal(isAppearanceLabel("Holdings"), false);
+  assert.equal(isAppearanceLabel("全部记录"), false);
+
+  assert.equal(
+    chooseStateName({ recipe: [{ label: "Light Mode" }], route: "/returns", heading: "Comparison", title: "Catfolio" }),
+    "Returns · Comparison"
+  );
+  // A real control still names its page.
+  assert.equal(
+    chooseStateName({ recipe: [{ label: "Holdings" }], route: "/", heading: "Portfolio", title: "Catfolio" }),
+    "Holdings · Portfolio"
+  );
 });

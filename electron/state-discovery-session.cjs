@@ -127,6 +127,21 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
     get blocked() {
       return { mutations: [...blocked.mutations], external: [...blocked.external] };
     },
+    /**
+     * Clears what the app remembered between visits.
+     *
+     * A language or theme switch is persisted, so once the crawl clicked one
+     * every later page came back re-skinned and was recorded under a polluted
+     * name. Replaying from the app's own default keeps each page comparable
+     * with the last scan, which is what a baseline needs.
+     */
+    async reset() {
+      try {
+        await contents.session.clearStorageData({
+          storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers", "cachestorage"]
+        });
+      } catch {}
+    },
     async goto(route, { patient = false } = {}) {
       // Resolve against the origin rather than assigning to pathname: a route
       // like "/?view=settings" would otherwise be encoded into the path as
