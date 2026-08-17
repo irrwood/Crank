@@ -115,6 +115,7 @@ async function scanUrl(target, {
   maxDepth = 1,
   maxActionsPerState = 12,
   withThumbnails = true,
+  withHtml = true,
   onProgress
 } = {}) {
   const normalized = normalizeTargetUrl(target);
@@ -142,23 +143,31 @@ async function scanUrl(target, {
     // Recapture from each recipe so the shot matches the recorded state rather
     // than whatever the crawl happened to leave on screen.
     const shoot = async (route, recipe) => {
-      if (!withThumbnails) return null;
-      let snapshot = await session.goto(route);
+      if (!withThumbnails) return { thumbnail: null, snapshot: null };
+      let reached = await session.goto(route, { patient: true });
       for (const step of recipe) {
-        if (!snapshot) break;
-        snapshot = await session.click(step.locator);
+        if (!reached) break;
+        reached = await session.click(step.locator, { patient: true });
       }
-      return snapshot ? captureThumbnail(session) : null;
+      if (!reached) return { thumbnail: null, snapshot: null };
+      // A thumbnail keeps the grid quick to draw; the markup is what carries
+      // real text, real SVG and readable colour, so both are kept.
+      const thumbnail = await captureThumbnail(session);
+      const captured = withHtml ? await session.captureHtml() : null;
+      const snapshot = captured?.html
+        ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
+        : null;
+      return { thumbnail, snapshot };
     };
 
     const pages = [];
     for (const state of states) {
-      const thumbnail = await shoot(state.route, state.recipe);
+      const shot = await shoot(state.route, state.recipe);
       const variants = [];
       for (const variant of state.variants ?? []) {
-        variants.push({ ...variant, thumbnail: await shoot(variant.route, variant.recipe) });
+        variants.push({ ...variant, ...(await shoot(variant.route, variant.recipe)) });
       }
-      pages.push({ ...state, thumbnail, variants });
+      pages.push({ ...state, ...shot, variants });
     }
 
     return {

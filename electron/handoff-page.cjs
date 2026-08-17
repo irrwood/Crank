@@ -61,6 +61,11 @@ figcaption a { margin-left: auto; color: var(--accent); font-size: 11.5px; text-
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .single { max-width: 1280px; margin: 0 auto; }
 .single img { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.frame iframe {
+  width: 100%; height: 78vh; border: 1px solid var(--line); border-radius: 12px;
+  background: #fff; display: block;
+}
+.note { color: var(--muted); font-size: 11.5px; margin: 10px 0 0; }
 .shot { position: relative; }
 .looks { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
 .looks button {
@@ -96,7 +101,7 @@ document.addEventListener("click", (event) => {
     event.preventDefault();
     const group = pick.closest(".shot");
     const wanted = pick.dataset.lookPick;
-    group.querySelectorAll("img[data-look]").forEach((image) => { image.hidden = image.dataset.look !== wanted; });
+    group.querySelectorAll("[data-look]").forEach((look) => { look.hidden = look.dataset.look !== wanted; });
     group.querySelectorAll("[data-look-pick]").forEach((button) => {
       button.setAttribute("aria-pressed", String(button.dataset.lookPick === wanted));
     });
@@ -144,14 +149,43 @@ function renderHandoffPage(inventory, { title = "Design handoff", generatedAt = 
         <p class="addr">${escapeHtml(addressOf(page))}</p>
       </figure>`).join("");
 
-  const singles = pages.map((page) => `
+  // The single view shows the captured markup, not a picture of it: sharp at
+  // any zoom, text selectable, SVG still vector. The grid keeps thumbnails so
+  // it stays quick to draw.
+  const singles = pages.map((page) => {
+    const looks = [{ id: page.id, name: "Default", snapshot: page.snapshot, thumbnail: page.thumbnail },
+      ...(page.variants ?? [])];
+    const frames = looks.map((look, index) => {
+      if (look.snapshot?.html) {
+        return `<iframe data-look="${index}"${index === 0 ? "" : " hidden"} loading="lazy"
+          sandbox="allow-same-origin" title="${escapeHtml(page.name)}"
+          srcdoc="${escapeHtml(look.snapshot.html)}"></iframe>`;
+      }
+      if (look.thumbnail) {
+        return `<img data-look="${index}"${index === 0 ? "" : " hidden"}
+          src="${escapeHtml(look.thumbnail.dataUrl)}" alt="${escapeHtml(page.name)}">`;
+      }
+      return `<p class="empty" data-look="${index}"${index === 0 ? "" : " hidden"}>Nothing was captured for this page.</p>`;
+    }).join("");
+    const toggle = looks.length > 1
+      ? `<div class="looks">${looks.map((look, index) =>
+          `<button type="button" data-look-pick="${index}"${index === 0 ? ' aria-pressed="true"' : ""}>${escapeHtml(look.name)}</button>`
+        ).join("")}</div>`
+      : "";
+    const notes = page.snapshot?.stats?.rasterised?.length
+      ? `<p class="note">${page.snapshot.stats.rasterised.length} area(s) could only be captured as pixels: ${escapeHtml(page.snapshot.stats.rasterised.join(", "))}. Everything else is live markup.</p>`
+      : "";
+    return `
     <section data-screen="${escapeHtml(page.id)}" class="single" hidden>
       <div class="meta">
         <h2>${escapeHtml(page.name)}</h2>
         <p class="addr">${escapeHtml(addressOf(page))}</p>
       </div>
-      ${shot(page)}
-    </section>`).join("");
+      ${toggle}
+      <div class="shot frame">${frames}</div>
+      ${notes}
+    </section>`;
+  }).join("");
 
   const tabs = [`<button data-target="overview" aria-current="true">All pages</button>`]
     .concat(pages.map((page) => `<button data-target="${escapeHtml(page.id)}">${escapeHtml(page.name)}</button>`))

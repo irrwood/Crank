@@ -159,7 +159,29 @@ const handoffPageSchema = z.object({
     dataUrl: z.string().startsWith("data:image/").max(20_000_000),
     width: z.number().finite(),
     height: z.number().finite()
-  }).nullable()
+  }).nullable(),
+  snapshot: z.object({
+    html: z.string().max(60_000_000),
+    bytes: z.number().finite(),
+    stats: z.object({
+      stylesheets: z.number().finite(),
+      inlinedAssets: z.number().finite(),
+      rasterised: z.array(z.string().max(200)).max(500),
+      skippedAssets: z.array(z.string().max(300)).max(500),
+      svgPreserved: z.number().finite()
+    }).partial()
+  }).nullable().optional(),
+  variants: z.array(z.object({
+    id: z.string().max(200),
+    name: z.string().max(300),
+    route: z.string().max(2000),
+    recipe: z.array(z.object({ kind: z.string().max(40), locator: z.string().max(2000), label: z.string().max(300) })).max(20),
+    thumbnail: z.object({
+      dataUrl: z.string().startsWith("data:image/").max(20_000_000),
+      width: z.number().finite(), height: z.number().finite()
+    }).nullable(),
+    snapshot: z.object({ html: z.string().max(60_000_000), bytes: z.number().finite(), stats: z.record(z.unknown()) }).nullable().optional()
+  })).max(50).optional()
 });
 
 const handoffInventorySchema = z.object({

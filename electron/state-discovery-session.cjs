@@ -1,6 +1,7 @@
 const { BrowserWindow } = require("electron");
 const { randomBytes } = require("node:crypto");
 const { collectUiState, isFrameworkInternalPath } = require("./state-discovery.cjs");
+const { MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -29,6 +30,12 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
 
   const originHost = new URL(origin).host;
   const blocked = { mutations: new Set(), external: new Set() };
+  // A page showing "Loading…" has a perfectly stable DOM, so quiescence alone
+  // cannot tell "finished" from "still waiting". The moment the last request
+  // *started* is the signal — counting requests in and out never balanced,
+  // because a websocket or a cancelled request leaves the count stuck above
+  // zero and every wait then ran to its limit.
+  let lastRequestAt = 0;
   const contents = window.webContents;
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -59,17 +66,53 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       callback({ cancel: true });
       return;
     }
+    lastRequestAt = Date.now();
     callback({ cancel: false });
   });
 
-  const settle = async () => {
+  /**
+   * Waits for the page to stop changing, not for a fixed delay.
+   *
+   * Data arrives asynchronously and charts are built after it lands: this
+   * app's analytics page had no chart at all 300ms in and six of them at two
+   * seconds. A fixed wait captured the loading state and reported a clean
+   * snapshot, which is worse than capturing nothing.
+   */
+  const settle = async ({ quietFor = 1, interval = 300, maxWait = 3_000 } = {}) => {
     try {
       await contents.executeJavaScript(
         "Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 3000))])",
         true
       );
     } catch {}
-    await wait(280);
+
+    const measure = () => contents.executeJavaScript(
+      `(() => {
+        const body = document.body;
+        return body ? \`\${document.querySelectorAll("*").length}:\${body.innerText.length}:\${document.querySelectorAll("canvas,svg,img").length}\` : "";
+      })()`,
+      true
+    ).catch(() => null);
+
+    const deadline = Date.now() + maxWait;
+    let previous = await measure();
+    let stable = 0;
+    let seenRequestAt = lastRequestAt;
+    while (Date.now() < deadline) {
+      await wait(interval);
+      // Stillness only counts once the network has gone quiet. A page waiting
+      // on a fetch sits perfectly still, and charts are drawn a few hundred
+      // milliseconds *after* their data lands — counting that earlier calm
+      // ended the wait before anything had been rendered.
+      if (lastRequestAt !== seenRequestAt) {
+        seenRequestAt = lastRequestAt;
+        stable = 0;
+      }
+      const current = await measure();
+      stable = current !== null && current === previous ? stable + 1 : 0;
+      previous = current;
+      if (stable >= quietFor && Date.now() - lastRequestAt > interval) break;
+    }
   };
 
   const read = async () => {
@@ -84,7 +127,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
     get blocked() {
       return { mutations: [...blocked.mutations], external: [...blocked.external] };
     },
-    async goto(route) {
+    async goto(route, { patient = false } = {}) {
       // Resolve against the origin rather than assigning to pathname: a route
       // like "/?view=settings" would otherwise be encoded into the path as
       // "/%3Fview=settings" and silently load the wrong view.
@@ -101,10 +144,12 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       } catch {
         return null;
       }
-      await settle();
+      // Discovery only needs the structure, so it does not wait for data to
+      // land. Capture does — a chart drawn after the fetch would be missing.
+      await settle(patient ? { quietFor: 3, interval: 400, maxWait: 15_000 } : undefined);
       return read();
     },
-    async click(locator) {
+    async click(locator, { patient = false } = {}) {
       let clicked = false;
       try {
         clicked = await contents.executeJavaScript(`(() => {
@@ -118,8 +163,19 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
         return null;
       }
       if (!clicked) return null;
-      await settle();
+      await settle(patient ? { quietFor: 3, interval: 400, maxWait: 15_000 } : undefined);
       return read();
+    },
+    async captureHtml() {
+      try {
+        const limits = { maxAssetBytes: MAX_ASSET_BYTES, maxTotalAssetBytes: MAX_TOTAL_ASSET_BYTES };
+        return await contents.executeJavaScript(
+          `(${captureHtmlDocument.toString()})(${JSON.stringify(limits)})`,
+          true
+        );
+      } catch (cause) {
+        return { html: null, error: cause instanceof Error ? cause.message : String(cause) };
+      }
     },
     async capture() {
       try {

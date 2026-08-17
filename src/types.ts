@@ -303,6 +303,19 @@ export type SemanticChange = {
   kind: "spacing" | "shape" | "size" | "color";
 };
 
+export type HtmlSnapshot = {
+  html: string;
+  bytes: number;
+  stats: {
+    stylesheets: number;
+    inlinedAssets: number;
+    /** Only what genuinely holds pixels: canvas bitmaps, video frames. */
+    rasterised: string[];
+    skippedAssets: string[];
+    svgPreserved: number;
+  };
+};
+
 export type PageVariant = {
   id: string;
   /** Named after the control that produced it — "Dark", "中文". */
@@ -310,6 +323,7 @@ export type PageVariant = {
   route: string;
   recipe: Array<{ kind: string; locator: string; label: string }>;
   thumbnail: { dataUrl: string; width: number; height: number } | null;
+  snapshot: HtmlSnapshot | null;
 };
 
 export type DiscoveredPage = {
@@ -323,6 +337,8 @@ export type DiscoveredPage = {
   recipe: Array<{ kind: string; locator: string; label: string }>;
   depth: number;
   thumbnail: { dataUrl: string; width: number; height: number } | null;
+  /** The rendered markup: sharp at any zoom, text selectable, SVG intact. */
+  snapshot: HtmlSnapshot | null;
   /** The same page re-skinned — theme or language — not separate pages. */
   variants: PageVariant[];
 };

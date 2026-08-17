@@ -90,3 +90,34 @@ test("shows no toggle when a page has one look", () => {
   assert.ok(!/<button[^>]*data-look-pick/.test(html), "a single look needs no switcher");
   assert.ok(!html.includes('class="looks"'), "and no switcher row");
 });
+
+test("shows captured markup rather than a picture of it", () => {
+  const html = renderHandoffPage({
+    ok: true, origin: "http://x", filtered: [],
+    pages: [{
+      id: "s", name: "Analytics", route: "/analytics", recipe: [], depth: 0, variants: [],
+      thumbnail: { dataUrl: "data:image/png;base64,A", width: 10, height: 10 },
+      snapshot: {
+        html: "<!doctype html><html><body><h1>Analytics</h1></body></html>",
+        bytes: 58,
+        stats: { stylesheets: 1, inlinedAssets: 0, rasterised: ["canvas 800×400"], skippedAssets: [], svgPreserved: 8 }
+      }
+    }]
+  });
+  assert.match(html, /<iframe[^>]+srcdoc=/, "the page itself must be embedded");
+  assert.match(html, /&lt;h1&gt;Analytics&lt;\/h1&gt;/, "and escaped so it cannot break out");
+  // What could not be kept as markup is stated, not hidden.
+  assert.match(html, /1 area\(s\) could only be captured as pixels: canvas 800×400/);
+  // The grid still uses the thumbnail for speed.
+  assert.match(html, /base64,A/);
+});
+
+test("falls back to the thumbnail when no markup was captured", () => {
+  const html = renderHandoffPage({
+    ok: true, origin: "http://x", filtered: [],
+    pages: [{ id: "s", name: "Home", route: "/", recipe: [], depth: 0, variants: [], snapshot: null,
+      thumbnail: { dataUrl: "data:image/png;base64,B", width: 10, height: 10 } }]
+  });
+  assert.ok(!html.includes("<iframe"), "no empty frame when there is no markup");
+  assert.match(html, /base64,B/);
+});
