@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ChevronRight, FolderGit2, Globe2, Plus, RefreshCw, X } from "lucide-react";
 import type { DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 
 /**
@@ -71,16 +72,40 @@ function TargetRow({ target, active, onOpen, onRescan, onForget, nested }: {
   onForget: (target: InventoryTarget) => void;
 }) {
   return (
-    <div className={`target-row${active ? " is-active" : ""}${nested ? " is-nested" : ""}`}>
-      <button className="target-open" onClick={() => onOpen(target)} title={target.target} type="button">
-        <span className="target-name">{target.name}</span>
-        <span className="target-meta">
+    <button
+      className={`project-item ${active ? "is-active" : ""}${nested ? " is-nested" : ""}`}
+      onClick={() => onOpen(target)}
+      title={target.target}
+      type="button"
+    >
+      <span className={`project-icon is-${target.kind === "folder" ? "web" : "desktop"}`}>
+        {target.kind === "folder" ? <FolderGit2 size={14} /> : <Globe2 size={14} />}
+      </span>
+      <span className="project-copy">
+        <strong>{target.name}</strong>
+        <small>
           {target.pageCount === null ? "not scanned" : `${target.pageCount} pages`} · {whenScanned(target.lastScannedAt)}
+        </small>
+      </span>
+      <span className="target-actions">
+        <span
+          className="icon-button"
+          onClick={(event) => { event.stopPropagation(); onRescan(target); }}
+          role="button"
+          title="Rescan"
+        >
+          <RefreshCw size={13} />
         </span>
-      </button>
-      <button className="target-action" onClick={() => onRescan(target)} title="Rescan" type="button">↻</button>
-      <button className="target-action" onClick={() => onForget(target)} title="Remove" type="button">×</button>
-    </div>
+        <span
+          className="icon-button"
+          onClick={(event) => { event.stopPropagation(); onForget(target); }}
+          role="button"
+          title="Remove"
+        >
+          <X size={13} />
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -93,21 +118,33 @@ function Sidebar({ entries, activeId, onOpen, onRescan, onForget, onAdd }: {
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   return (
-    <aside className="inventory-sidebar">
-      <header>
+    <aside className="sidebar">
+      {/* The window is hiddenInset with the traffic lights at (18,18), so the
+          sidebar has to start below them — the same spacer the older
+          interface uses. */}
+      <div className="sidebar-drag drag-region" />
+      <div className="brand-row">
+        <div aria-hidden="true" className="brand-mark"><img alt="" src="./app-icon.png" /></div>
+        <span>UI Sync</span>
+      </div>
+
+      <div className="sidebar-section-header">
         <span>Projects</span>
-        <button onClick={onAdd} title="Add a project" type="button">+</button>
-      </header>
-      <div className="target-list">
+        <button aria-label="Add project" className="icon-button" onClick={onAdd} title="Add project" type="button">
+          <Plus size={15} />
+        </button>
+      </div>
+
+      <div className="project-list">
         {entries.length === 0 && <p className="target-empty">Nothing scanned yet.</p>}
         {entries.map((entry) => (isGroup(entry) ? (
-          <div className="target-group" key={entry.id}>
+          <div key={entry.id}>
             <button
               className="target-group-head"
               onClick={() => setCollapsed((current) => ({ ...current, [entry.id]: !current[entry.id] }))}
               type="button"
             >
-              <span className={`target-caret${collapsed[entry.id] ? "" : " is-open"}`}>›</span>
+              <ChevronRight className={collapsed[entry.id] ? "" : "is-open"} size={13} />
               {entry.name}
               <span className="target-count">{entry.children.length}</span>
             </button>
@@ -394,7 +431,7 @@ export default function PageInventoryView() {
   const pages = result?.ok ? result.pages : [];
 
   return (
-    <div className="inventory-shell">
+    <div className="app-frame">
       <Sidebar
         activeId={activeId}
         entries={entries}

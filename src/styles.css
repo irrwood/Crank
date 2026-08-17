@@ -3388,59 +3388,49 @@ button.screen-figma-link {
 .inventory-overlay figcaption .inventory-variants button { color: rgba(255, 255, 255, 0.72); border-color: rgba(255, 255, 255, 0.3); }
 .inventory-overlay figcaption .inventory-variants button[aria-pressed="true"] { color: #fff; border-color: #fff; }
 
-/* ---------- sidebar, borrowed from the existing interface ---------- */
+/* ---------- page inventory on the existing shell ---------- */
 
-.inventory-shell { position: fixed; inset: 0; display: flex; }
-.inventory-shell .inventory-page { position: relative; inset: auto; flex: 1; min-width: 0; }
+/* The sidebar, brand row, section header and project rows all reuse the
+   existing classes, including the 46px spacer that clears the traffic lights.
+   Only what the older interface has no equivalent for is defined here. */
 
-.inventory-sidebar {
-  width: 232px;
-  flex: 0 0 232px;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid rgba(128, 128, 128, 0.18);
-  background: rgba(128, 128, 128, 0.045);
+/* Second cell of .app-frame's grid, scrolling on its own. */
+.app-frame > .inventory-page {
+  position: relative;
+  inset: auto;
+  min-width: 0;
+  min-height: 0;
+  background: #e8e8e5;
 }
-.inventory-sidebar header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 14px 10px; font-size: 11px; letter-spacing: 0.04em;
-  text-transform: uppercase; opacity: 0.5;
-}
-.inventory-sidebar header button {
-  border: 0; background: none; color: inherit; cursor: pointer;
-  font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 6px; opacity: 0.8;
-}
-.inventory-sidebar header button:hover { background: rgba(128, 128, 128, 0.16); opacity: 1; }
 
-.target-list { flex: 1; overflow-y: auto; padding: 0 8px 16px; display: flex; flex-direction: column; gap: 1px; }
-.target-empty { margin: 8px 6px; font-size: 12px; opacity: 0.45; }
+.target-empty { margin: 6px 10px; font-size: 12px; opacity: 0.45; }
 
-.target-row { display: flex; align-items: center; border-radius: 8px; }
-.target-row:hover { background: rgba(128, 128, 128, 0.12); }
-.target-row.is-active { background: rgba(59, 108, 246, 0.14); }
-.target-row.is-nested { margin-left: 14px; }
-.target-open {
-  flex: 1; min-width: 0; text-align: left; border: 0; background: none; color: inherit;
-  cursor: pointer; padding: 7px 8px; display: flex; flex-direction: column; gap: 1px; font: inherit;
+.project-item.is-nested { padding-left: 22px; }
+
+/* Floated rather than laid out: at rest the row's own text gets the full
+   width, so "13 pages · today" is not truncated to make room for buttons
+   that are invisible. */
+.project-item { position: relative; }
+.target-actions {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  display: flex; gap: 2px; opacity: 0; pointer-events: none;
+  padding-left: 10px;
+  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.9) 22%);
+  border-radius: 8px;
 }
-.target-name { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.target-meta { font-size: 10.5px; opacity: 0.5; }
-.target-action {
-  border: 0; background: none; color: inherit; cursor: pointer; opacity: 0;
-  padding: 4px 6px; border-radius: 6px; font-size: 12px;
-}
-.target-row:hover .target-action { opacity: 0.55; }
-.target-action:hover { opacity: 1 !important; background: rgba(128, 128, 128, 0.2); }
+.project-item:hover .target-actions { opacity: 1; pointer-events: auto; }
+.target-actions .icon-button { width: 22px; height: 22px; }
 
 .target-group-head {
-  width: 100%; display: flex; align-items: center; gap: 6px; border: 0; background: none;
-  color: inherit; cursor: pointer; font: inherit; font-size: 11.5px; padding: 7px 8px;
-  border-radius: 8px; opacity: 0.72;
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  min-height: 30px; padding: 0 8px; border: 0; border-radius: 9px;
+  background: transparent; color: inherit; cursor: pointer;
+  font: inherit; font-size: 11.5px; opacity: 0.66;
 }
-.target-group-head:hover { background: rgba(128, 128, 128, 0.12); opacity: 1; }
-.target-caret { display: inline-block; transition: transform 120ms ease; opacity: 0.6; }
-.target-caret.is-open { transform: rotate(90deg); }
-.target-count { margin-left: auto; font-size: 10px; opacity: 0.45; }
+.target-group-head:hover { background: rgba(255, 255, 255, 0.52); opacity: 1; }
+.target-group-head svg { transition: transform 120ms ease; }
+.target-group-head svg.is-open { transform: rotate(90deg); }
+.target-count { margin-left: auto; font-size: 10px; opacity: 0.6; }
 
 /* ---------- view switching ---------- */
 
