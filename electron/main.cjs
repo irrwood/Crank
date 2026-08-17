@@ -5,8 +5,9 @@ const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
-const { scanFolder, scanUrl } = require("./page-inventory.cjs");
+const { normalizeTargetUrl, scanFolder, scanUrl } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
+const { createRecordingSession } = require("./recording-session.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
 const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
@@ -1600,6 +1601,37 @@ function registerIpc() {
       onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
+  });
+
+  let recording = null;
+
+  ipcMain.handle("inventory:record-start", async (event, target) => {
+    const url = z.string().min(1).max(2000).parse(target);
+    const normalized = normalizeTargetUrl(url);
+    if (!normalized.ok) return { ok: false, message: normalized.message };
+    recording?.close();
+    recording = createRecordingSession(normalized.origin, {
+      onCaptured: (page) => {
+        if (!event.sender.isDestroyed()) event.sender.send("inventory:recorded", page);
+      }
+    });
+    recording.window.on("closed", () => { recording = null; });
+    await recording.open(normalized.startPath);
+    return { ok: true, origin: normalized.origin };
+  });
+
+  ipcMain.handle("inventory:record-capture", async () => {
+    if (!recording) return { ok: false, message: "No recording is running." };
+    await recording.captureNow();
+    return { ok: true, count: recording.pages.length };
+  });
+
+  ipcMain.handle("inventory:record-stop", async () => {
+    if (!recording) return { ok: true, pages: [] };
+    const pages = recording.pages;
+    recording.close();
+    recording = null;
+    return { ok: true, pages };
   });
 
   ipcMain.handle("inventory:export", async (_event, inventory, title) => {

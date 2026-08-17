@@ -7,6 +7,14 @@ contextBridge.exposeInMainWorld("uiSync", {
   getProjectPreviews: (root) => ipcRenderer.invoke("projects:previews", root),
   scanUrl: (url, seedPaths) => ipcRenderer.invoke("inventory:scan", url, seedPaths),
   scanFolder: (root) => ipcRenderer.invoke("inventory:scan-folder", root),
+  startRecording: (target) => ipcRenderer.invoke("inventory:record-start", target),
+  captureRecording: () => ipcRenderer.invoke("inventory:record-capture"),
+  stopRecording: () => ipcRenderer.invoke("inventory:record-stop"),
+  onRecorded: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("inventory:recorded", listener);
+    return () => ipcRenderer.removeListener("inventory:recorded", listener);
+  },
   chooseFolder: () => ipcRenderer.invoke("inventory:choose-folder"),
   onScanStatus: (callback) => {
     const listener = (_event, value) => callback(value);

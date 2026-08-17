@@ -69,6 +69,7 @@ export default function PageInventoryView() {
   const [choices, setChoices] = useState<WorkspacePackage[] | null>(null);
   const [foreign, setForeign] = useState<{ info: ForeignProject; message: string } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [recording, setRecording] = useState<DiscoveredPage[] | null>(null);
   const progressRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,6 +81,13 @@ export default function PageInventoryView() {
 
   useEffect(() => {
     const off = window.uiSync?.onScanStatus?.(setStatus);
+    return () => { off?.(); };
+  }, []);
+
+  useEffect(() => {
+    const off = window.uiSync?.onRecorded?.((page) => {
+      setRecording((current) => (current ? [...current, page] : current));
+    });
     return () => { off?.(); };
   }, []);
 
@@ -141,6 +149,32 @@ export default function PageInventoryView() {
       setScanning(false);
       setStatus(null);
     }
+  };
+
+  const startRecording = async () => {
+    if (!window.uiSync?.startRecording) return;
+    const target = address.trim() || (result?.ok ? result.origin : "");
+    if (!target) { setError("Enter the address to record from."); return; }
+    setError(null);
+    const outcome = await window.uiSync.startRecording(target);
+    if (!outcome.ok) { setError(outcome.message ?? "Recording could not start."); return; }
+    setRecording([]);
+  };
+
+  const stopRecording = async () => {
+    const outcome = await window.uiSync?.stopRecording?.();
+    const recorded = outcome?.pages ?? [];
+    setRecording(null);
+    if (recorded.length === 0) return;
+    // Recorded pages join whatever the scan found, without replacing it.
+    setResult((current) => {
+      if (!current?.ok) {
+        return { ok: true, origin: recorded[0].route, pages: recorded, skipped: [], filtered: [],
+          sources: { sitemap: 0, seeds: 0, crawled: 0 }, blocked: { mutations: [], external: [] } };
+      }
+      const known = new Set(current.pages.map((page) => page.signature));
+      return { ...current, pages: [...current.pages, ...recorded.filter((page) => !known.has(page.signature))] };
+    });
   };
 
   const onDrop = (event: React.DragEvent) => {
@@ -235,6 +269,9 @@ export default function PageInventoryView() {
           <strong>Drop a project folder here</strong>
           <span>React, Vue, Next, Electron, a static site — it gets started for you.</span>
           <button className="inventory-export" onClick={() => void chooseFolder()} type="button">Choose folder…</button>
+          <button className="inventory-link" onClick={() => void startRecording()} type="button">
+            Or open the app and record the pages you visit
+          </button>
           <button className="inventory-link" onClick={() => setShowAddress((value) => !value)} type="button">
             {showAddress ? "Hide" : "Already running? Scan an address instead"}
           </button>
@@ -270,6 +307,24 @@ export default function PageInventoryView() {
                   <span className="inventory-progress-count">{index + 1}</span> {item.name}
                 </p>
               ))}
+        </section>
+      )}
+
+      {recording && (
+        <section className="inventory-recording">
+          <strong>Recording — use the app in the other window</strong>
+          <p>
+            Every page you land on is captured. Log in, fill forms, open the screens that matter;
+            nothing is blocked while recording.
+          </p>
+          <div className="inventory-recorded">
+            {recording.length === 0
+              ? <span>No pages captured yet.</span>
+              : recording.map((page) => <span key={page.id}>{page.name}</span>)}
+          </div>
+          <button className="inventory-export" onClick={() => void stopRecording()} type="button">
+            Finish — keep {recording.length} page{recording.length === 1 ? "" : "s"}
+          </button>
         </section>
       )}
 
