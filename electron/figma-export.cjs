@@ -39,6 +39,24 @@ function clampSide(value) {
 }
 
 /**
+ * Fonts the capture could not render, so their text was measured with
+ * something else.
+ *
+ * Not a failure — Figma has its own library and the plugin sets the font it
+ * finds there — but the layout of those runs is Figma's rather than the
+ * browser's, and that is worth saying before someone compares the two.
+ */
+function unavailableFonts(inventory) {
+  const found = new Set();
+  const visit = (node) => {
+    for (const family of node?.style?.unavailableFonts ?? []) found.add(family);
+    for (const child of node?.children ?? []) visit(child);
+  };
+  for (const page of inventory?.pages ?? []) visit(page?.figmaTree?.tree);
+  return [...found].sort();
+}
+
+/**
  * Builds the job. Pages without a captured layer tree are left out and
  * reported rather than sent as empty frames, which would look like a
  * successful export of a blank screen.
@@ -77,8 +95,9 @@ function buildFigmaJob(inventory, { identity, projectName, figmaFileName, operat
       screens
     },
     missing,
-    dropped
+    dropped,
+    substitutedFonts: unavailableFonts(inventory)
   };
 }
 
-module.exports = { MAX_SCREENS, buildFigmaJob, clampSide, projectIdFor, safeScreenId };
+module.exports = { MAX_SCREENS, buildFigmaJob, clampSide, projectIdFor, safeScreenId, unavailableFonts };

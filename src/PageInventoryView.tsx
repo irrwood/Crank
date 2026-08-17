@@ -25,6 +25,7 @@ type FigmaExportSession = {
   fileKey?: string;
   missing?: string[];
   dropped?: string[];
+  substitutedFonts?: string[];
 };
 
 /** What will not arrive, said before the sync claims to be complete. */
@@ -35,6 +36,12 @@ function shortfall(session: FigmaExportSession): string | null {
   }
   if (session.dropped?.length) {
     parts.push(`${session.dropped.length} beyond the per-file limit were left out.`);
+  }
+  if (session.substitutedFonts?.length) {
+    // Not a shortfall in what arrives — every layer is sent. It changes who
+    // decided where the lines fall, which is worth knowing before the result
+    // is compared against the browser.
+    parts.push(`${session.substitutedFonts.join("、")} 没能在捕获时加载,这些文字的换行交给 Figma 自己排。`);
   }
   return parts.length > 0 ? parts.join(" ") : null;
 }

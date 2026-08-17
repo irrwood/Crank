@@ -65,6 +65,9 @@ const domNodeSchema = z.lazy(() => z.discriminatedUnion("kind", [
       textAlign: z.enum(["left", "center", "right", "justify"]),
       fontFamilies: z.array(z.string().min(1).max(160)).min(1).max(20).optional(),
       resolvedFontFamily: z.string().min(1).max(160).optional(),
+      // Families the page asked for that the capture could not render, so its
+      // measured widths and line breaks describe a fallback.
+      unavailableFonts: z.array(z.string().min(1).max(160)).max(12).optional(),
       fontStyle: z.enum(["normal", "italic", "oblique"]).optional(),
       fontStretch: z.string().min(1).max(80).optional(),
       whiteSpace: z.string().min(1).max(80).optional(),

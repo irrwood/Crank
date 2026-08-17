@@ -1293,7 +1293,10 @@ function measuredTextContainer(ir, text) {
   container.clipsContent = false;
   positionDomNode(container, { ...ir, x: ir.layoutX ?? ir.x });
   container.setSharedPluginData(NAMESPACE, "text_container", "1");
-  if (ir.wrapMode === "wrap" && ir.lineBreakOffsets?.length) {
+  // Only when the breaks were actually applied. Where the capture could not
+  // render the page's font, its line breaks describe a fallback and Figma —
+  // which very likely does have the font — lays the run out itself.
+  if (ir.wrapMode === "wrap" && ir.lineBreakOffsets?.length && !ir.style.unavailableFonts?.length) {
     container.setSharedPluginData(NAMESPACE, DOM_SYNTHETIC_WRAP_KEY, "1");
   }
   container.appendChild(text);
@@ -1313,7 +1316,10 @@ async function renderDomNode(ir, fonts) {
     const text = figma.createText();
     text.fontName = await resolveMeasuredFont(fonts, ir.style, ir.text);
     text.name = `${ir.name} · Content`;
-    text.characters = ir.wrapMode === "wrap"
+    // The width a wrapping block gets is CSS, so it survives a font
+    // substitution; where the lines fall does not. Handing Figma the fallback's
+    // break positions would bake a wrong wrap into a font it can set correctly.
+    text.characters = ir.wrapMode === "wrap" && !ir.style.unavailableFonts?.length
       ? insertMeasuredLineBreaks(ir.text, ir.lineBreakOffsets)
       : ir.text;
     text.fontSize = ir.style.fontSize;

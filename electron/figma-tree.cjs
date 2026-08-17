@@ -209,21 +209,23 @@ function serializeRenderedApplication() {
       }
       return false;
     };
+    // A font the capture could not render is reported, not refused. Figma has
+    // its own library — it very likely holds the font this renderer lacked, and
+    // the plugin already picks from what Figma actually has. Throwing here
+    // discarded the whole page, shapes and images included, over text that
+    // Figma was going to set correctly anyway.
+    //
+    // What is genuinely unreliable is the *measurement*: widths and line breaks
+    // recorded here came from whatever did render. That is what `unavailable`
+    // carries, so the plugin can let Figma lay those runs out itself rather
+    // than pinning them to a fallback's metrics.
     const unavailable = [];
     for (const family of families) {
-      if (generic.has(family)) {
-        if (unavailable.length > 0) {
-          throw new Error(`Font “${unavailable.join("”, “")}” is unavailable in the captured renderer. Install or bundle it, then sync again.`);
-        }
-        return family;
-      }
-      if (fontAvailable(family)) return family;
+      if (generic.has(family)) return { family, unavailable };
+      if (fontAvailable(family)) return { family, unavailable };
       unavailable.push(family);
     }
-    if (unavailable.length > 0) {
-      throw new Error(`Font “${unavailable.join("”, “")}” is unavailable in the captured renderer. Install or bundle it, then sync again.`);
-    }
-    return "system-ui";
+    return { family: "system-ui", unavailable };
   };
 
   const sourceSelector = (element, inherited) => {
@@ -283,7 +285,11 @@ function serializeRenderedApplication() {
         const lineBreakOffsets = wrapMode === "wrap"
           ? textLineBreakOffsets(child, sourceText, text, style.whiteSpace, lineCount)
           : [];
-        measuredStyle.resolvedFontFamily = resolvedFontFamily(style, text);
+        const resolved = resolvedFontFamily(style, text);
+        measuredStyle.resolvedFontFamily = resolved.family;
+        // Named so the plugin knows this run's geometry was measured with
+        // something other than what the page asked for.
+        if (resolved.unavailable.length > 0) measuredStyle.unavailableFonts = resolved.unavailable;
         children.push({
           kind: "text",
           id: `${identity}/text:${textIndex++}`,

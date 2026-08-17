@@ -1480,7 +1480,8 @@ function registerIpc() {
       // Named so the caller can say what will not arrive, rather than letting
       // a short export look complete.
       missing: built.missing,
-      dropped: built.dropped
+      dropped: built.dropped,
+      substitutedFonts: built.substitutedFonts
     };
   });
 
