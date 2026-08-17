@@ -383,7 +383,10 @@ export type PageInventory =
   | { ok: false; message: string; reason?: string; packages?: WorkspacePackage[]; foreign?: ForeignProject }
   | {
       ok: true;
+      /** Where the pages were served from on this run — a fresh port each scan. */
       origin: string;
+      /** What was scanned: the folder, or the address as typed. Stable. */
+      source?: { kind: "folder" | "url"; target: string };
       pages: DiscoveredPage[];
       /** Controls skipped because their label reads as destructive. */
       skipped: Array<{ label: string; reason: string }>;

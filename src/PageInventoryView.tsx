@@ -426,7 +426,7 @@ export default function PageInventoryView() {
     if (!result?.ok || !window.uiSync?.sendInventoryToFigma) return;
         try {
       const outcome = await window.uiSync.sendInventoryToFigma(
-        { origin: result.origin, pages: result.pages },
+        { origin: result.origin, source: result.source, pages: result.pages },
         figmaUrl.trim()
       );
       if (!outcome.ok || !outcome.pairingCode) { notify("error", outcome.message ?? "The export could not be prepared."); return; }

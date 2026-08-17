@@ -26,8 +26,33 @@ test("builds a job the bridge accepts", () => {
 });
 
 test("the same app always gets the same project id", () => {
-  assert.equal(projectIdFor("http://127.0.0.1:8787"), projectIdFor("http://127.0.0.1:8787"));
-  assert.notEqual(projectIdFor("http://127.0.0.1:8787"), projectIdFor("http://127.0.0.1:3000"));
+  assert.equal(projectIdFor("folder:/repos/site"), projectIdFor("folder:/repos/site"));
+  assert.notEqual(projectIdFor("folder:/repos/site"), projectIdFor("folder:/repos/other"));
+});
+
+test("a folder keeps one project id however it was served this time", () => {
+  // Every scan of a folder starts a server on a fresh port. Naming the project
+  // after that origin gave it a new identity each run, so the plugin found none
+  // of the frames it had tagged and drew the whole inventory again.
+  const pages = [page("Home"), page("About")];
+  const first = buildFigmaJob(
+    { origin: "http://127.0.0.1:52341", source: { kind: "folder", target: "/repos/site" }, pages },
+    { identity: "folder:/repos/site", projectName: "site", figmaFileName: "Design" }
+  );
+  const second = buildFigmaJob(
+    { origin: "http://127.0.0.1:61208", source: { kind: "folder", target: "/repos/site" }, pages },
+    { identity: "folder:/repos/site", projectName: "site", figmaFileName: "Design" }
+  );
+  assert.equal(first.job.projectId, second.job.projectId);
+  assert.notEqual(
+    first.job.projectId,
+    buildFigmaJob({ origin: "http://127.0.0.1:52341", pages }, { identity: "folder:/repos/other" }).job.projectId
+  );
+});
+
+test("builds a read job when asked for one", () => {
+  const built = buildFigmaJob({ origin: "http://x", pages: [page("Home")] }, { operation: "pull" });
+  assert.equal(built.job.operation, "pull");
 });
 
 test("carries an existing Figma node so a frame is reused, not duplicated", () => {

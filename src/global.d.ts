@@ -13,7 +13,7 @@ declare global {
       captureRecording: () => Promise<{ ok: boolean; count?: number; message?: string }>;
       stopRecording: () => Promise<{ ok: boolean; pages: DiscoveredPage[] }>;
       sendInventoryToFigma: (
-        inventory: { origin?: string; pages: DiscoveredPage[] },
+        inventory: { origin?: string; source?: { kind: "folder" | "url"; target: string }; pages: DiscoveredPage[] },
         figmaUrl: string
       ) => Promise<{ ok: boolean; message?: string; pairingCode?: string; expiresAt?: string; screenCount?: number; requiresPairing?: boolean; fileName?: string; fileKey?: string; missing?: string[]; dropped?: string[] }>;
       getFigmaExportStatus: (pairingCode: string) => Promise<AutomaticMappingStatus>;

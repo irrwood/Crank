@@ -9,7 +9,7 @@ const { normalizeTargetUrl, scanFolder, scanUrl } = require("./page-inventory.cj
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
-const { createInventoryRegistry, targetId } = require("./inventory-registry.cjs");
+const { createInventoryRegistry, nameFor, targetId } = require("./inventory-registry.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
 const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
@@ -195,6 +195,12 @@ const handoffPageSchema = z.object({
 
 const handoffInventorySchema = z.object({
   origin: z.string().max(2000).optional(),
+  // What the scan is *of*, as opposed to where it was served from. A folder is
+  // served on a fresh port every time, so the origin cannot name the project.
+  source: z.object({
+    kind: z.enum(["folder", "url"]),
+    target: z.string().min(1).max(2000)
+  }).optional(),
   pages: z.array(handoffPageSchema).max(500),
   filtered: z.array(z.object({
     label: z.string().max(300),
@@ -1263,10 +1269,13 @@ function registerIpc() {
     // from rather than something to sit in front of.
     await inventoryRegistry().remember("folder", safeRoot, { parent });
     send("inventory:started", { kind: "folder", target: safeRoot });
-    const inventory = await scanFolder(safeRoot, {
+    const scanned = await scanFolder(safeRoot, {
       onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
+    // The folder is what was scanned; the port it was served on is an accident
+    // of this run and must not be what the project is remembered as.
+    const inventory = scanned.ok ? { ...scanned, source: { kind: "folder", target: safeRoot } } : scanned;
     if (inventory.ok) {
       await inventoryRegistry().saveInventory("folder", safeRoot, inventory, { parent });
       // A folder that also holds projects gets them registered underneath it,
@@ -1318,11 +1327,19 @@ function registerIpc() {
     if (!link) return { ok: false, message: "That is not a Figma design URL." };
 
     const parsed = handoffInventorySchema.parse(inventory);
-    const built = buildFigmaJob(parsed, { projectName: parsed.origin, figmaFileName: link.fileName });
+    // One identity for the project, whatever served it this time: the folder or
+    // the address the user gave, which is also what the sidebar remembers it
+    // by. A folder served on a fresh port every scan would otherwise be a new
+    // project each time — new baseline, new frames beside the old ones.
+    const kind = parsed.source?.kind ?? (parsed.origin?.startsWith("http") ? "url" : "folder");
+    const target = parsed.source?.target ?? parsed.origin ?? "";
+    const built = buildFigmaJob(parsed, {
+      identity: `${kind}:${target}`,
+      projectName: nameFor(kind, target),
+      figmaFileName: link.fileName
+    });
     if (!built.ok) return built;
 
-    const kind = parsed.origin?.startsWith("http") ? "url" : "folder";
-    const target = parsed.origin ?? "";
     // A page the plugin has already drawn is sent back to its own frame. The
     // renderer holds the scan, not what became of it, so the frames are read
     // from what the last push recorded.
@@ -1406,10 +1423,13 @@ function registerIpc() {
     };
     await inventoryRegistry().remember("url", target);
     send("inventory:started", { kind: "url", target });
-    const inventory = await scanUrl(target, {
+    const scanned = await scanUrl(target, {
       seedPaths: seeds,
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
+    // The address as typed, which is what the sidebar remembers — the scan
+    // normalizes it to an origin and a start path.
+    const inventory = scanned.ok ? { ...scanned, source: { kind: "url", target } } : scanned;
     if (inventory.ok) await inventoryRegistry().saveInventory("url", target, inventory);
     send("inventory:finished", { ok: inventory.ok });
     return { ...inventory, id };

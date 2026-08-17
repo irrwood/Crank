@@ -16,8 +16,15 @@ const MIN_SIDE = 320;
 // scaling or cropping it to fit would quietly misreport the design.
 const MAX_SIDE = 40_000;
 
-function projectIdFor(origin) {
-  return createHash("sha256").update(String(origin ?? "")).digest("hex").slice(0, 24);
+/**
+ * The id the plugin tags every frame with, so a second push finds the frames
+ * the first one made. It must therefore name the project and not the run: a
+ * folder is served on a fresh port each scan, and hashing that origin gave the
+ * same project a new identity every time — the plugin found none of its own
+ * frames and drew the whole inventory again beside itself.
+ */
+function projectIdFor(identity) {
+  return createHash("sha256").update(String(identity ?? "")).digest("hex").slice(0, 24);
 }
 
 function safeScreenId(id, fallbackIndex) {
@@ -36,7 +43,7 @@ function clampSide(value) {
  * reported rather than sent as empty frames, which would look like a
  * successful export of a blank screen.
  */
-function buildFigmaJob(inventory, { projectName, figmaFileName, operation = "push" } = {}) {
+function buildFigmaJob(inventory, { identity, projectName, figmaFileName, operation = "push" } = {}) {
   const pages = (inventory?.pages ?? []).filter((page) => page?.figmaTree?.tree);
   const missing = (inventory?.pages ?? [])
     .filter((page) => !page?.figmaTree?.tree)
@@ -63,8 +70,8 @@ function buildFigmaJob(inventory, { projectName, figmaFileName, operation = "pus
   return {
     ok: true,
     job: {
-      operation: "push",
-      projectId: projectIdFor(inventory?.origin),
+      operation,
+      projectId: projectIdFor(identity ?? inventory?.origin),
       projectName: String(projectName || inventory?.origin || "Project").slice(0, 160),
       figmaFileName: String(figmaFileName || "").slice(0, 240),
       screens
