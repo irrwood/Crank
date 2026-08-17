@@ -414,8 +414,11 @@ export default function PageInventoryView() {
         return { ok: true, origin: recorded[0].route, pages: recorded, skipped: [], filtered: [],
           sources: { sitemap: 0, seeds: 0, crawled: 0 }, blocked: { mutations: [], external: [] } };
       }
-      const known = new Set(current.pages.map((page) => page.signature));
-      return { ...current, pages: [...current.pages, ...recorded.filter((page) => !known.has(page.signature))] };
+      // By identity, not by appearance: a page recorded by hand is the page the
+      // crawl already has if it lives at the same address, even though the two
+      // visits will never render byte-identically.
+      const known = new Set(current.pages.map((page) => page.id));
+      return { ...current, pages: [...current.pages, ...recorded.filter((page) => !known.has(page.id))] };
     });
   };
 

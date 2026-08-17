@@ -1,6 +1,6 @@
 const { BrowserWindow } = require("electron");
 const { randomBytes } = require("node:crypto");
-const { collectUiState, isHtmlContentType, signatureOf } = require("./state-discovery.cjs");
+const { collectUiState, identityOf, isHtmlContentType, signatureOf } = require("./state-discovery.cjs");
 const { MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
 
 /**
@@ -64,7 +64,10 @@ function createRecordingSession(origin, { onCaptured, onNavigate, width = 1280, 
         : null;
 
       const page = {
-        id: `state-${signature}`,
+        // Recorded by hand or found by the crawl, a page at one address is one
+        // page, so both name it the same way and the two merge rather than
+        // arriving as near-duplicates.
+        id: identityOf(snapshot.url || "/", []),
         name: (snapshot.heading || snapshot.title || snapshot.url || "Page").slice(0, 80),
         signature,
         route: snapshot.url || "/",

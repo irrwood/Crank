@@ -5,6 +5,7 @@ const {
   chooseStateName,
   discoverStates,
   humanizeStateName,
+  identityOf,
   isVolatileText,
   isAppearanceLabel,
   isDestructiveLabel,
@@ -455,4 +456,51 @@ test("does not record anchors of a page it already has", async () => {
   assert.equal(states.length, 1, `one document, got ${JSON.stringify(states.map((s) => s.route))}`);
   assert.equal(filtered.length, 2);
   assert.match(filtered[0].reason, /anchor/);
+});
+
+test("a page keeps its identity when its content changes", async () => {
+  // The frame a page was pushed to, and the baseline recorded against it, are
+  // both keyed by this id. Deriving it from the page's own content meant that
+  // editing a heading orphaned both: the next push drew the page again beside
+  // itself, and a pull had nothing to compare against.
+  const before = fakeSession({
+    "/": { url: "/", fingerprint: ["home", "Welcome"], skeleton: ["main@0", "h1@1"],
+      controls: [{ locator: "#pricing", label: "Pricing", role: "link", to: "/pricing" }] },
+    "/pricing": { url: "/pricing", fingerprint: ["pricing", "$19"], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+  const after = fakeSession({
+    "/": { url: "/", fingerprint: ["home", "Welcome back"], skeleton: ["main@0", "h1@1"],
+      controls: [{ locator: "#pricing", label: "Pricing", role: "link", to: "/pricing" }] },
+    "/pricing": { url: "/pricing", fingerprint: ["pricing", "$24"], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+
+  const first = await discoverStates(before, { routes: ["/"], maxDepth: 1 });
+  const second = await discoverStates(after, { routes: ["/"], maxDepth: 1 });
+  assert.deepEqual(
+    second.states.map((state) => state.id),
+    first.states.map((state) => state.id),
+    "a price change and a reworded heading are not new pages"
+  );
+  assert.notEqual(first.states[0].id, first.states[1].id, "two addresses are still two pages");
+  assert.notEqual(first.states[0].signature, second.states[0].signature, "the content still changed, and is still observed");
+});
+
+test("a state reached by clicking is identified by the way back, not by what it says", async () => {
+  const build = (badgeText) => fakeSession({
+    "/": { url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#reports", label: "Reports", role: "tab", to: "reports" }] },
+    reports: { url: "/", fingerprint: ["reports", badgeText], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+  const first = await discoverStates(build("3 new"), { routes: ["/"], maxDepth: 1 });
+  const second = await discoverStates(build("11 new"), { routes: ["/"], maxDepth: 1 });
+  assert.equal(first.states[1].recipe[0].locator, "#reports");
+  assert.equal(first.states[1].id, second.states[1].id, "same address, same click — the same page");
+});
+
+test("identity separates two states that share an address by how they are reached", () => {
+  assert.notEqual(
+    identityOf("/", []),
+    identityOf("/", [{ kind: "click", locator: "#settings", label: "Settings" }])
+  );
+  assert.equal(identityOf("/a", []), identityOf("/a", []));
 });

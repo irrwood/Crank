@@ -66,6 +66,24 @@ function signatureOf(snapshot) {
 }
 
 /**
+ * What a page *is*: the address it lives at and the clicks that reach it.
+ *
+ * The identity used to be a hash of the page's own content, which made every
+ * edit to the page a different page. The frame it was pushed to and the
+ * baseline recorded against it were keyed by that id, so changing a heading
+ * orphaned both — a second push drew the page again beside itself, and a pull
+ * had nothing to compare. That is the same silent drift node identity was
+ * rewritten to remove, one level up.
+ *
+ * Content still decides whether two visits are the same state; it just no
+ * longer decides what that state is called. A directly addressable page is its
+ * address alone, so the common case is as stable as the URL itself.
+ */
+function identityOf(route, recipe) {
+  return `page-${createHash("sha256").update(`${route}::${recipeKey(recipe)}`).digest("hex").slice(0, 16)}`;
+}
+
+/**
  * Ranks what to try first. Navigation-like controls are far more likely to
  * reveal a distinct visual state than an arbitrary button.
  */
@@ -341,6 +359,18 @@ async function discoverStates(session, {
   // is already in the inventory re-walks a known page from every other page —
   // wasted time, and near-duplicates when the arrival state differs slightly.
   const knownAddresses = new Set();
+  // A page that draws itself differently on each visit can reach the same
+  // address by the same clicks and still be recorded twice. Rather than let the
+  // two share an id, the second is told apart — one page keeps the identity a
+  // rescan will find, and nothing silently overwrites anything.
+  const claimed = new Set();
+  const claimIdentity = (route, recipe) => {
+    const base = identityOf(route, recipe);
+    let identity = base;
+    for (let attempt = 2; claimed.has(identity); attempt += 1) identity = `${base}-${attempt}`;
+    claimed.add(identity);
+    return identity;
+  };
   // Set when a click may have persisted a preference the next replay would inherit.
   let dirty = false;
   const remember = (address) => {
@@ -385,7 +415,10 @@ async function discoverStates(session, {
     if (existing) {
       const label = recipe.length > 0 ? recipe[recipe.length - 1].label : null;
       const variant = {
-        id: `${existing.id}-variant-${existing.variants.length + 1}`,
+        // A variant is a state like any other: the same page reached another
+        // way. Numbering them by arrival order would move every id below one
+        // that stops appearing.
+        id: claimIdentity(entryRoute, recipe),
         name: label && !isVolatileText(label)
           ? label
           : (snapshot.title || snapshot.heading || `Variant ${existing.variants.length + 2}`).slice(0, 40),
@@ -404,7 +437,7 @@ async function discoverStates(session, {
       title: snapshot.title
     });
     const state = {
-      id: `state-${signature}`,
+      id: claimIdentity(entryRoute, recipe),
       name,
       signature,
       route: entryRoute,
@@ -412,7 +445,6 @@ async function discoverStates(session, {
       recipe,
       depth: recipe.length,
       fingerprint: snapshot.fingerprint,
-      url: snapshot.url,
       variants: []
     };
     bySignature.set(signature, state);
@@ -511,6 +543,7 @@ module.exports = {
   chooseStateName,
   humanizeRoute,
   humanizeStateName,
+  identityOf,
   isAppearanceLabel,
   isDestructiveLabel,
   isVolatileText,

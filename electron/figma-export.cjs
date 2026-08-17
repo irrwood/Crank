@@ -36,7 +36,7 @@ function clampSide(value) {
  * reported rather than sent as empty frames, which would look like a
  * successful export of a blank screen.
  */
-function buildFigmaJob(inventory, { projectName, figmaFileName } = {}) {
+function buildFigmaJob(inventory, { projectName, figmaFileName, operation = "push" } = {}) {
   const pages = (inventory?.pages ?? []).filter((page) => page?.figmaTree?.tree);
   const missing = (inventory?.pages ?? [])
     .filter((page) => !page?.figmaTree?.tree)
