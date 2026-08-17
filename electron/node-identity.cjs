@@ -43,6 +43,14 @@ function traitOf(node) {
  * Assigns every node a key of the form <parentKey>/<trait>:<n>, where n counts
  * only earlier siblings with the *same* trait. Adding a different sibling
  * therefore leaves existing keys untouched.
+ *
+ * The key is also the node's id, because the id is what the rest of the system
+ * remembers a layer by: the baseline written at push time, the value the Figma
+ * layer stores as its dom id, and the three-way match a pull runs across the
+ * two. Leaving a position path in `id` while a stable key sat unread beside it
+ * meant one wrapper element renamed every layer below it — the mapping did not
+ * break loudly, it just stopped finding anything, and a designer's edit went
+ * missing from the diff.
  */
 function assignKeys(tree, parentKey = "root") {
   if (!tree || typeof tree !== "object") return tree;
@@ -53,6 +61,7 @@ function assignKeys(tree, parentKey = "root") {
     counts.set(`${parent}|${trait}`, seen + 1);
     const key = `${parent}/${trait}:${seen}`;
     node.key = key;
+    node.id = key;
     for (const child of node.children ?? []) walk(child, key);
     return node;
   };

@@ -93,3 +93,16 @@ test("trait ignores position and depends on what the node is", () => {
   assert.notEqual(traitOf(element("Card")), traitOf(element("Panel")));
   assert.notEqual(traitOf(text("a")), traitOf(text("b")));
 });
+
+test("the identity a layer is remembered by is the stable one", () => {
+  // Everything downstream reads node.id: the baseline written when pages are
+  // pushed, the dom id the Figma layer stores, and the match a pull runs
+  // between them. A position path there meant inserting one wrapper renamed
+  // every layer below it, and the pull quietly found nothing to compare.
+  const before = assignKeys(page());
+  const after = assignKeys(page({ withBanner: true }));
+  const idOf = (tree, value) => flatten(tree).find((node) => node.text === value)?.id;
+
+  assert.equal(idOf(before, "Holdings"), idOf(after, "Holdings"), "a new banner above must not rename it");
+  for (const node of flatten(after)) assert.equal(node.id, node.key, "one identity, not two");
+});
