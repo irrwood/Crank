@@ -3318,6 +3318,43 @@ button.screen-figma-link {
 }
 .inventory-shot img { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
 .inventory-shot-empty { display: grid; place-items: center; height: 100%; font-size: 12px; opacity: 0.45; }
+.inventory-shot { position: relative; }
+.inventory-shot-busy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(128, 128, 128, 0.22);
+}
+.inventory-card.is-busy, .inventory-rows li.is-busy { opacity: 0.75; }
+
+/* The menu a page opens on right-click. */
+.page-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 196px;
+  padding: 4px;
+  border: 1px solid rgba(128, 128, 128, 0.24);
+  border-radius: 8px;
+  background: var(--surface, #fdfdfc);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+  display: grid;
+  gap: 1px;
+}
+.page-menu button {
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.page-menu button:hover:not(:disabled) { background: rgba(128, 128, 128, 0.14); }
+.page-menu button:disabled { opacity: 0.4; cursor: default; }
+.page-menu button.is-danger { color: #b4453a; }
 
 .inventory-meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .inventory-index { font-size: 11px; opacity: 0.4; font-variant-numeric: tabular-nums; }

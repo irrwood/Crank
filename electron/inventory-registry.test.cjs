@@ -142,3 +142,18 @@ test("replaces the sent baseline with what Figma says it holds, and names the fr
     assert.equal(stored.fileKey, "abc123", "the file it landed in survives the update");
   });
 });
+
+test("a dropped page stays dropped, and is forgotten with its project", async () => {
+  await withRegistry(async (registry) => {
+    const id = await registry.saveInventory("url", "http://localhost:5173", { ok: true, pages: [] });
+    assert.deepEqual(await registry.dropped(id), [], "nothing is dropped to begin with");
+
+    await registry.drop(id, "page-404");
+    await registry.drop(id, "page-debug");
+    await registry.drop(id, "page-404");
+    assert.deepEqual(await registry.dropped(id), ["page-404", "page-debug"], "dropping twice is not two entries");
+
+    await registry.forget(id);
+    assert.deepEqual(await registry.dropped(id), [], "a forgotten project keeps no list");
+  });
+});

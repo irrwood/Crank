@@ -5,7 +5,7 @@ const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
-const { normalizeTargetUrl, scanFolder, scanUrl } = require("./page-inventory.cjs");
+const { normalizeTargetUrl, recapturePage, scanFolder, scanUrl, withProjectServer } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
@@ -363,6 +363,15 @@ async function resetDeviceConnection(token) {
   const current = await readDeviceConnection();
   if (current?.token !== token) return;
   await writeDeviceConnection({ token: randomBytes(32).toString("hex"), confirmed: false });
+}
+
+/**
+ * Leaves out the pages this project was told it does not want. A scan finds
+ * them every time, so the decision has to be applied every time.
+ */
+async function keepWanted(id, pages) {
+  const dropped = new Set(await inventoryRegistry().dropped(id));
+  return dropped.size === 0 ? pages : pages.filter((page) => !dropped.has(page.id));
 }
 
 /**
@@ -1275,7 +1284,9 @@ function registerIpc() {
     });
     // The folder is what was scanned; the port it was served on is an accident
     // of this run and must not be what the project is remembered as.
-    const inventory = scanned.ok ? { ...scanned, source: { kind: "folder", target: safeRoot } } : scanned;
+    const inventory = scanned.ok
+      ? { ...scanned, source: { kind: "folder", target: safeRoot }, pages: await keepWanted(id, scanned.pages) }
+      : scanned;
     if (inventory.ok) {
       await inventoryRegistry().saveInventory("folder", safeRoot, inventory, { parent });
       // A folder that also holds projects gets them registered underneath it,
@@ -1319,6 +1330,57 @@ function registerIpc() {
     recording.close();
     recording = null;
     return { ok: true, pages };
+  });
+
+  /**
+   * Drops one page from a project's inventory, for good. A later scan will find
+   * it again and has to leave it out again, so the decision is kept rather than
+   * the page merely being removed from what is on screen.
+   */
+  ipcMain.handle("inventory:drop-page", async (_event, source, pageId) => {
+    const where = z.object({ kind: z.enum(["folder", "url"]), target: z.string().min(1).max(2000) }).parse(source);
+    const safePageId = z.string().min(1).max(200).parse(pageId);
+    const id = targetId(where.kind, where.target);
+    await inventoryRegistry().drop(id, safePageId);
+    const stored = await inventoryRegistry().loadInventory(id);
+    if (stored?.ok) {
+      await inventoryRegistry().updateInventory(id, {
+        ...stored,
+        pages: stored.pages.filter((entry) => entry.id !== safePageId)
+      });
+    }
+    return { ok: true };
+  });
+
+  /**
+   * Captures one page again. A URL target is already running and is used as
+   * given; a folder has no address of its own, so the project is started for
+   * the one capture and stopped afterwards.
+   */
+  ipcMain.handle("inventory:recapture", async (event, source, page) => {
+    const where = z.object({ kind: z.enum(["folder", "url"]), target: z.string().min(1).max(2000) }).parse(source);
+    const safePage = handoffPageSchema.parse(page);
+    const send = (detail) => {
+      if (!event.sender.isDestroyed()) event.sender.send("inventory:status", { phase: "capturing", detail, id: targetId(where.kind, where.target) });
+    };
+
+    send(`Capturing ${safePage.name} again`);
+    const outcome = where.kind === "url"
+      ? await recapturePage(where.target, safePage)
+      : await withProjectServer(where.target, { onStatus: (status) => send(status.detail) }, (url) => recapturePage(url, safePage));
+    if (!outcome.ok) return outcome;
+
+    // The stored inventory is what a reopened project shows, so the fresh page
+    // has to replace the stale one there too, not only on screen.
+    const id = targetId(where.kind, where.target);
+    const stored = await inventoryRegistry().loadInventory(id);
+    if (stored?.ok) {
+      await inventoryRegistry().updateInventory(id, {
+        ...stored,
+        pages: stored.pages.map((entry) => (entry.id === outcome.page.id ? outcome.page : entry))
+      });
+    }
+    return outcome;
   });
 
   ipcMain.handle("inventory:send-to-figma", async (_event, inventory, figmaUrl) => {
@@ -1429,7 +1491,9 @@ function registerIpc() {
     });
     // The address as typed, which is what the sidebar remembers — the scan
     // normalizes it to an origin and a start path.
-    const inventory = scanned.ok ? { ...scanned, source: { kind: "url", target } } : scanned;
+    const inventory = scanned.ok
+      ? { ...scanned, source: { kind: "url", target }, pages: await keepWanted(id, scanned.pages) }
+      : scanned;
     if (inventory.ok) await inventoryRegistry().saveInventory("url", target, inventory);
     send("inventory:finished", { ok: inventory.ok });
     return { ...inventory, id };

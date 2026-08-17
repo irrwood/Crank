@@ -124,6 +124,33 @@ function createInventoryRegistry(directory) {
       await write(targets.filter((entry) => entry.id !== id));
       await rm(cachePath(id), { force: true });
       await rm(path.join(directory, "baselines", `${id}.json`), { force: true });
+      await rm(path.join(directory, "dropped", `${id}.json`), { force: true });
+    },
+
+    /**
+     * Pages the user does not want in this project's inventory.
+     *
+     * Dropping one has to outlast the scan that found it, or the next scan
+     * hands it straight back. Kept by page identity, which is the address and
+     * the clicks that reach it — a 404 page stays dropped even after its
+     * wording changes, which a content-derived id could never manage.
+     */
+    async drop(id, pageId) {
+      const current = await this.dropped(id);
+      if (current.includes(pageId)) return current;
+      const next = [...current, pageId];
+      await mkdir(path.join(directory, "dropped"), { recursive: true });
+      await writeFile(path.join(directory, "dropped", `${id}.json`), JSON.stringify(next));
+      return next;
+    },
+
+    async dropped(id) {
+      try {
+        const parsed = JSON.parse(await readFile(path.join(directory, "dropped", `${id}.json`), "utf8"));
+        return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === "string") : [];
+      } catch {
+        return [];
+      }
     },
 
     async saveInventory(kind, target, inventory, { parent = null } = {}) {
@@ -135,6 +162,19 @@ function createInventoryRegistry(directory) {
         scannedAt: new Date().toISOString(),
         parent
       });
+      return id;
+    },
+
+    /**
+     * Replaces the kept inventory without claiming the project was scanned.
+     *
+     * Recapturing one page updates what a reopened project shows, but it is not
+     * a scan, and moving "last scanned" for it would overstate how fresh the
+     * rest of the inventory is.
+     */
+    async updateInventory(id, inventory) {
+      await mkdir(path.join(directory, "inventories"), { recursive: true });
+      await writeFile(cachePath(id), JSON.stringify(inventory));
       return id;
     },
 

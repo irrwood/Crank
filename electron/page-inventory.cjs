@@ -107,6 +107,71 @@ async function captureThumbnail(session, width = 420) {
 }
 
 /**
+ * Replays one page — load its route, then click its recipe — and captures it.
+ *
+ * Shared by the scan and by recapturing a single page on its own, so a page is
+ * captured identically however it was asked for. Replaying from a fresh load
+ * every time is what makes a page reproducible at all: an earlier click may
+ * have switched the language or theme, and that would otherwise be baked in.
+ */
+async function capturePage(session, { route, recipe = [] }, { withThumbnails = true, withHtml = true, withFigmaTree = true } = {}) {
+  if (!withThumbnails) return { thumbnail: null, snapshot: null, reached: true };
+  await session.reset?.();
+  let reached = await session.goto(route, { patient: true });
+  for (const step of recipe) {
+    if (!reached) break;
+    reached = await session.click(step.locator, { patient: true });
+  }
+  if (!reached) return { thumbnail: null, snapshot: null, reached: false };
+  // A thumbnail keeps the grid quick to draw; the markup is what carries real
+  // text, real SVG and readable colour, so both are kept.
+  const thumbnail = await captureThumbnail(session);
+  const captured = withHtml ? await session.captureHtml() : null;
+  const snapshot = captured?.html
+    ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
+    : null;
+  const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
+  return { thumbnail, snapshot, figmaTree: figma?.tree ? figma : null, reached: true };
+}
+
+/**
+ * Captures one page again, leaving the rest of the inventory alone.
+ *
+ * A page can come out wrong on its own — data that had not arrived, an image
+ * that had not loaded — and the only remedy was rescanning the whole project,
+ * which for a real one is minutes. The recipe is what makes this possible: the
+ * page records how to reach itself.
+ */
+async function recapturePage(target, page, options = {}) {
+  const normalized = normalizeTargetUrl(target);
+  if (!normalized.ok) return { ok: false, message: normalized.message };
+  const session = createDiscoverySession(normalized.origin);
+  try {
+    const { reached, ...shot } = await capturePage(session, page, options);
+    // Say so rather than handing back an emptied page, which would read as a
+    // successful capture of a blank screen.
+    if (!reached) {
+      return {
+        ok: false,
+        message: page.recipe?.length
+          ? `Could not reach 「${page.name}」 again — the way back to it has changed. Rescan the project.`
+          : `Nothing answered at ${page.route}. The app may no longer serve this address.`
+      };
+    }
+    // A look that cannot be reached any more keeps what it had; only the page
+    // itself failing is worth refusing over.
+    const variants = [];
+    for (const variant of page.variants ?? []) {
+      const { reached: found, ...look } = await capturePage(session, variant, options);
+      variants.push(found ? { ...variant, ...look } : variant);
+    }
+    return { ok: true, page: { ...page, ...shot, variants } };
+  } finally {
+    session.close();
+  }
+}
+
+/**
  * Scans a running app and returns one entry per distinct visual state.
  * `seedPaths` lets a caller supply addresses it already knows about; they are
  * merged with whatever the sitemap and the crawl turn up.
@@ -147,25 +212,8 @@ async function scanUrl(target, {
     // Recapture from each recipe so the shot matches the recorded state rather
     // than whatever the crawl happened to leave on screen.
     const shoot = async (route, recipe) => {
-      if (!withThumbnails) return { thumbnail: null, snapshot: null };
-      // Start from the app's default: an earlier click may have switched the
-      // language or theme, and that would be baked into every later capture.
-      await session.reset?.();
-      let reached = await session.goto(route, { patient: true });
-      for (const step of recipe) {
-        if (!reached) break;
-        reached = await session.click(step.locator, { patient: true });
-      }
-      if (!reached) return { thumbnail: null, snapshot: null };
-      // A thumbnail keeps the grid quick to draw; the markup is what carries
-      // real text, real SVG and readable colour, so both are kept.
-      const thumbnail = await captureThumbnail(session);
-      const captured = withHtml ? await session.captureHtml() : null;
-      const snapshot = captured?.html
-        ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
-        : null;
-      const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
-      return { thumbnail, snapshot, figmaTree: figma?.tree ? figma : null };
+      const { reached, ...shot } = await capturePage(session, { route, recipe }, { withThumbnails, withHtml, withFigmaTree });
+      return shot;
     };
 
     const pages = [];
@@ -284,8 +332,17 @@ async function findWorkspacePackages(root) {
   return packages.length >= 2 ? packages : [];
 }
 
-async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...options } = {}) {
-  const forward = { ...options, onStatus };
+/**
+ * Serves a project however it declares itself, hands the address to `job`, and
+ * shuts down whatever it started.
+ *
+ * A folder has no address of its own, so every operation on one — scanning it,
+ * recapturing a single page, walking one page further — has to start the
+ * project first and stop it afterwards. That part is identical for all of them
+ * and is the only reason those operations were previously impossible to
+ * express separately from a full scan.
+ */
+async function withProjectServer(root, { onStatus, allowWorkspaceRoot = false, ...options } = {}, job) {
   const packages = allowWorkspaceRoot ? [] : await findWorkspacePackages(root);
 
   // A folder can be a site *and* contain projects — a portfolio with a couple
@@ -331,8 +388,8 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
         if (ran.ok) {
           onStatus?.({ phase: "scanning", detail: ran.attached ? `Reusing ${ran.url}` : `Serving at ${ran.url}` });
           try {
-            const inventory = await scanUrl(ran.url, { ...forward, seedPaths });
-            return inventory.ok ? { ...inventory, servedBy: ran.command, attached: Boolean(ran.attached) } : inventory;
+            const result = await job(ran.url, { seedPaths });
+            return result.ok ? { ...result, servedBy: ran.command, attached: Boolean(ran.attached) } : result;
           } finally {
             ran.stop?.();
           }
@@ -352,15 +409,14 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
         const server = await startLocalRendererServer(path.join(root, staticSite.entry));
         onStatus?.({ phase: "scanning", detail: `Serving at ${server.origin}` });
         try {
-          const inventory = await scanUrl(server.origin, {
-            ...forward,
+          const result = await job(server.origin, {
             seedPaths: [...new Set([...seedPaths, ...staticSite.pages.map((page) => `/${page}`)])],
             // Enough room for every file found, unless the caller asked for less.
             maxStates: options.maxStates ?? Math.max(60, staticSite.pages.length + 20)
           });
-          return inventory.ok
-            ? { ...inventory, servedBy: `static files (${staticSite.pages.length} pages)`, attached: false, packages }
-            : inventory;
+          return result.ok
+            ? { ...result, servedBy: `static files (${staticSite.pages.length} pages)`, attached: false, packages }
+            : result;
         } finally {
           await server.close();
         }
@@ -380,12 +436,22 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
 
   onStatus?.({ phase: "scanning", detail: started.attached ? `Reusing ${started.url}` : `Serving at ${started.url}` });
   try {
-    const inventory = await scanUrl(started.url, { ...forward, seedPaths: [...seedPaths, ...(options.seedPaths ?? [])] });
-    return inventory.ok ? { ...inventory, servedBy: started.command, attached: Boolean(started.attached) } : inventory;
+    const result = await job(started.url, { seedPaths: [...seedPaths, ...(options.seedPaths ?? [])] });
+    return result.ok ? { ...result, servedBy: started.command, attached: Boolean(started.attached) } : result;
   } finally {
-    // Never stop a server this scan did not start.
+    // Never stop a server this operation did not start.
     started.stop?.();
   }
 }
 
-module.exports = { normalizeTargetUrl, parseSitemapPaths, scanFolder, scanUrl };
+async function scanFolder(root, options = {}) {
+  const { onStatus, allowWorkspaceRoot, ...forward } = options;
+  return withProjectServer(root, options, (url, served) => scanUrl(url, {
+    ...forward,
+    onStatus,
+    seedPaths: served.seedPaths,
+    ...(served.maxStates ? { maxStates: served.maxStates } : {})
+  }));
+}
+
+module.exports = { normalizeTargetUrl, parseSitemapPaths, recapturePage, scanFolder, scanUrl, withProjectServer };

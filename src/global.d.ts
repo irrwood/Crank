@@ -12,6 +12,11 @@ declare global {
       startRecording: (target: string) => Promise<{ ok: boolean; origin?: string; message?: string }>;
       captureRecording: () => Promise<{ ok: boolean; count?: number; message?: string }>;
       stopRecording: () => Promise<{ ok: boolean; pages: DiscoveredPage[] }>;
+      recapturePage: (
+        source: { kind: "folder" | "url"; target: string },
+        page: DiscoveredPage
+      ) => Promise<{ ok: boolean; message?: string; page?: DiscoveredPage }>;
+      dropPage: (source: { kind: "folder" | "url"; target: string }, pageId: string) => Promise<{ ok: boolean }>;
       sendInventoryToFigma: (
         inventory: { origin?: string; source?: { kind: "folder" | "url"; target: string }; pages: DiscoveredPage[] },
         figmaUrl: string

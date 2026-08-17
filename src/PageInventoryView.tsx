@@ -39,7 +39,85 @@ function shortfall(session: FigmaExportSession): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
-function PageCard({ page, index, onOpen }: { page: DiscoveredPage; index: number; onOpen: (page: DiscoveredPage) => void }) {
+type PageAction = "recapture" | "figma" | "drop";
+
+/**
+ * The menu a page opens on right-click.
+ *
+ * Only actions that mean something for one page in particular live here; what
+ * applies to the whole project belongs on the project, not repeated on each of
+ * its pages.
+ */
+function PageMenu({ at, busy, onPick, onClose }: {
+  at: { x: number; y: number };
+  busy: boolean;
+  onPick: (action: PageAction) => void;
+  onClose: () => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Capture, so a click anywhere else closes the menu before it reaches what
+    // is underneath. A press inside the menu has to be let through by asking
+    // the DOM where it landed: React's own handler runs after this one, so
+    // stopping propagation there would be too late — the menu would already
+    // have unmounted and the click would never reach the item.
+    const dismiss = (event: MouseEvent) => {
+      if (box.current?.contains(event.target as Node)) return;
+      onClose();
+    };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const away = () => onClose();
+    window.addEventListener("mousedown", dismiss, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("resize", away);
+    window.addEventListener("scroll", away, true);
+    return () => {
+      window.removeEventListener("mousedown", dismiss, true);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("resize", away);
+      window.removeEventListener("scroll", away, true);
+    };
+  }, [onClose]);
+
+  const items: Array<{ id: PageAction; label: string; danger?: boolean }> = [
+    { id: "recapture", label: "重新捕获这一页" },
+    { id: "figma", label: "只把这一页送去 Figma" },
+    { id: "drop", label: "把这一页删掉", danger: true }
+  ];
+
+  return (
+    <div
+      className="page-menu"
+      ref={box}
+      role="menu"
+      // Kept inside the window: a card near the right or bottom edge would
+      // otherwise open its menu off screen.
+      style={{ left: Math.min(at.x, window.innerWidth - 210), top: Math.min(at.y, window.innerHeight - 130) }}
+    >
+      {items.map((item) => (
+        <button
+          className={item.danger ? "is-danger" : undefined}
+          disabled={busy}
+          key={item.id}
+          onClick={() => onPick(item.id)}
+          role="menuitem"
+          type="button"
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PageCard({ page, index, busy, onOpen, onMenu }: {
+  page: DiscoveredPage;
+  index: number;
+  busy: boolean;
+  onOpen: (page: DiscoveredPage) => void;
+  onMenu: (page: DiscoveredPage, at: { x: number; y: number }) => void;
+}) {
   // Variants are the same page re-skinned — dark mode, another language — so
   // they share one card and swap the preview rather than taking a slot each.
   const looks = [{ id: page.id, name: "Default", thumbnail: page.thumbnail }, ...(page.variants ?? [])];
@@ -47,8 +125,15 @@ function PageCard({ page, index, onOpen }: { page: DiscoveredPage; index: number
   const current = looks[Math.min(shown, looks.length - 1)];
 
   return (
-    <article className="inventory-card">
+    <article
+      className={`inventory-card${busy ? " is-busy" : ""}`}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onMenu(page, { x: event.clientX, y: event.clientY });
+      }}
+    >
       <button className="inventory-shot" onClick={() => onOpen(page)} type="button">
+        {busy && <span className="inventory-shot-busy"><LoaderCircle className="spin" size={18} /></span>}
         {current.thumbnail
           ? <img alt="" src={current.thumbnail.dataUrl} />
           : <span className="inventory-shot-empty">No preview</span>}
@@ -281,6 +366,8 @@ export default function PageInventoryView() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [view, setView] = useState<"gallery" | "compact" | "list">("gallery");
   const [figmaOpen, setFigmaOpen] = useState(false);
+  const [menu, setMenu] = useState<{ page: DiscoveredPage; at: { x: number; y: number } } | null>(null);
+  const [busyPage, setBusyPage] = useState<string | null>(null);
   const [figmaSession, setFigmaSession] = useState<FigmaExportSession | null>(null);
   const [figmaStatus, setFigmaStatus] = useState<AutomaticMappingStatus>({ state: "waiting" });
   const progressRef = useRef<HTMLDivElement>(null);
@@ -422,11 +509,11 @@ export default function PageInventoryView() {
     });
   };
 
-  const sendToFigma = async () => {
+  const sendToFigma = async (only?: DiscoveredPage[]) => {
     if (!result?.ok || !window.uiSync?.sendInventoryToFigma) return;
         try {
       const outcome = await window.uiSync.sendInventoryToFigma(
-        { origin: result.origin, source: result.source, pages: result.pages },
+        { origin: result.origin, source: result.source, pages: only ?? result.pages },
         figmaUrl.trim()
       );
       if (!outcome.ok || !outcome.pairingCode) { notify("error", outcome.message ?? "The export could not be prepared."); return; }
@@ -471,6 +558,59 @@ export default function PageInventoryView() {
       if (timer !== null) window.clearTimeout(timer);
     };
   }, [figmaSession?.pairingCode]);
+
+  /** What the scan is of, which is what every per-page action acts on. */
+  const sourceOf = (): { kind: "folder" | "url"; target: string } | null => {
+    if (!result?.ok) return null;
+    if (result.source) return result.source;
+    // A scan kept from before the source was recorded still has its origin.
+    return source ? { kind: source.startsWith("http") ? "url" : "folder", target: source } : null;
+  };
+
+  const recapture = async (page: DiscoveredPage) => {
+    const where = sourceOf();
+    if (!where || !window.uiSync?.recapturePage) return;
+    setBusyPage(page.id);
+    try {
+      const outcome = await window.uiSync.recapturePage(where, page);
+      if (!outcome.ok || !outcome.page) {
+        notify("error", outcome.message ?? "这一页没能重新捕获。");
+        return;
+      }
+      const fresh = outcome.page;
+      setResult((current) => (current?.ok
+        ? { ...current, pages: current.pages.map((entry) => (entry.id === fresh.id ? fresh : entry)) }
+        : current));
+      setFocused((current) => (current?.id === fresh.id ? fresh : current));
+      notify("done", `「${fresh.name}」已重新捕获。`);
+    } catch (cause) {
+      notify("error", cause instanceof Error ? cause.message : "这一页没能重新捕获。");
+    } finally {
+      setBusyPage(null);
+    }
+  };
+
+  const sendOnePage = async (page: DiscoveredPage) => {
+    if (!result?.ok) return;
+    if (!figmaUrl.trim()) {
+      // Nowhere to send it yet. Open the field rather than refusing.
+      setFigmaOpen(true);
+      notify("error", "先填上要送进去的 Figma 地址。");
+      return;
+    }
+    await sendToFigma([page]);
+  };
+
+  const dropPage = async (page: DiscoveredPage) => {
+    const where = sourceOf();
+    if (!where || !window.uiSync?.dropPage) return;
+    await window.uiSync.dropPage(where, page.id);
+    setResult((current) => (current?.ok
+      ? { ...current, pages: current.pages.filter((entry) => entry.id !== page.id) }
+      : current));
+    setFocused((current) => (current?.id === page.id ? null : current));
+    notify("done", `「${page.name}」已删掉,以后扫描也不会再出现。`);
+  };
 
   const openSaved = async (target: InventoryTarget) => {
     const saved = await window.uiSync?.openInventory?.(target.id);
@@ -815,7 +955,14 @@ export default function PageInventoryView() {
           {view === "list" ? (
             <ul className="inventory-rows">
               {pages.map((page, index) => (
-                <li key={page.id}>
+                <li
+                  className={busyPage === page.id ? "is-busy" : undefined}
+                  key={page.id}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setMenu({ page, at: { x: event.clientX, y: event.clientY } });
+                  }}
+                >
                   <button onClick={() => setFocused(page)} type="button">
                     <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
                     <span className="inventory-row-name">{page.name}</span>
@@ -823,6 +970,7 @@ export default function PageInventoryView() {
                       <span className="inventory-row-variants">{page.variants.length} looks</span>
                     )}
                     <code>{addressOf(page)}</code>
+                    {busyPage === page.id && <LoaderCircle className="spin" size={13} />}
                   </button>
                 </li>
               ))}
@@ -830,11 +978,33 @@ export default function PageInventoryView() {
           ) : (
             <div className={`inventory-grid${view === "compact" ? " is-compact" : ""}`}>
               {pages.map((page, index) => (
-                <PageCard index={index} key={page.id} onOpen={setFocused} page={page} />
+                <PageCard
+                  busy={busyPage === page.id}
+                  index={index}
+                  key={page.id}
+                  onMenu={(target, at) => setMenu({ page: target, at })}
+                  onOpen={setFocused}
+                  page={page}
+                />
               ))}
             </div>
           )}
         </>
+      )}
+
+      {menu && (
+        <PageMenu
+          at={menu.at}
+          busy={busyPage !== null}
+          onClose={() => setMenu(null)}
+          onPick={(action) => {
+            const { page } = menu;
+            setMenu(null);
+            if (action === "recapture") void recapture(page);
+            else if (action === "figma") void sendOnePage(page);
+            else void dropPage(page);
+          }}
+        />
       )}
 
       {focused && <PageOverlay onClose={() => setFocused(null)} page={focused} />}
