@@ -106,3 +106,19 @@ test("names a url by its host and path", () => {
   assert.equal(nameFor("url", "http://localhost:5173/admin"), "localhost:5173/admin");
   assert.equal(nameFor("folder", "/Users/me/app/"), "app");
 });
+
+test("keeps what was sent to Figma, so a pull has something to compare against", async () => {
+  await withRegistry(async (registry) => {
+    const baselines = {
+      "state-a": [{ id: "root", selector: ".app", kind: "element", width: 1200, height: 800 }]
+    };
+    const id = await registry.saveFigmaBaseline("folder", "/repos/app", baselines, { fileKey: "abc123" });
+    const stored = await registry.loadFigmaBaseline(id);
+    assert.deepEqual(stored.screens, baselines);
+    assert.equal(stored.fileKey, "abc123");
+    assert.ok(stored.pushedAt, "when it was sent decides which side moved since");
+
+    await registry.forget(id);
+    assert.equal(await registry.loadFigmaBaseline(id), null, "a forgotten project keeps no baseline");
+  });
+});

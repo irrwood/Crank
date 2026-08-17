@@ -1298,6 +1298,19 @@ function registerIpc() {
     const built = buildFigmaJob(parsed, { projectName: parsed.origin, figmaFileName: link.fileName });
     if (!built.ok) return built;
 
+    // What is being sent becomes the baseline a later pull compares against.
+    // flattenEditableDom is the same reader the original pull path uses, so
+    // both directions agree on what a node's properties are.
+    const baselines = Object.fromEntries(
+      built.job.screens.map((screen) => [screen.id, flattenEditableDom(screen.domTree)])
+    );
+    await inventoryRegistry.saveFigmaBaseline(
+      parsed.origin?.startsWith("http") ? "url" : "folder",
+      parsed.origin ?? "",
+      baselines,
+      { fileKey: link.fileKey }
+    );
+
     const connection = await ensureDeviceConnection();
     const session = figmaBridge.enqueue(
       built.job,

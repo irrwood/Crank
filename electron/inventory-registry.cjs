@@ -123,6 +123,7 @@ function createInventoryRegistry(directory) {
       const targets = await read();
       await write(targets.filter((entry) => entry.id !== id));
       await rm(cachePath(id), { force: true });
+      await rm(path.join(directory, "baselines", `${id}.json`), { force: true });
     },
 
     async saveInventory(kind, target, inventory, { parent = null } = {}) {
@@ -135,6 +136,32 @@ function createInventoryRegistry(directory) {
         parent
       });
       return id;
+    },
+
+    /**
+     * Stores what was sent to Figma, per page.
+     *
+     * The pull direction compares three things: what was agreed at push time,
+     * what the code says now, and what Figma says now. Without the first, a
+     * later pull cannot tell a designer's edit from a developer's and has to
+     * refuse. Recording it at push is what keeps that door open.
+     */
+    async saveFigmaBaseline(kind, target, baselines, { fileKey = null } = {}) {
+      const id = targetId(kind, target);
+      await mkdir(path.join(directory, "baselines"), { recursive: true });
+      await writeFile(
+        path.join(directory, "baselines", `${id}.json`),
+        JSON.stringify({ pushedAt: new Date().toISOString(), fileKey, screens: baselines })
+      );
+      return id;
+    },
+
+    async loadFigmaBaseline(id) {
+      try {
+        return JSON.parse(await readFile(path.join(directory, "baselines", `${id}.json`), "utf8"));
+      } catch {
+        return null;
+      }
     },
 
     async loadInventory(id) {
