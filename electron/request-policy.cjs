@@ -27,7 +27,7 @@ const { isFrameworkInternalPath } = require("./state-discovery.cjs");
 // Fetched and then drawn. Anything that executes, or that can carry data in
 // either direction, is deliberately absent.
 const passiveAssets = new Set(["font", "stylesheet", "image", "media", "imageset"]);
-function requestVerdict(url, method, resourceType, originHost) {
+function requestVerdict(url, method, resourceType, originHost, drawn = null) {
   if (["data:", "blob:"].some((scheme) => String(url).startsWith(scheme))) {
     return { allow: true, isFetch: false };
   }
@@ -44,11 +44,18 @@ function requestVerdict(url, method, resourceType, originHost) {
   const kind = String(resourceType || "").toLowerCase();
   const verb = String(method || "GET").toUpperCase();
   if (!isLocal || !["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
-    const isPassive = passiveAssets.has(kind)
-      && ["GET", "HEAD"].includes(verb)
-      && ["http:", "https:"].includes(parsed.protocol);
-    if (!isPassive) return { allow: false, reason: "external", host: parsed.host };
-    return { allow: true, isFetch: false, fetchedFrom: parsed.host };
+    const readable = ["GET", "HEAD"].includes(verb) && ["http:", "https:"].includes(parsed.protocol);
+    // Reading back something the page already displayed. Capture inlines its
+    // assets by re-fetching them, and a cross-origin stylesheet cannot be read
+    // any other way — the browser refuses to hand over its rules. Without this
+    // the typeface stays a link to a font host, which the app's own preview
+    // will not load, so the captured page looked different inside UI Sync than
+    // it does anywhere else. Confined to addresses already fetched as passive
+    // assets, so it opens nothing that was not already on screen.
+    const isReRead = readable && drawn?.has(parsed.href);
+    const isPassive = passiveAssets.has(kind) && readable;
+    if (!isPassive && !isReRead) return { allow: false, reason: "external", host: parsed.host };
+    return { allow: true, isFetch: false, fetchedFrom: parsed.host, drawnUrl: isPassive ? parsed.href : null };
   }
   if (!["GET", "HEAD"].includes(verb) && !isFrameworkInternalPath(parsed.pathname)) {
     return { allow: false, reason: "mutation", label: `${verb} ${parsed.pathname}` };

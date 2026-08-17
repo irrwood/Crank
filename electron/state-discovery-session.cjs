@@ -27,6 +27,8 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
 
   const originHost = new URL(origin).host;
   const blocked = { mutations: new Set(), external: new Set(), fetched: new Set() };
+  // Off-host addresses the page displayed, which capture may read back to inline.
+  const drawn = new Set();
   // A page showing "Loading…" has a perfectly stable DOM, so quiescence alone
   // cannot tell "finished" from "still waiting". The moment the last request
   // *started* is the signal — counting requests in and out never balanced,
@@ -38,7 +40,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   contents.session.webRequest.onBeforeRequest((details, callback) => {
-    const verdict = requestVerdict(details.url, details.method, details.resourceType, originHost);
+    const verdict = requestVerdict(details.url, details.method, details.resourceType, originHost, drawn);
     if (!verdict.allow) {
       if (verdict.reason === "external") blocked.external.add(verdict.host);
       if (verdict.reason === "mutation") blocked.mutations.add(verdict.label);
@@ -47,6 +49,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
     }
     // The one exception to staying on-host, named so it is never silent.
     if (verdict.fetchedFrom) blocked.fetched.add(verdict.fetchedFrom);
+    if (verdict.drawnUrl) drawn.add(verdict.drawnUrl);
     lastRequestAt = Date.now();
     if (verdict.isFetch) lastFetchAt = lastRequestAt;
     callback({ cancel: false });

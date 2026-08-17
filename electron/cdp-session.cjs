@@ -141,11 +141,12 @@ async function createAttachedSession(target, { origin, connect = openSocket } = 
   const pageOrigin = origin ?? new URL(target.url).origin;
   const originHost = new URL(pageOrigin).host;
   const blocked = { mutations: new Set(), external: new Set(), fetched: new Set() };
+  const drawn = new Set();
   let lastRequestAt = 0;
   let lastFetchAt = 0;
 
   protocol.on("Network.requestWillBeSent", (params) => {
-    const verdict = requestVerdict(params.request?.url, params.request?.method, params.type, originHost);
+    const verdict = requestVerdict(params.request?.url, params.request?.method, params.type, originHost, drawn);
     if (!verdict.allow) return;
     lastRequestAt = Date.now();
     if (verdict.isFetch) lastFetchAt = lastRequestAt;
@@ -154,9 +155,10 @@ async function createAttachedSession(target, { origin, connect = openSocket } = 
   // Enforced rather than merely observed: this is a real application, and a
   // crawl that clicked something writing must not reach the server.
   protocol.on("Fetch.requestPaused", (params) => {
-    const verdict = requestVerdict(params.request?.url, params.request?.method, params.resourceType, originHost);
+    const verdict = requestVerdict(params.request?.url, params.request?.method, params.resourceType, originHost, drawn);
     if (verdict.allow) {
       if (verdict.fetchedFrom) blocked.fetched.add(verdict.fetchedFrom);
+      if (verdict.drawnUrl) drawn.add(verdict.drawnUrl);
       void protocol.send("Fetch.continueRequest", { requestId: params.requestId }).catch(() => {});
       return;
     }

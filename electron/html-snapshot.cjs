@@ -61,13 +61,18 @@ async function captureHtmlDocument(limits) {
     } catch {
       return null;
     }
-    if (new URL(absolute).origin !== location.origin) {
-      stats.skippedAssets.push(absolute.slice(0, 120));
-      return null;
-    }
     try {
+      // Cross-origin assets are inlined too. Refusing them was free when the
+      // crawl could not fetch them at all; now that it can, refusing is what
+      // leaves a captured page pointing at a font host — which the app's own
+      // preview will not load, so the same markup looked one way inside UI Sync
+      // and another everywhere else. A fetch that CORS refuses simply returns
+      // nothing, exactly as before.
       const response = await fetch(absolute);
-      if (!response.ok) return null;
+      if (!response.ok) {
+        stats.skippedAssets.push(absolute.slice(0, 120));
+        return null;
+      }
       const blob = await response.blob();
       if (blob.size > maxAssetBytes || blob.size > assetBudget) {
         stats.skippedAssets.push(`${absolute.slice(0, 100)} (${Math.round(blob.size / 1024)}KB)`);
