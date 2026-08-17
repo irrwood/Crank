@@ -38,6 +38,10 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
   // because a websocket or a cancelled request leaves the count stuck above
   // zero and every wait then ran to its limit.
   let lastRequestAt = 0;
+  // Tracked apart from other traffic: a page that fetched data is still
+  // working after the response lands, because something has to render it.
+  // Documents, styles and images carry no such follow-on work.
+  let lastFetchAt = 0;
   const contents = window.webContents;
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -69,6 +73,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       return;
     }
     lastRequestAt = Date.now();
+    if (["xhr", "fetch"].includes(details.resourceType)) lastFetchAt = lastRequestAt;
     callback({ cancel: false });
   });
 
@@ -80,7 +85,10 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
    * seconds. A fixed wait captured the loading state and reported a clean
    * snapshot, which is worse than capturing nothing.
    */
-  const settle = async ({ quietFor = 1, interval = 300, maxWait = 3_000 } = {}) => {
+  // Polling interval, not a delay: a page that is already finished should cost
+  // three quick samples, not a fixed wait. A static page was costing 1.5s of
+  // pure waiting while its capture took 127ms.
+  const settle = async ({ quietFor = 1, interval = 120, maxWait = 3_000, grace = 0 } = {}) => {
     try {
       await contents.executeJavaScript(
         "Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 3000))])",
@@ -100,6 +108,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
     let previous = await measure();
     let stable = 0;
     let seenRequestAt = lastRequestAt;
+
     while (Date.now() < deadline) {
       await wait(interval);
       // Stillness only counts once the network has gone quiet. A page waiting
@@ -113,7 +122,13 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       const current = await measure();
       stable = current !== null && current === previous ? stable + 1 : 0;
       previous = current;
-      if (stable >= quietFor && Date.now() - lastRequestAt > interval) break;
+      if (stable < quietFor || Date.now() - lastRequestAt <= interval) continue;
+
+      // A page that fetched data is still working after the response lands —
+      // charts are built from it. A page that only loaded markup is finished
+      // the moment it stops changing, and waiting on those is the whole cost
+      // of scanning a static site.
+      if (lastFetchAt === 0 || Date.now() - lastFetchAt > grace) break;
     }
   };
 
@@ -156,6 +171,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
         return null;
       }
       if (target.origin !== origin) return null;
+      lastFetchAt = 0;
       try {
         await contents.loadURL(target.toString());
       } catch {
@@ -163,7 +179,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       }
       // Discovery only needs the structure, so it does not wait for data to
       // land. Capture does — a chart drawn after the fetch would be missing.
-      await settle(patient ? { quietFor: 3, interval: 400, maxWait: 15_000 } : undefined);
+      await settle(patient ? { quietFor: 3, interval: 150, maxWait: 15_000, grace: 1_200 } : undefined);
       return read();
     },
     async click(locator, { patient = false } = {}) {
@@ -180,7 +196,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
         return null;
       }
       if (!clicked) return null;
-      await settle(patient ? { quietFor: 3, interval: 400, maxWait: 15_000 } : undefined);
+      await settle(patient ? { quietFor: 3, interval: 150, maxWait: 15_000, grace: 1_200 } : undefined);
       // A link can carry the window off-site even when its href looked local.
       // The load is blocked, leaving a dead page: report nothing rather than
       // fingerprinting the error.
