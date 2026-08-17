@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, Download, Figma, FolderGit2, Globe2, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
-import type { DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
+import { FigmaSyncDialog } from "./FigmaSyncDialog";
+import type { AutomaticMappingStatus, DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 
 /**
  * The whole product in one screen: give an address, get every page.
@@ -13,6 +14,29 @@ function addressOf(page: DiscoveredPage): string {
   if (page.recipe.length === 0) return page.route;
   const steps = page.recipe.map((step) => `点击「${step.label || step.locator}」`).join(" → ");
   return `${page.route} → ${steps}`;
+}
+
+type FigmaExportSession = {
+  pairingCode: string;
+  expiresAt: string;
+  screenCount: number;
+  requiresPairing: boolean;
+  fileName?: string;
+  fileKey?: string;
+  missing?: string[];
+  dropped?: string[];
+};
+
+/** What will not arrive, said before the sync claims to be complete. */
+function shortfall(session: FigmaExportSession): string | null {
+  const parts: string[] = [];
+  if (session.missing?.length) {
+    parts.push(`${session.missing.length} ${session.missing.length === 1 ? "page has" : "pages have"} no captured layers and stay behind: ${session.missing.slice(0, 4).join(", ")}${session.missing.length > 4 ? "…" : ""}`);
+  }
+  if (session.dropped?.length) {
+    parts.push(`${session.dropped.length} beyond the per-file limit were left out.`);
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
 }
 
 function PageCard({ page, index, onOpen }: { page: DiscoveredPage; index: number; onOpen: (page: DiscoveredPage) => void }) {
@@ -257,9 +281,8 @@ export default function PageInventoryView() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [view, setView] = useState<"gallery" | "compact" | "list">("gallery");
   const [figmaOpen, setFigmaOpen] = useState(false);
-  const [figmaSession, setFigmaSession] = useState<
-    { pairingCode?: string; screenCount?: number; fileName?: string; requiresPairing?: boolean; missing?: string[]; dropped?: string[] } | null
-  >(null);
+  const [figmaSession, setFigmaSession] = useState<FigmaExportSession | null>(null);
+  const [figmaStatus, setFigmaStatus] = useState<AutomaticMappingStatus>({ state: "waiting" });
   const progressRef = useRef<HTMLDivElement>(null);
   const toastSeq = useRef(0);
 
@@ -403,12 +426,48 @@ export default function PageInventoryView() {
         { origin: result.origin, pages: result.pages },
         figmaUrl.trim()
       );
-      if (!outcome.ok) { notify("error", outcome.message ?? "The export could not be prepared."); return; }
-      setFigmaSession(outcome);
+      if (!outcome.ok || !outcome.pairingCode) { notify("error", outcome.message ?? "The export could not be prepared."); return; }
+      setFigmaStatus({ state: "waiting" });
+      setFigmaSession({
+        pairingCode: outcome.pairingCode,
+        expiresAt: outcome.expiresAt ?? "",
+        screenCount: outcome.screenCount ?? 0,
+        requiresPairing: outcome.requiresPairing ?? false,
+        fileName: outcome.fileName,
+        fileKey: outcome.fileKey,
+        missing: outcome.missing,
+        dropped: outcome.dropped
+      });
     } catch (cause) {
       notify("error", cause instanceof Error ? cause.message : "The export failed.");
     }
   };
+
+  // A send only queues the job; the plugin does the work minutes later. Without
+  // this the window said nothing at all — not even the code needed to pair.
+  useEffect(() => {
+    const pairingCode = figmaSession?.pairingCode;
+    if (!pairingCode || !window.uiSync?.getFigmaExportStatus) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    const check = async () => {
+      try {
+        const status = await window.uiSync?.getFigmaExportStatus?.(pairingCode);
+        if (!status || cancelled) return;
+        setFigmaStatus(status);
+        if (["complete", "error", "expired"].includes(status.state)) return;
+      } catch (cause) {
+        if (!cancelled) setFigmaStatus({ state: "error", message: cause instanceof Error ? cause.message : "Could not read the sync status" });
+        return;
+      }
+      timer = window.setTimeout(() => void check(), 1000);
+    };
+    void check();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [figmaSession?.pairingCode]);
 
   const openSaved = async (target: InventoryTarget) => {
     const saved = await window.uiSync?.openInventory?.(target.id);
@@ -731,6 +790,21 @@ export default function PageInventoryView() {
       )}
 
       {focused && <PageOverlay onClose={() => setFocused(null)} page={focused} />}
+
+      {figmaSession && (
+        <FigmaSyncDialog
+          fileName={figmaSession.fileName ?? "your Figma file"}
+          note={shortfall(figmaSession)}
+          onClose={() => setFigmaSession(null)}
+          onCopyCode={() => void window.uiSync?.copyText?.(figmaSession.pairingCode)}
+          onOpenFigma={() => { if (figmaSession.fileKey) void window.uiSync?.openFigma?.(figmaSession.fileKey, null); }}
+          onRestart={() => void sendToFigma()}
+          onShowPlugin={() => void window.uiSync?.showFigmaPlugin?.()}
+          operation="push"
+          session={figmaSession}
+          status={figmaStatus}
+        />
+      )}
 
       {toasts.length > 0 && (
         <div className="toast-stack">

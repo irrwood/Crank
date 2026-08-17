@@ -1311,6 +1311,16 @@ button.screen-figma-link {
   line-height: 1.55;
 }
 
+/* What will not arrive. It sits with the copy, not beside the result, so it is
+   read before the sync reports success. */
+.dialog-copy p.dialog-note {
+  margin: -12px 0 20px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #f6f1e6;
+  color: #8a6a2f;
+}
+
 .figma-url-field {
   display: flex;
   flex-direction: column;

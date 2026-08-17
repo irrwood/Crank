@@ -15,7 +15,7 @@ declare global {
       sendInventoryToFigma: (
         inventory: { origin?: string; pages: DiscoveredPage[] },
         figmaUrl: string
-      ) => Promise<{ ok: boolean; message?: string; pairingCode?: string; expiresAt?: string; screenCount?: number; requiresPairing?: boolean; fileName?: string; missing?: string[]; dropped?: string[] }>;
+      ) => Promise<{ ok: boolean; message?: string; pairingCode?: string; expiresAt?: string; screenCount?: number; requiresPairing?: boolean; fileName?: string; fileKey?: string; missing?: string[]; dropped?: string[] }>;
       getFigmaExportStatus: (pairingCode: string) => Promise<AutomaticMappingStatus>;
       onRecorded: (callback: (page: DiscoveredPage) => void) => () => void;
       chooseFolder: () => Promise<string | null>;

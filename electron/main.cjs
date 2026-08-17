@@ -1351,6 +1351,9 @@ function registerIpc() {
       ...session,
       requiresPairing: !connection.confirmed,
       fileName: link.fileName,
+      // The window has only the pasted URL; the key is what opens the file
+      // again from the dialog, and it is parsed here rather than twice.
+      fileKey: link.fileKey,
       // Named so the caller can say what will not arrive, rather than letting
       // a short export look complete.
       missing: built.missing,
