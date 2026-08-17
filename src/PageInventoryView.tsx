@@ -983,9 +983,26 @@ export default function PageInventoryView() {
                 {" "}扫到的这一页是真的，但这个应用的其余部分不在这里。
               </p>
               <p className="inventory-note">
-                最常见的原因是界面被单独跑了起来,而它依赖的运行时不在——Electron 项目只起渲染进程时拿不到 preload,
-                前端拿不到后端接口时也一样。等应用完整跑起来之后扫它的地址,或者用「自己点一遍」把需要登录、需要真实数据的页面记录下来。
+                界面被单独跑了起来,而它依赖的运行时不在——Electron 项目只起渲染进程时拿不到 preload,
+                前端拿不到后端接口时也一样。数据在你正在运行的那个进程里,不在这份界面里。
               </p>
+              {/* The way out has to be reachable from where the problem is
+                  stated. Recording is not it: it opens a window of UI Sync's
+                  own onto the same address, so an app whose data lives behind
+                  a bridge is just as empty there however much you click. */}
+              <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scanAttached(); }}>
+                <p className="inventory-note">
+                  把应用照常跑起来,加一个调试端口,UI Sync 连过去扫那一个真实窗口——不另开应用,也不动你的代码:
+                  <code>npx electron . --remote-debugging-port=9222</code>
+                </p>
+                <input
+                  aria-label="Debugging port"
+                  onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                  placeholder="9222"
+                  value={port}
+                />
+                <button disabled={!port.trim()} type="submit">连上去重扫</button>
+              </form>
               <ul>
                 {result.inert!.map((entry, index) => (
                   <li key={`${entry.label}-${index}`}>「{entry.label || "(无标签)"}」</li>
