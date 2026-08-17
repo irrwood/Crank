@@ -3,11 +3,13 @@ const https = require("node:https");
 const path = require("node:path");
 const { readFile } = require("node:fs/promises");
 const { discoverStates } = require("./state-discovery.cjs");
-const { startDevServer } = require("./dev-server.cjs");
+const { resolveDevCommand, startDevServer } = require("./dev-server.cjs");
 const { detectElectronRenderer, startRendererServer } = require("./renderer-server.cjs");
 const { discoverJavascriptProjectRoots, scanJavascriptProject } = require("./project-scanner.cjs");
 const { describeForeignProject } = require("./foreign-project.cjs");
 const { startForeignServer } = require("./foreign-server.cjs");
+const { startLocalRendererServer } = require("./static-server.cjs");
+const { readdir } = require("node:fs/promises");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 
 /**
@@ -201,6 +203,50 @@ async function scanUrl(target, {
  * the desktop app and ties the dev server to that window, so closing it would
  * end the scan.
  */
+const skipDirectories = new Set([
+  "node_modules", ".git", "dist", "build", "out", "coverage", ".next", ".vite",
+  ".wrangler", "__pycache__", ".venv", "venv"
+]);
+
+/**
+ * Finds the pages of a plain static site.
+ *
+ * No package.json means no dev script and no declared command, but a folder of
+ * HTML needs neither — the files only have to be served. Listing them on disk
+ * is exact, and beats a sitemap here because a published sitemap carries the
+ * production URLs rather than local paths.
+ */
+async function findStaticSite(root, { maxPages = 200, maxDepth = 4 } = {}) {
+  const found = [];
+  const walk = async (directory, depth, prefix) => {
+    if (found.length >= maxPages || depth > maxDepth) return;
+    let entries = [];
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (found.length >= maxPages) return;
+      if (entry.name.startsWith(".") && entry.name !== ".well-known") continue;
+      const next = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (skipDirectories.has(entry.name)) continue;
+        await walk(next, depth + 1, `${prefix}${entry.name}/`);
+      } else if (/\.html?$/i.test(entry.name)) {
+        found.push(`${prefix}${entry.name}`);
+      }
+    }
+  };
+  await walk(root, 0, "");
+  if (found.length === 0) return null;
+
+  const entry = found.find((page) => page === "index.html")
+    ?? found.find((page) => page.endsWith("/index.html"))
+    ?? found[0];
+  return { entry, pages: found };
+}
+
 /**
  * A workspace root is not one app. Its dev script commonly starts several in
  * parallel, each announcing its own address, and whichever answers first would
@@ -228,9 +274,16 @@ async function findWorkspacePackages(root) {
 }
 
 async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...options } = {}) {
-  if (!allowWorkspaceRoot) {
-    const packages = await findWorkspacePackages(root);
-    if (packages.length > 0) {
+  const packages = allowWorkspaceRoot ? [] : await findWorkspacePackages(root);
+
+  // A folder can be a site *and* contain projects — a portfolio with a couple
+  // of demos in it. Dropping it means "scan this", so the packages are offered
+  // alongside the result rather than instead of it. The picker only takes over
+  // when the folder itself has nothing to serve.
+  if (packages.length > 0) {
+    const runnable = await resolveDevCommand(root);
+    const servesItself = runnable.ok || Boolean(await findStaticSite(root, { maxPages: 1 }));
+    if (!servesItself) {
       return {
         ok: false,
         reason: "workspace",
@@ -280,6 +333,27 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
           foreign
         };
       }
+      // Nothing declared to run, but a folder of HTML can simply be served.
+      const staticSite = await findStaticSite(root);
+      if (staticSite) {
+        onStatus?.({ phase: "starting", detail: `Serving ${staticSite.pages.length} static pages` });
+        const server = await startLocalRendererServer(path.join(root, staticSite.entry));
+        onStatus?.({ phase: "scanning", detail: `Serving at ${server.origin}` });
+        try {
+          const inventory = await scanUrl(server.origin, {
+            ...options,
+            seedPaths: [...new Set([...seedPaths, ...staticSite.pages.map((page) => `/${page}`)])],
+            // Enough room for every file found, unless the caller asked for less.
+            maxStates: options.maxStates ?? Math.max(60, staticSite.pages.length + 20)
+          });
+          return inventory.ok
+            ? { ...inventory, servedBy: `static files (${staticSite.pages.length} pages)`, attached: false, packages }
+            : inventory;
+        } finally {
+          await server.close();
+        }
+      }
+
       if (foreign) {
         return {
           ok: false,

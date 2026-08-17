@@ -579,69 +579,7 @@ function wait(milliseconds) {
 
 const { serializeRenderedApplication } = require("./figma-tree.cjs");
 
-const captureMimeTypes = {
-  ".css": "text/css; charset=utf-8",
-  ".gif": "image/gif",
-  ".html": "text/html; charset=utf-8",
-  ".ico": "image/x-icon",
-  ".jpeg": "image/jpeg",
-  ".jpg": "image/jpeg",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".webp": "image/webp",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2"
-};
-
-async function startLocalRendererServer(entryPath) {
-  const rendererRoot = path.dirname(entryPath);
-  const entryName = path.basename(entryPath);
-  const server = createServer(async (request, response) => {
-    try {
-      const url = new URL(request.url || "/", "http://127.0.0.1");
-      const requestedName = decodeURIComponent(url.pathname).replace(/^\/+/, "") || entryName;
-      let target = path.resolve(rendererRoot, requestedName);
-      if (target !== rendererRoot && !target.startsWith(`${rendererRoot}${path.sep}`)) {
-        response.writeHead(403).end();
-        return;
-      }
-      let body;
-      try {
-        body = await readFile(target);
-      } catch {
-        target = entryPath;
-        body = await readFile(target);
-      }
-      response.writeHead(200, {
-        "Content-Type": captureMimeTypes[path.extname(target).toLowerCase()] || "application/octet-stream",
-        "Cache-Control": "no-store",
-        "Cross-Origin-Opener-Policy": "same-origin",
-        "Connection": "close"
-      });
-      response.end(body);
-    } catch (error) {
-      response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-      response.end(error instanceof Error ? error.message : "Renderer server error");
-    }
-  });
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Could not start the local renderer server");
-  return {
-    origin: `http://127.0.0.1:${address.port}`,
-    url: `http://127.0.0.1:${address.port}/${encodeURIComponent(entryName)}`,
-    close: () => new Promise((resolve) => {
-      server.close(resolve);
-      server.closeAllConnections?.();
-    })
-  };
-}
+const { captureMimeTypes, startLocalRendererServer } = require("./static-server.cjs");
 
 async function captureApplicationScreens(root, screens, { includeScreenshots = false } = {}) {
   const appRoot = path.resolve(app.getAppPath());
@@ -1306,7 +1244,16 @@ function registerIpc() {
       onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
-    if (inventory.ok) await inventoryRegistry.saveInventory("folder", safeRoot, inventory, { parent });
+    if (inventory.ok) {
+      await inventoryRegistry.saveInventory("folder", safeRoot, inventory, { parent });
+      // A folder that also holds projects gets them registered underneath it,
+      // unscanned. Dropping a folder means "index what is in here", and the
+      // sidebar should show that shape straight away rather than after the
+      // user has hunted each one down separately.
+      for (const item of inventory.packages ?? []) {
+        await inventoryRegistry.remember("folder", item.root, { parent: safeRoot });
+      }
+    }
     send("inventory:finished", { ok: inventory.ok });
     return { ...inventory, id };
   });

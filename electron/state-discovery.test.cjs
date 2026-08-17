@@ -382,20 +382,33 @@ test("an endpoint that answers with JSON is not a page", async () => {
   assert.match(filtered.map((item) => item.reason).join(" "), /application\/json/);
 });
 
-test("clears what a page remembered before each replay", async () => {
-  // Language and theme switches persist. Without a reset the first such click
-  // re-skins every page found afterwards, and their names come out polluted.
+test("clears what a page remembered, but only when something could have stuck", async () => {
+  // Clearing storage is what stops one language click colouring every later
+  // page, but a crawl makes hundreds of replays and clearing is expensive, so
+  // only the clicks that can persist a preference should pay for it.
   const resets = [];
-  const base = fakeSession({
+  const screens = {
     "/": {
       url: "/", fingerprint: ["home"], skeleton: ["main@0"],
-      controls: [{ locator: "#a", label: "Reports", role: "tab", to: "reports" }]
+      controls: [
+        { locator: "#zh", label: "Switch to Chinese", role: "tab", to: "zh" },
+        { locator: "#reports", label: "Reports", role: "tab", to: "reports" },
+        { locator: "#billing", label: "Billing", role: "tab", to: "billing" }
+      ]
     },
-    reports: { url: "/", fingerprint: ["reports"], skeleton: ["main@0", "table@1"], controls: [] }
-  });
-  const session = { ...base, reset: async () => { resets.push(Date.now()); } };
+    zh: { url: "/", fingerprint: ["home-zh"], skeleton: ["main@0"], controls: [] },
+    reports: { url: "/", fingerprint: ["reports"], skeleton: ["main@0", "table@1"], controls: [] },
+    billing: { url: "/", fingerprint: ["billing"], skeleton: ["main@0", "form@1"], controls: [] }
+  };
+  const base = fakeSession(screens);
+  const session = { ...base, reset: async () => { resets.push(base.visits.length); } };
   await discoverStates(session, { routes: ["/"], maxDepth: 1 });
-  assert.ok(resets.length > 0, "a replay must start from the app's default state");
+
+  // Three clicks, one of which could persist: exactly one clear, not three.
+  assert.equal(resets.length, 1, `expected one reset, got ${resets.length}`);
+  const languageClickAt = base.visits.findIndex((visit) => visit.locator === "#zh");
+  assert.ok(languageClickAt >= 0, "the language control must have been clicked");
+  assert.ok(resets[0] > languageClickAt, "and the clear must follow it, not precede an ordinary click");
 });
 
 test("an appearance switch does not get to name a page", () => {

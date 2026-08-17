@@ -325,6 +325,8 @@ async function discoverStates(session, {
   // is already in the inventory re-walks a known page from every other page —
   // wasted time, and near-duplicates when the arrival state differs slightly.
   const knownAddresses = new Set();
+  // Set when a click may have persisted a preference the next replay would inherit.
+  let dirty = false;
   const remember = (address) => {
     if (typeof address !== "string" || !address) return;
     const [withoutHash] = address.split("#");
@@ -433,9 +435,15 @@ async function discoverStates(session, {
 
     // Replay from a fresh load every time. A state that cannot be reached
     // deterministically is worthless as a baseline, so determinism beats speed.
-    // Persisted choices are cleared too, or a language switch clicked earlier
-    // would still be in effect and every later page recorded in that language.
-    await session.reset?.();
+    //
+    // Clearing storage is what stops an earlier language or theme click from
+    // colouring every page found afterwards, but it is expensive, and a crawl
+    // makes hundreds of replays. Only the clicks that can persist anything
+    // warrant it.
+    if (dirty) {
+      await session.reset?.();
+      dirty = false;
+    }
     let snapshot = await session.goto(step.from.entryRoute);
     if (!snapshot) continue;
     let reached = true;
@@ -444,6 +452,7 @@ async function discoverStates(session, {
       if (!snapshot) { reached = false; break; }
     }
     if (!reached) continue;
+    if (isAppearanceLabel(step.action.label)) dirty = true;
 
     // A control that only opened a dropdown or a tooltip did not produce a
     // page. Judge by how much of the screen moved, not by whether the DOM
