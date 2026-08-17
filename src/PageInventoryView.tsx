@@ -443,13 +443,6 @@ export default function PageInventoryView() {
         onRescan={rescan}
       />
     <main className="inventory-page">
-      <header className="inventory-header">
-        <div>
-          <h1>Page inventory</h1>
-          <p>Drop a project folder. It gets served and walked, and every page comes back.</p>
-        </div>
-      </header>
-
       {choices && !scanning && (
         <section className="inventory-choices">
           <strong>This folder holds several runnable projects</strong>
@@ -492,39 +485,60 @@ export default function PageInventoryView() {
         </section>
       )}
 
-      {!result?.ok && !scanning && !choices && (
+      {!result?.ok && !scanning && !choices && !foreign && (
         <section
-          className={`inventory-drop${dragging ? " is-over" : ""}`}
+          className={`onboarding${dragging ? " is-over" : ""}`}
           onDragLeave={() => setDragging(false)}
           onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
           onDrop={onDrop}
         >
-          <strong>Drop a project folder here</strong>
-          <span>React, Vue, Next, Electron, a static site — it gets started for you.</span>
-          <button className="inventory-export" onClick={() => void chooseFolder()} type="button">Choose folder…</button>
-          <button className="inventory-link" onClick={() => void startRecording()} type="button">
-            Or open the app and record the pages you visit
-          </button>
-          <button className="inventory-link" onClick={() => setShowAddress((value) => !value)} type="button">
-            {showAddress ? "Hide" : "Already running? Scan an address instead"}
-          </button>
-          {showAddress && (
-            <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scan(); }}>
-              <input
-                aria-label="Address"
-                onChange={(event) => setAddress(event.target.value)}
-                placeholder="localhost:5173"
-                value={address}
-              />
-              <input
-                aria-label="Extra addresses"
-                onChange={(event) => setSeeds(event.target.value)}
-                placeholder="Extra paths, optional — /?view=settings"
-                value={seeds}
-              />
-              <button disabled={!address.trim()} type="submit">Scan</button>
-            </form>
-          )}
+          <div className="onboarding-drop">
+            <FolderGit2 size={26} />
+            <h1>拖入你的项目文件夹</h1>
+            <p>UI Sync 会自己判断技术栈、把项目跑起来,然后走遍每一个页面。</p>
+            <button className="primary-button" onClick={() => void chooseFolder()} type="button">选择文件夹…</button>
+          </div>
+
+          <ol className="onboarding-steps">
+            <li>
+              <strong>识别并启动</strong>
+              <span>npm / pnpm 项目读它自己的 dev 脚本;Electron 只起界面不弹窗口;Python、Ruby 这类读它 Dockerfile、Procfile 或 README 里写好的命令。</span>
+            </li>
+            <li>
+              <strong>走遍每个页面</strong>
+              <span>路由、tab、弹层都算一个页面。深色模式和切换语言不算新页面,会并进同一页的不同外观。</span>
+            </li>
+            <li>
+              <strong>拿走结果</strong>
+              <span>导出一份自带图片的 HTML 交接页,或直接把图层送进 Figma。</span>
+            </li>
+          </ol>
+
+          <div className="onboarding-alt">
+            <button className="inventory-link" onClick={() => void startRecording()} type="button">
+              需要登录或填表单才能到达的页面?自己点一遍,我来记录
+            </button>
+            <button className="inventory-link" onClick={() => setShowAddress((value) => !value)} type="button">
+              {showAddress ? "收起" : "项目已经跑起来了?直接扫一个地址"}
+            </button>
+            {showAddress && (
+              <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scan(); }}>
+                <input
+                  aria-label="Address"
+                  onChange={(event) => setAddress(event.target.value)}
+                  placeholder="localhost:5173"
+                  value={address}
+                />
+                <input
+                  aria-label="Extra addresses"
+                  onChange={(event) => setSeeds(event.target.value)}
+                  placeholder="额外路径,可选 — /?view=settings"
+                  value={seeds}
+                />
+                <button disabled={!address.trim()} type="submit">扫描</button>
+              </form>
+            )}
+          </div>
         </section>
       )}
 
