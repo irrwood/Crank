@@ -285,10 +285,17 @@ function collectUiState() {
   };
   walk(root, 0);
 
+  // The order the accessible name is actually computed in: a title is the last
+  // resort, after the element's own content, not the first thing tried. Taking
+  // it first named pages after tooltips — this app's sidebar puts the project's
+  // full path in a title and its name in the text, so every page it reached was
+  // named "/Users/someone/Documents/…", which then travelled into Figma frame
+  // names and the exported handoff page.
   const accessibleName = (element) => (
     element.getAttribute("aria-label")
-    || element.getAttribute("title")
     || (element.innerText || element.textContent || "").trim()
+    || element.getAttribute("title")
+    || ""
   ).replace(/\s+/g, " ").slice(0, 60);
 
   const interactiveSelector = [
