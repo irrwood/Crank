@@ -354,6 +354,25 @@ export type ForeignProject = {
   port: number | null;
 };
 
+export type InventoryTarget = {
+  id: string;
+  kind: "folder" | "url";
+  target: string;
+  name: string;
+  addedAt: string | null;
+  lastScannedAt: string | null;
+  pageCount: number | null;
+};
+
+/** A folder holding several scanned packages, shown as one expandable entry. */
+export type InventoryGroup = {
+  kind: "group";
+  id: string;
+  name: string;
+  target: string;
+  children: InventoryTarget[];
+};
+
 export type WorkspacePackage = { root: string; name: string };
 
 export type PageInventory =

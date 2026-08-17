@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DiscoveredPage, PageInventory, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
+import type { DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 
 /**
  * The whole product in one screen: give an address, get every page.
@@ -51,6 +51,83 @@ function PageCard({ page, index, onOpen }: { page: DiscoveredPage; index: number
   );
 }
 
+
+type Entry = InventoryTarget | InventoryGroup;
+
+const isGroup = (entry: Entry): entry is InventoryGroup => entry.kind === "group";
+
+function whenScanned(value: string | null): string {
+  if (!value) return "not scanned";
+  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days}d ago`;
+}
+
+function TargetRow({ target, active, onOpen, onRescan, onForget, nested }: {
+  target: InventoryTarget; active: boolean; nested?: boolean;
+  onOpen: (target: InventoryTarget) => void;
+  onRescan: (target: InventoryTarget) => void;
+  onForget: (target: InventoryTarget) => void;
+}) {
+  return (
+    <div className={`target-row${active ? " is-active" : ""}${nested ? " is-nested" : ""}`}>
+      <button className="target-open" onClick={() => onOpen(target)} title={target.target} type="button">
+        <span className="target-name">{target.name}</span>
+        <span className="target-meta">
+          {target.pageCount === null ? "not scanned" : `${target.pageCount} pages`} · {whenScanned(target.lastScannedAt)}
+        </span>
+      </button>
+      <button className="target-action" onClick={() => onRescan(target)} title="Rescan" type="button">↻</button>
+      <button className="target-action" onClick={() => onForget(target)} title="Remove" type="button">×</button>
+    </div>
+  );
+}
+
+function Sidebar({ entries, activeId, onOpen, onRescan, onForget, onAdd }: {
+  entries: Entry[]; activeId: string | null;
+  onOpen: (target: InventoryTarget) => void;
+  onRescan: (target: InventoryTarget) => void;
+  onForget: (target: InventoryTarget) => void;
+  onAdd: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  return (
+    <aside className="inventory-sidebar">
+      <header>
+        <span>Projects</span>
+        <button onClick={onAdd} title="Add a project" type="button">+</button>
+      </header>
+      <div className="target-list">
+        {entries.length === 0 && <p className="target-empty">Nothing scanned yet.</p>}
+        {entries.map((entry) => (isGroup(entry) ? (
+          <div className="target-group" key={entry.id}>
+            <button
+              className="target-group-head"
+              onClick={() => setCollapsed((current) => ({ ...current, [entry.id]: !current[entry.id] }))}
+              type="button"
+            >
+              <span className={`target-caret${collapsed[entry.id] ? "" : " is-open"}`}>›</span>
+              {entry.name}
+              <span className="target-count">{entry.children.length}</span>
+            </button>
+            {!collapsed[entry.id] && entry.children.map((child) => (
+              <TargetRow
+                active={child.id === activeId} key={child.id} nested
+                onForget={onForget} onOpen={onOpen} onRescan={onRescan} target={child}
+              />
+            ))}
+          </div>
+        ) : (
+          <TargetRow
+            active={entry.id === activeId} key={entry.id}
+            onForget={onForget} onOpen={onOpen} onRescan={onRescan} target={entry}
+          />
+        )))}
+      </div>
+    </aside>
+  );
+}
 
 function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => void }) {
   const looks = [
@@ -125,6 +202,9 @@ export default function PageInventoryView() {
   const [copied, setCopied] = useState<string | null>(null);
   const [recording, setRecording] = useState<DiscoveredPage[] | null>(null);
   const [figmaUrl, setFigmaUrl] = useState("");
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [view, setView] = useState<"gallery" | "compact" | "list">("gallery");
   const [figmaSession, setFigmaSession] = useState<
     { pairingCode?: string; screenCount?: number; fileName?: string; requiresPairing?: boolean; missing?: string[]; dropped?: string[] } | null
   >(null);
@@ -135,6 +215,10 @@ export default function PageInventoryView() {
       setProgress((current) => [...current, value]);
     });
     return () => { off?.(); };
+  }, []);
+
+  useEffect(() => {
+    void window.uiSync?.listInventoryTargets?.().then(setEntries);
   }, []);
 
   useEffect(() => {
@@ -164,7 +248,10 @@ export default function PageInventoryView() {
     setSource(label);
   };
 
+  const refreshTargets = () => { void window.uiSync?.listInventoryTargets?.().then(setEntries); };
+
   const finishScan = (inventory: PageInventory) => {
+    refreshTargets();
     if (!inventory.ok && inventory.reason === "workspace" && inventory.packages?.length) {
       setChoices(inventory.packages);
       return;
@@ -195,12 +282,13 @@ export default function PageInventoryView() {
     }
   };
 
-  const scan = async () => {
+  const scan = async (explicit?: string) => {
     if (!window.uiSync?.scanUrl || scanning) return;
-    beginScan(address);
+    const target = explicit ?? address;
+    beginScan(target);
     try {
       const seedPaths = seeds.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean);
-      finishScan(await window.uiSync.scanUrl(address, seedPaths));
+      finishScan(await window.uiSync.scanUrl(target, seedPaths));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The scan failed.");
     } finally {
@@ -250,6 +338,30 @@ export default function PageInventoryView() {
     }
   };
 
+  const openSaved = async (target: InventoryTarget) => {
+    const saved = await window.uiSync?.openInventory?.(target.id);
+    if (!saved) { setError(`No stored scan for ${target.name}. Rescan it.`); return; }
+    setError(null);
+    setChoices(null);
+    setForeign(null);
+    setResult(saved);
+    setActiveId(target.id);
+    setSource(target.target);
+    setTitle(`${target.name} handoff`);
+  };
+
+  const rescan = (target: InventoryTarget) => {
+    setActiveId(target.id);
+    if (target.kind === "folder") void scanFolder(target.target);
+    else { setAddress(target.target); void scan(target.target); }
+  };
+
+  const forget = async (target: InventoryTarget) => {
+    const next = await window.uiSync?.forgetInventoryTarget?.(target.id);
+    if (next) setEntries(next);
+    if (activeId === target.id) { setResult(null); setActiveId(null); }
+  };
+
   const onDrop = (event: React.DragEvent) => {
     event.preventDefault();
     setDragging(false);
@@ -282,6 +394,15 @@ export default function PageInventoryView() {
   const pages = result?.ok ? result.pages : [];
 
   return (
+    <div className="inventory-shell">
+      <Sidebar
+        activeId={activeId}
+        entries={entries}
+        onAdd={() => void chooseFolder()}
+        onForget={(target) => void forget(target)}
+        onOpen={(target) => void openSaved(target)}
+        onRescan={rescan}
+      />
     <main className="inventory-page">
       <header className="inventory-header">
         <div>
@@ -408,9 +529,11 @@ export default function PageInventoryView() {
           <div className="inventory-summary">
             <strong>{pages.length} pages</strong>
             <span title={source ?? undefined}>{source?.split("/").filter(Boolean).pop() ?? result.origin}</span>
-            <button className="inventory-link" onClick={() => { setResult(null); setSource(null); }} type="button">
-              Scan something else
-            </button>
+            <span className="view-switch">
+              {([["gallery", "Gallery"], ["compact", "Compact"], ["list", "List"]] as const).map(([id, label]) => (
+                <button aria-pressed={view === id} key={id} onClick={() => setView(id)} type="button">{label}</button>
+              ))}
+            </span>
             {result.sources.sitemap > 0 && <span>{result.sources.sitemap} from sitemap</span>}
             {result.sources.crawled > 0 && <span>{result.sources.crawled} found by crawling</span>}
             {pages.some((page) => page.variants?.length) && (
@@ -497,15 +620,33 @@ export default function PageInventoryView() {
             </section>
           )}
 
-          <div className="inventory-grid">
-            {pages.map((page, index) => (
-              <PageCard index={index} key={page.id} onOpen={setFocused} page={page} />
-            ))}
-          </div>
+          {view === "list" ? (
+            <ul className="inventory-rows">
+              {pages.map((page, index) => (
+                <li key={page.id}>
+                  <button onClick={() => setFocused(page)} type="button">
+                    <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="inventory-row-name">{page.name}</span>
+                    {(page.variants?.length ?? 0) > 0 && (
+                      <span className="inventory-row-variants">{page.variants.length} looks</span>
+                    )}
+                    <code>{addressOf(page)}</code>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className={`inventory-grid${view === "compact" ? " is-compact" : ""}`}>
+              {pages.map((page, index) => (
+                <PageCard index={index} key={page.id} onOpen={setFocused} page={page} />
+              ))}
+            </div>
+          )}
         </>
       )}
 
       {focused && <PageOverlay onClose={() => setFocused(null)} page={focused} />}
     </main>
+    </div>
   );
 }

@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld("uiSync", {
     return () => ipcRenderer.removeListener("inventory:recorded", listener);
   },
   chooseFolder: () => ipcRenderer.invoke("inventory:choose-folder"),
+  listInventoryTargets: () => ipcRenderer.invoke("inventory:targets"),
+  openInventory: (id) => ipcRenderer.invoke("inventory:open", id),
+  forgetInventoryTarget: (id) => ipcRenderer.invoke("inventory:forget", id),
   onScanStatus: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("inventory:status", listener);

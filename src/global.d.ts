@@ -1,4 +1,4 @@
-import type { DiscoveredPage, PageInventory, PageInventoryFiltered, ScanProgress, ScanStatus, AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
+import type { DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryGroup, InventoryTarget, ScanProgress, ScanStatus, AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
 
 declare global {
   interface Window {
@@ -19,6 +19,9 @@ declare global {
       getFigmaExportStatus: (pairingCode: string) => Promise<AutomaticMappingStatus>;
       onRecorded: (callback: (page: DiscoveredPage) => void) => () => void;
       chooseFolder: () => Promise<string | null>;
+      listInventoryTargets: () => Promise<Array<InventoryTarget | InventoryGroup>>;
+      openInventory: (id: string) => Promise<PageInventory | null>;
+      forgetInventoryTarget: (id: string) => Promise<Array<InventoryTarget | InventoryGroup>>;
       onScanStatus: (callback: (value: ScanStatus) => void) => () => void;
       exportHandoffPage: (inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] }, title?: string) => Promise<{ saved: boolean; filePath?: string }>;
       revealFile: (filePath: string) => Promise<void>;

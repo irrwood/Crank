@@ -47,11 +47,20 @@ nav button {
 nav button:hover { color: var(--ink); }
 nav button[aria-current="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 560; }
 main { padding: 28px 32px 80px; }
-.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 30px 24px; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 38px 26px; }
 figure { margin: 0; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 figure img {
   width: 100%; display: block; border: 1px solid var(--line); border-radius: 10px;
   background: var(--card); cursor: zoom-in;
+  /* Two layers: a tight contact shadow and a wide soft one. A gallery that
+     looks finished can be screenshotted straight into a deck. */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.09);
+  transition: box-shadow 160ms ease, transform 130ms ease;
+}
+figure:hover img { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08), 0 22px 52px rgba(0, 0, 0, 0.15); transform: translateY(-3px); }
+@media (prefers-color-scheme: dark) {
+  figure img { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 34px rgba(0, 0, 0, 0.55); }
+  figure:hover img { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6), 0 26px 60px rgba(0, 0, 0, 0.7); }
 }
 figcaption { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
 figcaption .n { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
