@@ -392,6 +392,8 @@ export type PageInventory =
       skipped: Array<{ label: string; reason: string }>;
       /** States left out for changing too little, with the measured ratio. */
       filtered: Array<{ label: string; from: string; reason: string; magnitude: number }>;
+      /** Controls that left the page exactly as it was — they did nothing. */
+      inert?: Array<{ label: string; from: string }>;
       sources: { sitemap: number; seeds: number; crawled: number };
       blocked: { mutations: string[]; external: string[] };
     };

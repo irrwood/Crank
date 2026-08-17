@@ -529,6 +529,14 @@ export default function PageInventoryView() {
 
   const pages = result?.ok ? result.pages : [];
   const reskins = pages.reduce((total, page) => total + (page.variants?.length ?? 0), 0);
+  // One page found, and every control on it did nothing. A scan that says only
+  // "1 page" reads as a one-page app; it is worth saying which of the two it is.
+  const stalled = Boolean(result?.ok && pages.length === 1 && (result.inert?.length ?? 0) > 0);
+  // The inert controls are spelled out in that panel already, so they are not
+  // also offered behind "left out".
+  const leftOut = result?.ok
+    ? result.filtered.length + (stalled ? 0 : result.inert?.length ?? 0)
+    : 0;
 
   return (
     <div className="app-frame">
@@ -719,6 +727,24 @@ export default function PageInventoryView() {
             </div>
           </header>
 
+          {stalled && (
+            <section className="inventory-stalled">
+              <p>
+                <strong>只找到这一页，因为页面上的每个控件点下去都没有任何反应。</strong>
+                {" "}扫到的这一页是真的，但这个应用的其余部分不在这里。
+              </p>
+              <p className="inventory-note">
+                最常见的原因是界面被单独跑了起来,而它依赖的运行时不在——Electron 项目只起渲染进程时拿不到 preload,
+                前端拿不到后端接口时也一样。等应用完整跑起来之后扫它的地址,或者用「自己点一遍」把需要登录、需要真实数据的页面记录下来。
+              </p>
+              <ul>
+                {result.inert!.map((entry, index) => (
+                  <li key={`${entry.label}-${index}`}>「{entry.label || "(无标签)"}」</li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {figmaOpen && (
             <div className="inventory-figma-row">
               <input
@@ -740,25 +766,44 @@ export default function PageInventoryView() {
                 <button aria-pressed={view === id} key={id} onClick={() => setView(id)} type="button">{label}</button>
               ))}
             </span>
-            {result.filtered.length > 0 && (
+            {leftOut > 0 && (
               <button className="inventory-link" onClick={() => setShowFiltered((value) => !value)} type="button">
-                {showFiltered ? "Hide" : "Show"} {result.filtered.length} left out
+                {showFiltered ? "Hide" : "Show"} {leftOut} left out
               </button>
             )}
           </div>
 
           {showFiltered && (
             <section className="inventory-filtered">
-              <p>Left out for changing too little of the screen to be a page:</p>
-              <ul>
-                {result.filtered.map((item, index) => (
-                  <li key={`${item.label}-${index}`}>
-                    <code>{Math.round(item.magnitude * 1000) / 10}%</code>
-                    <span>「{item.label}」</span>
-                    <small>from {item.from}</small>
-                  </li>
-                ))}
-              </ul>
+              {result.filtered.length > 0 && (
+                <>
+                  <p>Left out for changing too little of the screen to be a page:</p>
+                  <ul>
+                    {result.filtered.map((item, index) => (
+                      <li key={`${item.label}-${index}`}>
+                        <code>{Math.round(item.magnitude * 1000) / 10}%</code>
+                        <span>「{item.label}」</span>
+                        <small>from {item.from}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {/* Kept apart from the list above: those were judged too small to
+                  be a page, these did not change the page at all. */}
+              {!stalled && (result.inert?.length ?? 0) > 0 && (
+                <>
+                  <p>点下去没有任何反应,页面保持原样:</p>
+                  <ul>
+                    {result.inert!.map((item, index) => (
+                      <li key={`inert-${item.label}-${index}`}>
+                        <span>「{item.label || "(无标签)"}」</span>
+                        <small>from {item.from}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               {result.skipped.length > 0 && (
                 <p className="inventory-note">
                   Never clicked, the label reads as destructive: {result.skipped.map((item) => `「${item.label}」`).join(" ")}

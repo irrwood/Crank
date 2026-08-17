@@ -3277,6 +3277,28 @@ button.screen-figma-link {
 .inventory-filtered small { opacity: 0.45; }
 .inventory-note { margin: 12px 0 0; opacity: 0.6; }
 
+/* Why one page came back. Loud enough not to be mistaken for a footnote, since
+   without it "1 page" reads as a one-page app. */
+.inventory-stalled {
+  padding: 14px 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(190, 140, 40, 0.32);
+  background: rgba(200, 150, 40, 0.09);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.inventory-stalled > p { margin: 0; }
+.inventory-stalled > p + p { margin-top: 8px; }
+.inventory-stalled ul {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  opacity: 0.62;
+}
+
 .inventory-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -3466,6 +3488,7 @@ button.screen-figma-link {
 .inventory-page > .inventory-error,
 .inventory-page > .inventory-saved,
 .inventory-page > .inventory-filtered,
+.inventory-page > .inventory-stalled,
 .inventory-page > .inventory-grid,
 .inventory-page > .inventory-rows { margin: 0 30px 22px; }
 .inventory-page > .inventory-drop { margin-top: 18px; }

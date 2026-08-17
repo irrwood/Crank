@@ -504,3 +504,35 @@ test("identity separates two states that share an address by how they are reache
   );
   assert.equal(identityOf("/a", []), identityOf("/a", []));
 });
+
+test("a control that did nothing is reported as such, not as too small a change", async () => {
+  // An Electron renderer served on its own has no preload, so every control is
+  // wired to an API that is not there. The crawl truthfully finds one page; the
+  // reason it found only one is the part worth saying.
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["empty-state"], skeleton: ["main@0"],
+      controls: [
+        { locator: "#choose", label: "选择文件夹…", to: "/" },
+        { locator: "#record", label: "自己点一遍", to: "/" }
+      ]
+    }
+  });
+  const { states, inert, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(states.length, 1, "there is genuinely one page");
+  assert.deepEqual(inert.map((entry) => entry.label), ["选择文件夹…", "自己点一遍"]);
+  assert.equal(filtered.length, 0, "nothing was left out for being small — nothing happened at all");
+});
+
+test("a control that opened something small is still a judgement about size", async () => {
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["page"], skeleton: ["main@0"],
+      controls: [{ locator: "#tip", label: "Help", to: "tip" }]
+    },
+    tip: { url: "/", fingerprint: ["page", "div|tooltip||40x20"], skeleton: ["main@0"], controls: [] }
+  });
+  const { inert, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(inert.length, 0, "the page did change");
+  assert.equal(filtered[0].reason, "changed too little to be a page");
+});

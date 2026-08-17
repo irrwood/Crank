@@ -136,7 +136,7 @@ async function scanUrl(target, {
     const sitemapPaths = await readSitemap(origin);
     const routes = [...new Set([startPath, ...seedPaths, ...sitemapPaths])];
 
-    const { states, skipped, filtered } = await discoverStates(session, {
+    const { states, skipped, filtered, inert } = await discoverStates(session, {
       routes,
       maxStates,
       maxDepth,
@@ -191,6 +191,9 @@ async function scanUrl(target, {
       pages,
       skipped,
       filtered,
+      // Controls that did nothing. When that is every control on the only page
+      // found, the app was served without the runtime its screens need.
+      inert,
       sources: {
         sitemap: sitemapPaths.length,
         seeds: seedPaths.length,

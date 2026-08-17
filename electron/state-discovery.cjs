@@ -355,6 +355,8 @@ async function discoverStates(session, {
   const frontier = [];
   const skipped = [];
   const filtered = [];
+  // Controls that left the page exactly as it was.
+  const inert = [];
   // Every page carries the same navigation. Clicking a link whose destination
   // is already in the inventory re-walks a known page from every other page —
   // wasted time, and near-duplicates when the arrival state differs slightly.
@@ -520,6 +522,18 @@ async function discoverStates(session, {
       continue;
     }
     const navigated = Boolean(snapshot.url) && snapshot.url !== step.from.state.url;
+
+    // Left the page exactly as it was. That is not a judgement about whether a
+    // dropdown counts as a page — the control did nothing at all, which is a
+    // different fact and worth reporting as one. A renderer served without the
+    // runtime its screens depend on looks precisely like this: every button is
+    // wired to an API that is not there, so nothing happens and the crawl
+    // truthfully finds one page.
+    if (!navigated && signatureOf(snapshot.fingerprint) === step.from.state.signature) {
+      inert.push({ label: step.action.label, from: step.from.state.name });
+      continue;
+    }
+
     const magnitude = changeMagnitude(step.from.state.fingerprint, snapshot.fingerprint, snapshot.viewport);
     if (!navigated && magnitude < minChangeRatio) {
       filtered.push({
@@ -533,7 +547,7 @@ async function discoverStates(session, {
     await record(snapshot, recipe, step.from.entryRoute);
   }
 
-  return { states, skipped, filtered };
+  return { states, skipped, filtered, inert };
 }
 
 module.exports = {
