@@ -26,7 +26,7 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
   });
 
   const originHost = new URL(origin).host;
-  const blocked = { mutations: new Set(), external: new Set() };
+  const blocked = { mutations: new Set(), external: new Set(), fetched: new Set() };
   // A page showing "Loading…" has a perfectly stable DOM, so quiescence alone
   // cannot tell "finished" from "still waiting". The moment the last request
   // *started* is the signal — counting requests in and out never balanced,
@@ -45,6 +45,8 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       callback({ cancel: true });
       return;
     }
+    // The one exception to staying on-host, named so it is never silent.
+    if (verdict.fetchedFrom) blocked.fetched.add(verdict.fetchedFrom);
     lastRequestAt = Date.now();
     if (verdict.isFetch) lastFetchAt = lastRequestAt;
     callback({ cancel: false });

@@ -104,7 +104,7 @@ function createBrowsingSession(origin, driver) {
 
   return {
     get blocked() {
-      return { mutations: [...blocked.mutations], external: [...blocked.external] };
+      return { mutations: [...blocked.mutations], external: [...blocked.external], fetched: [...blocked.fetched] };
     },
 
     /**

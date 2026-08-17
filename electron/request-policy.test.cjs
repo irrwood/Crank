@@ -23,11 +23,31 @@ test("framework tooling still writes, because blocking it breaks the app", () =>
   assert.equal(requestVerdict("http://127.0.0.1:5173/__vinext_original-stack-trace", "POST", "xhr", host).allow, true);
 });
 
-test("keeps the crawl on the machine it started on", () => {
+test("keeps someone else's code and data off the crawl", () => {
   const verdict = requestVerdict("https://analytics.example.com/collect", "GET", "script", host);
   assert.equal(verdict.allow, false);
   assert.equal(verdict.reason, "external");
   assert.equal(verdict.host, "analytics.example.com");
+  assert.equal(requestVerdict("https://api.example.com/rows", "GET", "xhr", host).allow, false);
+});
+
+test("but fetches what the page merely draws, as a browser would", () => {
+  // Blocking these protected nothing and ruined the capture: the same page
+  // renders correctly if you just open it in a browser, and a scan that
+  // photographs and measures it without its typeface or its photographs is
+  // worse than the baseline it is meant to improve on.
+  const sheet = requestVerdict("https://fonts.googleapis.com/css2?family=Montserrat", "GET", "stylesheet", host);
+  assert.equal(sheet.allow, true);
+  assert.equal(sheet.fetchedFrom, "fonts.googleapis.com", "and it is named, never silent");
+
+  assert.equal(requestVerdict("https://fonts.gstatic.com/s/x.woff2", "GET", "Font", host).allow, true,
+    "the debugging protocol spells the type with a capital");
+  assert.equal(requestVerdict("https://images.cdn.example/hero.jpg", "GET", "image", host).allow, true);
+  assert.equal(requestVerdict("https://videos.cdn.example/clip.mp4", "GET", "media", host).allow, true);
+});
+
+test("a write dressed as a stylesheet is still a write", () => {
+  assert.equal(requestVerdict("https://fonts.googleapis.com/x", "POST", "stylesheet", host).allow, false);
 });
 
 test("the whole loopback interface is local, because HMR moves ports", () => {

@@ -140,7 +140,7 @@ async function createAttachedSession(target, { origin, connect = openSocket } = 
   const protocol = createProtocol(socket);
   const pageOrigin = origin ?? new URL(target.url).origin;
   const originHost = new URL(pageOrigin).host;
-  const blocked = { mutations: new Set(), external: new Set() };
+  const blocked = { mutations: new Set(), external: new Set(), fetched: new Set() };
   let lastRequestAt = 0;
   let lastFetchAt = 0;
 
@@ -156,6 +156,7 @@ async function createAttachedSession(target, { origin, connect = openSocket } = 
   protocol.on("Fetch.requestPaused", (params) => {
     const verdict = requestVerdict(params.request?.url, params.request?.method, params.resourceType, originHost);
     if (verdict.allow) {
+      if (verdict.fetchedFrom) blocked.fetched.add(verdict.fetchedFrom);
       void protocol.send("Fetch.continueRequest", { requestId: params.requestId }).catch(() => {});
       return;
     }
