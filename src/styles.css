@@ -3459,6 +3459,9 @@ button.screen-figma-link {
 .inventory-page > .inventory-grid,
 .inventory-page > .inventory-rows { margin: 0 30px 22px; }
 .inventory-page > .inventory-drop { margin-top: 18px; }
+/* Every state that has no header of its own still needs to clear the top. */
+.inventory-page > *:first-child:not(.project-header):not(.onboarding) { margin-top: 26px; }
+.inventory-page > .project-header + .inventory-progress { margin-top: 20px; }
 .inventory-page > .inventory-grid,
 .inventory-page > .inventory-rows { margin-bottom: 60px; }
 

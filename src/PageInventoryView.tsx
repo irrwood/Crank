@@ -580,14 +580,20 @@ export default function PageInventoryView() {
       )}
 
       {activeJob && (
+        <header className="project-header">
+          <div className="project-header-copy">
+            <h1>{(activeJob.target || source || "").split("/").filter(Boolean).pop() ?? "Scanning"}</h1>
+            <div className="connection-line">
+              <LoaderCircle className="spin" size={13} />
+              <span>{activeJob.status ? activeJob.status.detail : "Opening…"}</span>
+              <span className="header-sep">· this keeps running if you open something else</span>
+            </div>
+          </div>
+        </header>
+      )}
+
+      {activeJob && (
         <section className="inventory-progress" ref={progressRef}>
-          <p className="inventory-phase">
-            {activeJob.status ? activeJob.status.detail : `Opening ${activeJob.target || source || ""}…`}
-            {" — "}
-            <span className="inventory-phase-note">
-              this keeps running if you open something else
-            </span>
-          </p>
           {activeJob.progress.length === 0
             ? <p>Looking for pages…</p>
             : activeJob.progress.map((item, index) => (
