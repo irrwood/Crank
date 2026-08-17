@@ -98,6 +98,55 @@ async function captureHtmlDocument(limits) {
   };
 
   // --- stylesheets -------------------------------------------------------
+
+  /**
+   * Replaces `@import url(...)` with the stylesheet it names.
+   *
+   * Inlining an import the way any other asset is inlined turns it into
+   * `@import url(data:text/css;base64,…)`, and the font files named *inside*
+   * that encoded text are never reached — the rewriting pass has already run.
+   * A page whose typeface arrives through an import therefore kept pointing at
+   * a font host, which the preview will not load. Splicing the text in first
+   * puts those url()s where the pass can see them.
+   */
+  const expandImports = async (text, base, depth = 0, seen = new Set()) => {
+    if (depth > 4) return text;
+    const imports = [...text.matchAll(/@import\s+url\((['"]?)([^'")]+)\1\)\s*([^;]*);/g)];
+    for (const rule of imports) {
+      let absolute;
+      try {
+        absolute = new URL(rule[2], base).href;
+      } catch {
+        continue;
+      }
+      if (seen.has(absolute)) {
+        text = text.split(rule[0]).join("");
+        continue;
+      }
+      seen.add(absolute);
+      let imported = "";
+      try {
+        const response = await fetch(absolute);
+        if (response.ok) imported = await response.text();
+      } catch {}
+      if (!imported) continue;
+      // A media query on the import has to survive, or a print-only sheet would
+      // start applying to the page.
+      const media = String(rule[3] || "").trim();
+      const resolved = await expandImports(imported, absolute, depth + 1, seen);
+      const absolutized = resolved.replace(/url\((['"]?)([^'")]+)\1\)/g, (whole, quote, reference) => {
+        if (reference.startsWith("data:") || reference.startsWith("#")) return whole;
+        try {
+          return `url("${new URL(reference, absolute).href}")`;
+        } catch {
+          return whole;
+        }
+      });
+      text = text.split(rule[0]).join(media ? `@media ${media} { ${absolutized} }` : absolutized);
+    }
+    return text;
+  };
+
   const cssTexts = [];
   for (const sheet of Array.from(document.styleSheets)) {
     let text = "";
@@ -115,6 +164,7 @@ async function captureHtmlDocument(limits) {
     stats.stylesheets += 1;
     // Resolve url() against the sheet's own location before inlining.
     const base = sheet.href || location.href;
+    text = await expandImports(text, base);
     const references = [...new Set(Array.from(text.matchAll(/url\((['"]?)([^'")]+)\1\)/g)).map((match) => match[2]))];
     for (const reference of references) {
       if (reference.startsWith("data:") || reference.startsWith("#")) continue;
