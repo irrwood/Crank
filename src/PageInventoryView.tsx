@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Download, Figma, FolderGit2, Globe2, Plus, RefreshCw, X } from "lucide-react";
-import type { DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
+import { ChevronRight, Download, Figma, FolderGit2, Globe2, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
+import type { DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 
 /**
  * The whole product in one screen: give an address, get every page.
@@ -65,8 +65,8 @@ function whenScanned(value: string | null): string {
   return `${days}d ago`;
 }
 
-function TargetRow({ target, active, onOpen, onRescan, onForget, nested }: {
-  target: InventoryTarget; active: boolean; nested?: boolean;
+function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }: {
+  target: InventoryTarget; active: boolean; busy?: boolean; nested?: boolean;
   onOpen: (target: InventoryTarget) => void;
   onRescan: (target: InventoryTarget) => void;
   onForget: (target: InventoryTarget) => void;
@@ -79,12 +79,14 @@ function TargetRow({ target, active, onOpen, onRescan, onForget, nested }: {
       type="button"
     >
       <span className={`project-icon is-${target.kind === "folder" ? "web" : "desktop"}`}>
-        {target.kind === "folder" ? <FolderGit2 size={14} /> : <Globe2 size={14} />}
+        {busy ? <LoaderCircle className="spin" size={14} /> : target.kind === "folder" ? <FolderGit2 size={14} /> : <Globe2 size={14} />}
       </span>
       <span className="project-copy">
         <strong>{target.name}</strong>
         <small>
-          {target.pageCount === null ? "not scanned" : `${target.pageCount} pages`} · {whenScanned(target.lastScannedAt)}
+          {busy
+            ? "scanning…"
+            : `${target.pageCount === null ? "not scanned" : `${target.pageCount} pages`} · ${whenScanned(target.lastScannedAt)}`}
         </small>
       </span>
       <span className="target-actions">
@@ -109,8 +111,8 @@ function TargetRow({ target, active, onOpen, onRescan, onForget, nested }: {
   );
 }
 
-function Sidebar({ entries, activeId, onOpen, onRescan, onForget, onAdd }: {
-  entries: Entry[]; activeId: string | null;
+function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd }: {
+  entries: Entry[]; activeId: string | null; busyIds: string[];
   onOpen: (target: InventoryTarget) => void;
   onRescan: (target: InventoryTarget) => void;
   onForget: (target: InventoryTarget) => void;
@@ -150,14 +152,14 @@ function Sidebar({ entries, activeId, onOpen, onRescan, onForget, onAdd }: {
             </button>
             {!collapsed[entry.id] && entry.children.map((child) => (
               <TargetRow
-                active={child.id === activeId} key={child.id} nested
+                active={child.id === activeId} busy={busyIds.includes(child.id)} key={child.id} nested
                 onForget={onForget} onOpen={onOpen} onRescan={onRescan} target={child}
               />
             ))}
           </div>
         ) : (
           <TargetRow
-            active={entry.id === activeId} key={entry.id}
+            active={entry.id === activeId} busy={busyIds.includes(entry.id)} key={entry.id}
             onForget={onForget} onOpen={onOpen} onRescan={onRescan} target={entry}
           />
         )))}
@@ -222,15 +224,16 @@ function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => v
 export default function PageInventoryView() {
   const [address, setAddress] = useState("");
   const [seeds, setSeeds] = useState("");
-  const [scanning, setScanning] = useState(false);
-  const [progress, setProgress] = useState<ScanProgress[]>([]);
+  // One job per project rather than one global "scanning": a scan takes
+  // minutes, and locking the whole window for it means the wait is the only
+  // thing you can do.
+  const [jobs, setJobs] = useState<Record<string, { status: ScanStatus | null; progress: ScanProgress[]; target: string }>>({});
   const [result, setResult] = useState<PageInventory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState<DiscoveredPage | null>(null);
   const [showFiltered, setShowFiltered] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [title, setTitle] = useState("Design handoff");
-  const [status, setStatus] = useState<ScanStatus | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showAddress, setShowAddress] = useState(false);
@@ -248,20 +251,38 @@ export default function PageInventoryView() {
   >(null);
   const progressRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const off = window.uiSync?.onScanProgress?.((value) => {
-      setProgress((current) => [...current, value]);
-    });
-    return () => { off?.(); };
-  }, []);
+  /** The job belonging to whatever is on screen; others keep running unseen. */
+  const activeJob = activeId ? jobs[activeId] : undefined;
 
   useEffect(() => {
     void window.uiSync?.listInventoryTargets?.().then(setEntries);
   }, []);
 
   useEffect(() => {
-    const off = window.uiSync?.onScanStatus?.(setStatus);
-    return () => { off?.(); };
+    const offStatus = window.uiSync?.onScanStatus?.((value) => {
+      if (!value.id) return;
+      setJobs((current) => (current[value.id!] ? { ...current, [value.id!]: { ...current[value.id!], status: value } } : current));
+    });
+    const offProgress = window.uiSync?.onScanProgress?.((value) => {
+      if (!value.id) return;
+      setJobs((current) => (current[value.id!]
+        ? { ...current, [value.id!]: { ...current[value.id!], progress: [...current[value.id!].progress, value] } }
+        : current));
+    });
+    const offLife = window.uiSync?.onScanLifecycle?.((value: ScanLifecycle) => {
+      if (value.phase === "started") {
+        setJobs((current) => ({ ...current, [value.id]: { status: null, progress: [], target: value.target ?? "" } }));
+        refreshTargets();
+      } else {
+        setJobs((current) => {
+          const next = { ...current };
+          delete next[value.id];
+          return next;
+        });
+        refreshTargets();
+      }
+    });
+    return () => { offStatus?.(); offProgress?.(); offLife?.(); };
   }, []);
 
   useEffect(() => {
@@ -273,14 +294,13 @@ export default function PageInventoryView() {
 
   useEffect(() => {
     progressRef.current?.scrollTo({ top: progressRef.current.scrollHeight });
-  }, [progress]);
+  }, [activeJob?.progress.length]);
 
+  // Kicking off a scan clears the view for it but never locks the window: the
+  // job runs against its own sidebar entry, so you can open something else.
   const beginScan = (label: string) => {
-    setScanning(true);
     setError(null);
     setResult(null);
-    setProgress([]);
-    setStatus(null);
     setSaved(null);
     setFocused(null);
     setSource(label);
@@ -305,33 +325,31 @@ export default function PageInventoryView() {
   };
 
   const scanFolder = async (root: string) => {
-    if (!window.uiSync?.scanFolder || scanning) return;
+    if (!window.uiSync?.scanFolder) return;
     setChoices(null);
     setForeign(null);
     beginScan(root);
     setTitle(`${root.split("/").filter(Boolean).pop() ?? "Design"} handoff`);
     try {
-      finishScan(await window.uiSync.scanFolder(root));
+      const inventory = await window.uiSync.scanFolder(root);
+      if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
+      finishScan(inventory);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The scan failed.");
-    } finally {
-      setScanning(false);
-      setStatus(null);
     }
   };
 
   const scan = async (explicit?: string) => {
-    if (!window.uiSync?.scanUrl || scanning) return;
+    if (!window.uiSync?.scanUrl) return;
     const target = explicit ?? address;
     beginScan(target);
     try {
       const seedPaths = seeds.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean);
-      finishScan(await window.uiSync.scanUrl(target, seedPaths));
+      const inventory = await window.uiSync.scanUrl(target, seedPaths);
+      if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
+      finishScan(inventory);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The scan failed.");
-    } finally {
-      setScanning(false);
-      setStatus(null);
     }
   };
 
@@ -403,7 +421,6 @@ export default function PageInventoryView() {
   const onDrop = (event: React.DragEvent) => {
     event.preventDefault();
     setDragging(false);
-    if (scanning) return;
     const file = event.dataTransfer.files[0];
     const dropped = file && window.uiSync?.getDroppedPath?.(file);
     if (dropped) void scanFolder(dropped);
@@ -436,14 +453,15 @@ export default function PageInventoryView() {
     <div className="app-frame">
       <Sidebar
         activeId={activeId}
+        busyIds={Object.keys(jobs)}
         entries={entries}
-        onAdd={() => void chooseFolder()}
+        onAdd={() => { setResult(null); setActiveId(null); setChoices(null); setForeign(null); setError(null); }}
         onForget={(target) => void forget(target)}
         onOpen={(target) => void openSaved(target)}
         onRescan={rescan}
       />
     <main className="inventory-page">
-      {choices && !scanning && (
+      {choices && !activeJob && (
         <section className="inventory-choices">
           <strong>This folder holds several runnable projects</strong>
           <p>Its dev script starts them in parallel, so scanning the folder itself would pick one at random. Choose the one you mean.</p>
@@ -460,7 +478,7 @@ export default function PageInventoryView() {
         </section>
       )}
 
-      {foreign && !scanning && (
+      {foreign && !activeJob && (
         <section className="inventory-choices">
           <strong>{foreign.message}</strong>
           <p>These come from the project itself — nothing here was invented.</p>
@@ -485,7 +503,7 @@ export default function PageInventoryView() {
         </section>
       )}
 
-      {!result?.ok && !scanning && !choices && !foreign && (
+      {!result?.ok && !activeJob && !choices && !foreign && (
         <section
           className={`onboarding${dragging ? " is-over" : ""}`}
           onDragLeave={() => setDragging(false)}
@@ -542,14 +560,18 @@ export default function PageInventoryView() {
         </section>
       )}
 
-      {scanning && (
+      {activeJob && (
         <section className="inventory-progress" ref={progressRef}>
           <p className="inventory-phase">
-            {status ? status.detail : `Opening ${source ?? ""}…`}
+            {activeJob.status ? activeJob.status.detail : `Opening ${activeJob.target || source || ""}…`}
+            {" — "}
+            <span className="inventory-phase-note">
+              this keeps running if you open something else
+            </span>
           </p>
-          {progress.length === 0
+          {activeJob.progress.length === 0
             ? <p>Looking for pages…</p>
-            : progress.map((item, index) => (
+            : activeJob.progress.map((item, index) => (
                 <p key={`${item.route}-${index}`}>
                   <span className="inventory-progress-count">{index + 1}</span> {item.name}
                 </p>

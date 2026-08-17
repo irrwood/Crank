@@ -391,6 +391,15 @@ export type PageInventory =
 
 export type PageInventoryFiltered = { label: string; from: string; reason: string; magnitude: number };
 
-export type ScanStatus = { phase: "starting" | "scanning"; detail: string };
+export type ScanStatus = { phase: "starting" | "scanning"; detail: string; id?: string };
 
-export type ScanProgress = { name: string; route: string; depth: number };
+/** Which target a background scan belongs to, so it can run while you look elsewhere. */
+export type ScanLifecycle = {
+  phase: "started" | "finished";
+  id: string;
+  kind?: "folder" | "url";
+  target?: string;
+  ok?: boolean;
+};
+
+export type ScanProgress = { name: string; route: string; depth: number; id?: string };

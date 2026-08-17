@@ -26,6 +26,16 @@ contextBridge.exposeInMainWorld("uiSync", {
     ipcRenderer.on("inventory:status", listener);
     return () => ipcRenderer.removeListener("inventory:status", listener);
   },
+  onScanLifecycle: (callback) => {
+    const started = (_event, value) => callback({ phase: "started", ...value });
+    const finished = (_event, value) => callback({ phase: "finished", ...value });
+    ipcRenderer.on("inventory:started", started);
+    ipcRenderer.on("inventory:finished", finished);
+    return () => {
+      ipcRenderer.removeListener("inventory:started", started);
+      ipcRenderer.removeListener("inventory:finished", finished);
+    };
+  },
   exportHandoffPage: (inventory, title) => ipcRenderer.invoke("inventory:export", inventory, title),
   revealFile: (filePath) => ipcRenderer.invoke("inventory:reveal", filePath),
   onScanProgress: (callback) => {

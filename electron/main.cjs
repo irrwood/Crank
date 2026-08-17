@@ -9,7 +9,7 @@ const { normalizeTargetUrl, scanFolder, scanUrl } = require("./page-inventory.cj
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
-const { createInventoryRegistry } = require("./inventory-registry.cjs");
+const { createInventoryRegistry, targetId } = require("./inventory-registry.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
 const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
@@ -1290,15 +1290,22 @@ function registerIpc() {
 
   ipcMain.handle("inventory:scan-folder", async (event, root) => {
     const safeRoot = projectRootSchema.parse(root);
+    const id = targetId("folder", safeRoot);
     const send = (channel, value) => {
-      if (!event.sender.isDestroyed()) event.sender.send(channel, value);
+      if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
     };
+    // Register before scanning, not after: the project should appear in the
+    // sidebar the moment it is dropped, so the wait is something to walk away
+    // from rather than something to sit in front of.
+    await inventoryRegistry.remember("folder", safeRoot);
+    send("inventory:started", { kind: "folder", target: safeRoot });
     const inventory = await scanFolder(safeRoot, {
       onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
     if (inventory.ok) await inventoryRegistry.saveInventory("folder", safeRoot, inventory);
-    return inventory;
+    send("inventory:finished", { ok: inventory.ok });
+    return { ...inventory, id };
   });
 
   let recording = null;
@@ -1401,15 +1408,19 @@ function registerIpc() {
   ipcMain.handle("inventory:scan", async (event, url, seedPaths) => {
     const target = z.string().min(1).max(2000).parse(url);
     const seeds = z.array(z.string().max(2000)).max(200).optional().parse(seedPaths) ?? [];
+    const id = targetId("url", target);
+    const send = (channel, value) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
+    };
+    await inventoryRegistry.remember("url", target);
+    send("inventory:started", { kind: "url", target });
     const inventory = await scanUrl(target, {
       seedPaths: seeds,
-      onProgress: (state) => {
-        if (event.sender.isDestroyed()) return;
-        event.sender.send("inventory:progress", { name: state.name, route: state.route, depth: state.depth });
-      }
+      onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
     if (inventory.ok) await inventoryRegistry.saveInventory("url", target, inventory);
-    return inventory;
+    send("inventory:finished", { ok: inventory.ok });
+    return { ...inventory, id };
   });
 
   ipcMain.handle("projects:previews", async (_event, root) => {

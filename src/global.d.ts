@@ -1,4 +1,4 @@
-import type { DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryGroup, InventoryTarget, ScanProgress, ScanStatus, AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
+import type { DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryGroup, InventoryTarget, ScanLifecycle, ScanProgress, ScanStatus, AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
 
 declare global {
   interface Window {
@@ -23,6 +23,7 @@ declare global {
       openInventory: (id: string) => Promise<PageInventory | null>;
       forgetInventoryTarget: (id: string) => Promise<Array<InventoryTarget | InventoryGroup>>;
       onScanStatus: (callback: (value: ScanStatus) => void) => () => void;
+      onScanLifecycle: (callback: (value: ScanLifecycle) => void) => () => void;
       exportHandoffPage: (inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] }, title?: string) => Promise<{ saved: boolean; filePath?: string }>;
       revealFile: (filePath: string) => Promise<void>;
       onScanProgress: (callback: (value: ScanProgress) => void) => () => void;
