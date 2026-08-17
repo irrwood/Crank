@@ -57,3 +57,32 @@ test("declines a project with no Electron renderer", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("finds a renderer that sits at the project root", async () => {
+  // UI Sync's own layout. Missing it means falling through to the dev script,
+  // which launches a second copy of the app being scanned.
+  const root = await project(
+    { name: "app", devDependencies: { electron: "^43.0.0", vite: "^6.0.0" } },
+    { "index.html": "<!doctype html>", "src/main.tsx": "" }
+  );
+  try {
+    const detected = await detectElectronRenderer(root);
+    assert.ok(detected, "a root index.html in an Electron project is its renderer");
+    assert.equal(detected.rendererRoot, root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("prefers a nested renderer over the root one", async () => {
+  const root = await project(
+    { name: "app", devDependencies: { electron: "^43.0.0" } },
+    { "index.html": "<!doctype html>", "src/renderer/index.html": "<!doctype html>" }
+  );
+  try {
+    const detected = await detectElectronRenderer(root);
+    assert.equal(path.basename(detected.rendererRoot), "renderer");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

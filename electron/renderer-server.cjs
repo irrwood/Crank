@@ -15,10 +15,14 @@ const { createRequire } = require("node:module");
  * that stubs the preload API when it is absent.
  */
 
+// Most specific first. The root index.html is last because plenty of projects
+// have one; for an Electron project it is the renderer, and missing it means
+// running the dev script instead, which launches a second copy of the app.
 const rendererEntries = [
   "src/renderer/index.html",
   "renderer/index.html",
-  "src/index.html"
+  "src/index.html",
+  "index.html"
 ];
 
 async function exists(target) {
