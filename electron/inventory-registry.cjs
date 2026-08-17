@@ -11,7 +11,7 @@ const { readFile, writeFile, mkdir, rm } = require("node:fs/promises");
  * rescanning is a deliberate act rather than the price of looking.
  */
 
-const targetSchemaKeys = ["id", "kind", "target", "name", "addedAt", "lastScannedAt", "pageCount"];
+const targetSchemaKeys = ["id", "kind", "target", "name", "addedAt", "lastScannedAt", "pageCount", "parent"];
 
 function targetId(kind, target) {
   return createHash("sha256").update(`${kind}:${target}`).digest("hex").slice(0, 16);
@@ -28,35 +28,44 @@ function nameFor(kind, target) {
 }
 
 /**
- * Groups targets that live under a shared folder, so a workspace reads as one
- * project with its packages inside rather than as several unrelated entries.
+ * Nests the packages of a workspace under the workspace itself.
+ *
+ * Grouping by the folder a project happens to sit in is not a relationship:
+ * everything under ~/Documents would become one "Documents" project, which
+ * says only where files were saved. A package belongs to a workspace because
+ * the user dropped that workspace and picked the package out of it, and that
+ * is what is recorded.
  */
 function groupTargets(targets) {
-  const folders = targets.filter((entry) => entry.kind === "folder");
-  const groups = new Map();
+  const byPath = new Map(targets.map((entry) => [entry.target, entry]));
+  const children = new Map();
 
-  for (const entry of folders) {
-    const parent = path.dirname(entry.target);
-    if (!groups.has(parent)) groups.set(parent, []);
-    groups.get(parent).push(entry);
+  for (const entry of targets) {
+    if (!entry.parent) continue;
+    if (!children.has(entry.parent)) children.set(entry.parent, []);
+    children.get(entry.parent).push(entry);
   }
 
-  const grouped = [];
   const claimed = new Set();
-  for (const [parent, members] of groups) {
-    if (members.length < 2) continue;
+  const groups = [];
+  for (const [parent, members] of children) {
     for (const member of members) claimed.add(member.id);
-    grouped.push({
+    // The workspace may itself have been scanned; if so it keeps its own row
+    // inside the group rather than being duplicated outside it.
+    const root = byPath.get(parent);
+    if (root) claimed.add(root.id);
+    groups.push({
       kind: "group",
       id: targetId("group", parent),
-      name: path.basename(parent) || parent,
+      name: nameFor("folder", parent),
       target: parent,
+      root: root ?? null,
       children: members.sort((a, b) => a.name.localeCompare(b.name))
     });
   }
 
   const loose = targets.filter((entry) => !claimed.has(entry.id));
-  return [...grouped.sort((a, b) => a.name.localeCompare(b.name)),
+  return [...groups.sort((a, b) => a.name.localeCompare(b.name)),
     ...loose.sort((a, b) => a.name.localeCompare(b.name))];
 }
 
@@ -87,7 +96,7 @@ function createInventoryRegistry(directory) {
     list: read,
     grouped: async () => groupTargets(await read()),
 
-    async remember(kind, target, { pageCount = null, scannedAt = null } = {}) {
+    async remember(kind, target, { pageCount = null, scannedAt = null, parent = null } = {}) {
       const targets = await read();
       const id = targetId(kind, target);
       const existing = targets.find((entry) => entry.id === id);
@@ -95,13 +104,15 @@ function createInventoryRegistry(directory) {
       if (existing) {
         existing.lastScannedAt = scannedAt ?? existing.lastScannedAt;
         existing.pageCount = pageCount ?? existing.pageCount;
+        existing.parent = parent ?? existing.parent;
       } else {
         targets.push({
           id, kind, target,
           name: nameFor(kind, target),
           addedAt: now,
           lastScannedAt: scannedAt,
-          pageCount
+          pageCount,
+          parent
         });
       }
       await write(targets);
@@ -114,13 +125,14 @@ function createInventoryRegistry(directory) {
       await rm(cachePath(id), { force: true });
     },
 
-    async saveInventory(kind, target, inventory) {
+    async saveInventory(kind, target, inventory, { parent = null } = {}) {
       const id = targetId(kind, target);
       await mkdir(path.join(directory, "inventories"), { recursive: true });
       await writeFile(cachePath(id), JSON.stringify(inventory));
       await this.remember(kind, target, {
         pageCount: inventory?.pages?.length ?? null,
-        scannedAt: new Date().toISOString()
+        scannedAt: new Date().toISOString(),
+        parent
       });
       return id;
     },

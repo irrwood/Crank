@@ -86,7 +86,9 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
         <small>
           {busy
             ? "scanning…"
-            : `${target.pageCount === null ? "not scanned" : `${target.pageCount} ${target.pageCount === 1 ? "page" : "pages"}`} · ${whenScanned(target.lastScannedAt)}`}
+            : target.pageCount === null
+              ? "not scanned"
+              : `${target.pageCount} ${target.pageCount === 1 ? "page" : "pages"} · ${whenScanned(target.lastScannedAt)}`}
         </small>
       </span>
       <span className="target-actions">
@@ -150,6 +152,12 @@ function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd
               {entry.name}
               <span className="target-count">{entry.children.length}</span>
             </button>
+            {!collapsed[entry.id] && entry.root && (
+              <TargetRow
+                active={entry.root.id === activeId} busy={busyIds.includes(entry.root.id)} nested
+                onForget={onForget} onOpen={onOpen} onRescan={onRescan} target={entry.root}
+              />
+            )}
             {!collapsed[entry.id] && entry.children.map((child) => (
               <TargetRow
                 active={child.id === activeId} busy={busyIds.includes(child.id)} key={child.id} nested
@@ -240,6 +248,7 @@ export default function PageInventoryView() {
   const [dragging, setDragging] = useState(false);
   const [showAddress, setShowAddress] = useState(false);
   const [choices, setChoices] = useState<WorkspacePackage[] | null>(null);
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [foreign, setForeign] = useState<{ info: ForeignProject; message: string } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [recording, setRecording] = useState<DiscoveredPage[] | null>(null);
@@ -320,6 +329,7 @@ export default function PageInventoryView() {
     refreshTargets();
     if (!inventory.ok && inventory.reason === "workspace" && inventory.packages?.length) {
       setChoices(inventory.packages);
+      setWorkspaceRoot(source);
       return;
     }
     if (!inventory.ok && inventory.reason === "foreign" && inventory.foreign) {
@@ -332,14 +342,14 @@ export default function PageInventoryView() {
     if (!inventory.ok) notify("error", inventory.message);
   };
 
-  const scanFolder = async (root: string) => {
+  const scanFolder = async (root: string, workspaceRoot?: string) => {
     if (!window.uiSync?.scanFolder) return;
     setChoices(null);
     setForeign(null);
     beginScan(root);
     setTitle(`${root.split("/").filter(Boolean).pop() ?? "Design"} handoff`);
     try {
-      const inventory = await window.uiSync.scanFolder(root);
+      const inventory = await window.uiSync.scanFolder(root, workspaceRoot);
       if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
       finishScan(inventory);
     } catch (cause) {
@@ -477,7 +487,7 @@ export default function PageInventoryView() {
           <ul>
             {choices.map((item) => (
               <li key={item.root}>
-                <button onClick={() => void scanFolder(item.root)} type="button">
+                <button onClick={() => void scanFolder(item.root, workspaceRoot ?? undefined)} type="button">
                   <strong>{item.name}</strong>
                   <code>{item.root}</code>
                 </button>

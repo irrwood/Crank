@@ -362,6 +362,8 @@ export type InventoryTarget = {
   addedAt: string | null;
   lastScannedAt: string | null;
   pageCount: number | null;
+  /** The workspace this was picked out of, when it was. */
+  parent: string | null;
 };
 
 /** A folder holding several scanned packages, shown as one expandable entry. */
@@ -370,6 +372,8 @@ export type InventoryGroup = {
   id: string;
   name: string;
   target: string;
+  /** The workspace's own scan, when it has one. */
+  root: InventoryTarget | null;
   children: InventoryTarget[];
 };
 

@@ -1288,8 +1288,11 @@ function registerIpc() {
     return chosen.canceled ? null : chosen.filePaths[0] ?? null;
   });
 
-  ipcMain.handle("inventory:scan-folder", async (event, root) => {
+  ipcMain.handle("inventory:scan-folder", async (event, root, workspaceRoot) => {
     const safeRoot = projectRootSchema.parse(root);
+    // Set only when this package was picked out of a workspace the user
+    // dropped, which is the relationship the sidebar nests by.
+    const parent = workspaceRoot ? projectRootSchema.parse(workspaceRoot) : null;
     const id = targetId("folder", safeRoot);
     const send = (channel, value) => {
       if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
@@ -1297,13 +1300,13 @@ function registerIpc() {
     // Register before scanning, not after: the project should appear in the
     // sidebar the moment it is dropped, so the wait is something to walk away
     // from rather than something to sit in front of.
-    await inventoryRegistry.remember("folder", safeRoot);
+    await inventoryRegistry.remember("folder", safeRoot, { parent });
     send("inventory:started", { kind: "folder", target: safeRoot });
     const inventory = await scanFolder(safeRoot, {
       onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
-    if (inventory.ok) await inventoryRegistry.saveInventory("folder", safeRoot, inventory);
+    if (inventory.ok) await inventoryRegistry.saveInventory("folder", safeRoot, inventory, { parent });
     send("inventory:finished", { ok: inventory.ok });
     return { ...inventory, id };
   });

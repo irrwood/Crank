@@ -8,7 +8,7 @@ declare global {
       inspectDroppedProjects: (roots: string[]) => Promise<ProjectInfo[]>;
       getProjectPreviews: (root: string) => Promise<ProjectPreview[]>;
       scanUrl: (url: string, seedPaths?: string[]) => Promise<PageInventory>;
-      scanFolder: (root: string) => Promise<PageInventory>;
+      scanFolder: (root: string, workspaceRoot?: string) => Promise<PageInventory>;
       startRecording: (target: string) => Promise<{ ok: boolean; origin?: string; message?: string }>;
       captureRecording: () => Promise<{ ok: boolean; count?: number; message?: string }>;
       stopRecording: () => Promise<{ ok: boolean; pages: DiscoveredPage[] }>;

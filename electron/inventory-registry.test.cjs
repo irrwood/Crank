@@ -58,26 +58,47 @@ test("a damaged list does not throw", async () => {
   });
 });
 
-test("packages under one folder read as one project", () => {
-  const at = (target) => ({ id: targetId("folder", target), kind: "folder", target, name: nameFor("folder", target) });
-  const grouped = groupTargets([
-    at("/repos/momo/apps/desktop"),
-    at("/repos/momo/apps/site"),
-    at("/elsewhere/solo")
-  ]);
-  assert.equal(grouped.length, 2);
-  const group = grouped.find((entry) => entry.kind === "group");
-  assert.equal(group.name, "apps");
-  assert.deepEqual(group.children.map((child) => child.name), ["desktop", "site"]);
-  assert.ok(grouped.some((entry) => entry.name === "solo" && entry.kind === "folder"));
+test("packages picked out of a workspace nest under it", async () => {
+  await withRegistry(async (registry) => {
+    await registry.remember("folder", "/repos/momo");
+    await registry.remember("folder", "/repos/momo/apps/desktop", { parent: "/repos/momo" });
+    await registry.remember("folder", "/repos/momo/apps/site", { parent: "/repos/momo" });
+    await registry.remember("folder", "/elsewhere/solo");
+
+    const grouped = await registry.grouped();
+    assert.equal(grouped.length, 2, "one workspace and one loose project");
+    const group = grouped.find((entry) => entry.kind === "group");
+    assert.equal(group.name, "momo");
+    assert.deepEqual(group.children.map((child) => child.name), ["desktop", "site"]);
+    assert.equal(group.root.name, "momo", "the workspace's own scan sits inside its group");
+    assert.ok(!grouped.some((entry) => entry.kind === "folder" && entry.name === "momo"),
+      "and is not repeated outside it");
+    assert.ok(grouped.some((entry) => entry.name === "solo" && entry.kind === "folder"));
+  });
 });
 
-test("a lone folder is not dressed up as a group", () => {
-  const grouped = groupTargets([
-    { id: "1", kind: "folder", target: "/repos/only/app", name: "app" }
-  ]);
-  assert.equal(grouped.length, 1);
-  assert.equal(grouped[0].kind, "folder");
+test("sharing a folder on disk is not a relationship", async () => {
+  await withRegistry(async (registry) => {
+    // Everything under ~/Documents would otherwise become one "Documents"
+    // project, which says only where the files were saved.
+    await registry.remember("folder", "/Users/me/Documents/BubbleFan");
+    await registry.remember("folder", "/Users/me/Documents/cv");
+    await registry.remember("folder", "/Users/me/Documents/w3p-meme");
+
+    const grouped = await registry.grouped();
+    assert.equal(grouped.length, 3, "three unrelated projects stay three rows");
+    assert.ok(grouped.every((entry) => entry.kind === "folder"));
+  });
+});
+
+test("a workspace with one package still nests it", async () => {
+  await withRegistry(async (registry) => {
+    await registry.remember("folder", "/repos/one/packages/ui", { parent: "/repos/one" });
+    const grouped = await registry.grouped();
+    assert.equal(grouped[0].kind, "group");
+    assert.equal(grouped[0].root, null, "the workspace itself was never scanned");
+    assert.deepEqual(grouped[0].children.map((child) => child.name), ["ui"]);
+  });
 });
 
 test("names a url by its host and path", () => {

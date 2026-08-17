@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   inspectDroppedProjects: (roots) => ipcRenderer.invoke("projects:inspect-dropped", roots),
   getProjectPreviews: (root) => ipcRenderer.invoke("projects:previews", root),
   scanUrl: (url, seedPaths) => ipcRenderer.invoke("inventory:scan", url, seedPaths),
-  scanFolder: (root) => ipcRenderer.invoke("inventory:scan-folder", root),
+  scanFolder: (root, workspaceRoot) => ipcRenderer.invoke("inventory:scan-folder", root, workspaceRoot),
   startRecording: (target) => ipcRenderer.invoke("inventory:record-start", target),
   captureRecording: () => ipcRenderer.invoke("inventory:record-capture"),
   stopRecording: () => ipcRenderer.invoke("inventory:record-stop"),
