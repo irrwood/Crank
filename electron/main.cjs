@@ -5,7 +5,7 @@ const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
-const { exploreFromPage, listTargets, normalizeTargetUrl, recapturePage, scanAttached, scanFolder, scanUrl, withProjectServer } = require("./page-inventory.cjs");
+const { exploreFromPage, listTargets, normalizeTargetUrl, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
@@ -1278,10 +1278,15 @@ function registerIpc() {
     // from rather than something to sit in front of.
     await inventoryRegistry().remember("folder", safeRoot, { parent });
     send("inventory:started", { kind: "folder", target: safeRoot });
-    const scanned = await scanFolder(safeRoot, {
-      onStatus: (status) => send("inventory:status", status),
-      onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
-    });
+    // Scanning UI Sync itself is the one project served this way. Every other
+    // route to it produces a copy with no bridge and therefore no projects to
+    // show; this one opens a window of its own interface with a preload that
+    // only reads. See scanSelf.
+    const scanning = { onStatus: (status) => send("inventory:status", status),
+      onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth }) };
+    const scanned = path.resolve(safeRoot) === path.resolve(app.getAppPath())
+      ? await scanSelf({ appRoot: safeRoot, ...scanning })
+      : await scanFolder(safeRoot, scanning);
     // The folder is what was scanned; the port it was served on is an accident
     // of this run and must not be what the project is remembered as.
     const inventory = scanned.ok

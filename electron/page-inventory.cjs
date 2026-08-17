@@ -136,6 +136,25 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
 }
 
 /**
+ * Scans UI Sync's own interface, with UI Sync's own data behind it.
+ *
+ * The general paths cannot do this one. Serving the interface gets a copy with
+ * no bridge and therefore no projects; attaching over a debugging port needs a
+ * second instance, which the single-instance lock refuses. Neither limitation
+ * applies to an application scanning itself: it has its own preload, and can
+ * open its own window.
+ */
+async function scanSelf({ appRoot, onStatus, ...options } = {}) {
+  onStatus?.({ phase: "starting", detail: "Opening UI Sync's own interface" });
+  const { createSelfScanSession } = require("./self-scan-session.cjs");
+  const { origin, session } = await createSelfScanSession({ appRoot });
+  const result = await runScan(session, origin, "/", { ...options, onStatus });
+  return result.ok
+    ? { ...result, servedBy: "UI Sync itself, through a bridge that only reads", attached: false }
+    : result;
+}
+
+/**
  * Scans the app already running behind a debugging port.
  *
  * The pages worth handing to a designer are the ones with real content in
@@ -555,4 +574,4 @@ async function scanFolder(root, options = {}) {
   }));
 }
 
-module.exports = { exploreFromPage, listTargets, normalizeTargetUrl, parseSitemapPaths, recapturePage, scanAttached, scanFolder, scanUrl, withProjectServer };
+module.exports = { exploreFromPage, listTargets, normalizeTargetUrl, parseSitemapPaths, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer };
