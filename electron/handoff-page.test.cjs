@@ -56,3 +56,37 @@ test("survives an empty scan", () => {
   const html = renderHandoffPage({ ok: true, origin: "http://x", pages: [], filtered: [] });
   assert.match(html, /No pages were found/);
 });
+
+test("gives a re-skinned page one slot with a toggle", () => {
+  const html = renderHandoffPage({
+    ok: true, origin: "http://x", filtered: [],
+    pages: [{
+      id: "state-a", name: "Home", route: "/", recipe: [], depth: 0,
+      thumbnail: { dataUrl: "data:image/png;base64,LIGHT", width: 10, height: 10 },
+      variants: [
+        { id: "state-a-variant-1", name: "Dark", route: "/", recipe: [],
+          thumbnail: { dataUrl: "data:image/png;base64,DARK", width: 10, height: 10 } },
+        { id: "state-a-variant-2", name: "中文", route: "/", recipe: [],
+          thumbnail: { dataUrl: "data:image/png;base64,ZH", width: 10, height: 10 } }
+      ]
+    }]
+  });
+  // One page in the gallery, three looks inside it.
+  assert.equal((html.match(/<figure>/g) ?? []).length, 1);
+  assert.match(html, /base64,LIGHT/);
+  assert.match(html, /base64,DARK/);
+  assert.match(html, /data-look-pick="1"[^>]*>Dark/);
+  assert.match(html, /中文/);
+  assert.match(html, /hidden/, "only the first look is visible at rest");
+});
+
+test("shows no toggle when a page has one look", () => {
+  const html = renderHandoffPage({
+    ok: true, origin: "http://x", filtered: [],
+    pages: [{ id: "s", name: "Home", route: "/", recipe: [], depth: 0, variants: [],
+      thumbnail: { dataUrl: "data:image/png;base64,A", width: 10, height: 10 } }]
+  });
+  // The string appears in the inline script regardless; check for a rendered button.
+  assert.ok(!/<button[^>]*data-look-pick/.test(html), "a single look needs no switcher");
+  assert.ok(!html.includes('class="looks"'), "and no switcher row");
+});

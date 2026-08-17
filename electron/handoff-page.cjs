@@ -61,6 +61,13 @@ figcaption a { margin-left: auto; color: var(--accent); font-size: 11.5px; text-
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .single { max-width: 1280px; margin: 0 auto; }
 .single img { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.shot { position: relative; }
+.looks { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+.looks button {
+  border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  border-radius: 999px; padding: 3px 11px; font: inherit; font-size: 11px; cursor: pointer;
+}
+.looks button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 560; }
 .single .meta { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
 .single .meta h2 { margin: 0; font-size: 17px; }
 .empty { color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 40px; text-align: center; }
@@ -84,6 +91,17 @@ function show(id) {
   window.scrollTo({ top: 0 });
 }
 document.addEventListener("click", (event) => {
+  const pick = event.target.closest("[data-look-pick]");
+  if (pick) {
+    event.preventDefault();
+    const group = pick.closest(".shot");
+    const wanted = pick.dataset.lookPick;
+    group.querySelectorAll("img[data-look]").forEach((image) => { image.hidden = image.dataset.look !== wanted; });
+    group.querySelectorAll("[data-look-pick]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.lookPick === wanted));
+    });
+    return;
+  }
   const trigger = event.target.closest("[data-target]");
   if (!trigger) return;
   event.preventDefault();
@@ -98,9 +116,22 @@ show(params.get("screen") || "overview");
  */
 function renderHandoffPage(inventory, { title = "Design handoff", generatedAt = new Date().toISOString() } = {}) {
   const pages = inventory?.pages ?? [];
-  const shot = (page, className = "") => (page.thumbnail
-    ? `<img class="${className}" src="${escapeHtml(page.thumbnail.dataUrl)}" alt="${escapeHtml(page.name)}" data-target="${escapeHtml(page.id)}">`
-    : `<p class="empty">No screenshot was captured for this page.</p>`);
+  // A page and its re-skins share one slot: the same page in dark mode or
+  // another language is not another page, so the looks are toggled in place.
+  const shot = (page) => {
+    const looks = [{ id: page.id, name: "Default", thumbnail: page.thumbnail }, ...(page.variants ?? [])];
+    const usable = looks.filter((look) => look.thumbnail);
+    if (usable.length === 0) return `<p class="empty">No screenshot was captured for this page.</p>`;
+    const images = usable.map((look, index) =>
+      `<img src="${escapeHtml(look.thumbnail.dataUrl)}" alt="${escapeHtml(page.name)}"
+        data-target="${escapeHtml(page.id)}" data-look="${index}"${index === 0 ? "" : " hidden"}>`).join("");
+    const toggle = usable.length > 1
+      ? `<div class="looks">${usable.map((look, index) =>
+          `<button type="button" data-look-pick="${index}"${index === 0 ? ' aria-pressed="true"' : ""}>${escapeHtml(look.name)}</button>`
+        ).join("")}</div>`
+      : "";
+    return `<div class="shot">${images}${toggle}</div>`;
+  };
 
   const gallery = pages.map((page, index) => `
       <figure>

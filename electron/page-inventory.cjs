@@ -139,20 +139,26 @@ async function scanUrl(target, {
       onProgress
     });
 
+    // Recapture from each recipe so the shot matches the recorded state rather
+    // than whatever the crawl happened to leave on screen.
+    const shoot = async (route, recipe) => {
+      if (!withThumbnails) return null;
+      let snapshot = await session.goto(route);
+      for (const step of recipe) {
+        if (!snapshot) break;
+        snapshot = await session.click(step.locator);
+      }
+      return snapshot ? captureThumbnail(session) : null;
+    };
+
     const pages = [];
     for (const state of states) {
-      let thumbnail = null;
-      if (withThumbnails) {
-        // Recapture from the recipe so the shot matches the recorded state
-        // rather than whatever the crawl happened to leave on screen.
-        let snapshot = await session.goto(state.route);
-        for (const step of state.recipe) {
-          if (!snapshot) break;
-          snapshot = await session.click(step.locator);
-        }
-        if (snapshot) thumbnail = await captureThumbnail(session);
+      const thumbnail = await shoot(state.route, state.recipe);
+      const variants = [];
+      for (const variant of state.variants ?? []) {
+        variants.push({ ...variant, thumbnail: await shoot(variant.route, variant.recipe) });
       }
-      pages.push({ ...state, thumbnail });
+      pages.push({ ...state, thumbnail, variants });
     }
 
     return {

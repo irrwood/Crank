@@ -38,6 +38,16 @@ function isFrameworkInternalPath(pathname) {
   return /^\/(?:@|__|_next\/|\.vite\/|node_modules\/)/.test(String(pathname ?? ""));
 }
 
+/**
+ * An endpoint that answers with JSON or XML is not a page, however well it
+ * renders in a browser window.
+ */
+function isHtmlContentType(contentType) {
+  const value = String(contentType ?? "").toLowerCase();
+  if (!value) return true;
+  return value.includes("text/html") || value.includes("application/xhtml");
+}
+
 function signatureOf(snapshot) {
   return createHash("sha256").update(JSON.stringify(snapshot ?? null)).digest("hex").slice(0, 24);
 }
@@ -203,6 +213,11 @@ function collectUiState() {
   // Structure only: text is included but volatile values (times, counters) are
   // normalized away so the same state does not look different on every visit.
   const fingerprint = [];
+  // The skeleton is the tag structure alone — no text, no classes, and no
+  // geometry. Translating a page changes every string width and therefore
+  // every box, so geometry cannot be part of it; the tag sequence survives
+  // both translation and a theme change, and is what makes it the same page.
+  const skeleton = [];
   const walk = (element, depth) => {
     if (depth > 12 || fingerprint.length > 1200) return;
     if (!(element instanceof Element) || !visible(element)) return;
@@ -215,7 +230,9 @@ function collectUiState() {
       .replace(/\d[\d.,:/-]*/g, "#")
       .slice(0, 60);
     const rect = element.getBoundingClientRect();
-    fingerprint.push(`${tag}|${element.className && typeof element.className === "string" ? element.className.slice(0, 40) : ""}|${own}|${Math.round(rect.width / 8)}x${Math.round(rect.height / 8)}`);
+    const box = `${Math.round(rect.width / 8)}x${Math.round(rect.height / 8)}`;
+    fingerprint.push(`${tag}|${element.className && typeof element.className === "string" ? element.className.slice(0, 40) : ""}|${own}|${box}`);
+    skeleton.push(`${tag}@${depth}`);
     for (const child of element.children) walk(child, depth + 1);
   };
   walk(root, 0);
@@ -254,11 +271,16 @@ function collectUiState() {
   }
 
   return {
+    // Chrome renders a JSON response as a <pre> block, which walks and
+    // fingerprints like any other document. The declared type is the only
+    // honest way to tell an API endpoint from a page.
+    contentType: (document.contentType || "").toLowerCase(),
     title: document.title || "",
     heading: (document.querySelector("h1,h2")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60),
     url: location.pathname + location.search + location.hash,
     viewport: { width: window.innerWidth, height: window.innerHeight },
     fingerprint,
+    skeleton,
     candidates
   };
 }
@@ -278,9 +300,20 @@ async function discoverStates(session, {
 } = {}) {
   const states = [];
   const bySignature = new Map();
+  const bySkeleton = new Map();
   const frontier = [];
   const skipped = [];
   const filtered = [];
+  // Every page carries the same navigation. Clicking a link whose destination
+  // is already in the inventory re-walks a known page from every other page —
+  // wasted time, and near-duplicates when the arrival state differs slightly.
+  const knownAddresses = new Set();
+  const remember = (address) => {
+    if (typeof address !== "string" || !address) return;
+    const [withoutHash] = address.split("#");
+    knownAddresses.add(withoutHash || "/");
+  };
+  for (const route of routes) remember(route);
 
   /**
    * A state reached by clicking may simply be another address. Directly
@@ -295,9 +328,38 @@ async function discoverStates(session, {
   };
 
   const record = async (snapshot, recipe, entryRoute) => {
+    if (snapshot.contentType && !isHtmlContentType(snapshot.contentType)) {
+      filtered.push({
+        label: recipe.length > 0 ? recipe[recipe.length - 1].label : entryRoute,
+        from: entryRoute,
+        reason: `serves ${snapshot.contentType}, not a page`,
+        magnitude: 0
+      });
+      return null;
+    }
     const signature = signatureOf(snapshot.fingerprint);
     if (bySignature.has(signature)) return null;
     ({ recipe, entryRoute } = await simplify(snapshot, recipe, entryRoute, signature));
+
+    // Same structure, different text and colours: a theme or language switch
+    // re-skins every page, which would otherwise double the whole inventory.
+    // Keyed by address as well: a templated site can give two different pages
+    // the same tag structure, and those are separate pages, not re-skins.
+    const skeleton = `${snapshot.url ?? entryRoute}::${signatureOf(snapshot.skeleton)}`;
+    const existing = bySkeleton.get(skeleton);
+    if (existing) {
+      const label = recipe.length > 0 ? recipe[recipe.length - 1].label : null;
+      const variant = {
+        id: `${existing.id}-variant-${existing.variants.length + 1}`,
+        name: label && !isVolatileText(label) ? label : `Variant ${existing.variants.length + 2}`,
+        signature,
+        route: entryRoute,
+        recipe
+      };
+      existing.variants.push(variant);
+      bySignature.set(signature, existing);
+      return null;
+    }
     const name = chooseStateName({
       recipe,
       route: entryRoute,
@@ -312,16 +374,25 @@ async function discoverStates(session, {
       url: snapshot.url,
       recipe,
       depth: recipe.length,
-      fingerprint: snapshot.fingerprint
+      fingerprint: snapshot.fingerprint,
+      url: snapshot.url,
+      variants: []
     };
     bySignature.set(signature, state);
+    bySkeleton.set(skeleton, state);
     states.push(state);
     onProgress?.(state);
+    remember(state.route);
+    remember(snapshot.url);
+
     const pending = rankCandidates(snapshot.candidates)
       .filter((candidate) => {
-        if (!isDestructiveLabel(candidate.label)) return true;
-        skipped.push({ label: candidate.label, reason: "looks destructive" });
-        return false;
+        if (isDestructiveLabel(candidate.label)) {
+          skipped.push({ label: candidate.label, reason: "looks destructive" });
+          return false;
+        }
+        if (candidate.href && knownAddresses.has(candidate.href.split("#")[0])) return false;
+        return true;
       })
       .slice(0, maxActionsPerState);
     frontier.push({ state, recipe, entryRoute, pending });
@@ -337,6 +408,8 @@ async function discoverStates(session, {
   while (states.length < maxStates) {
     const step = planNextStep(frontier, { maxDepth });
     if (!step) break;
+    // The address may have become known since this action was queued.
+    if (step.action.href && knownAddresses.has(step.action.href.split("#")[0])) continue;
     const recipe = [...step.from.recipe, { kind: "click", locator: step.action.locator, label: step.action.label }];
 
     // Replay from a fresh load every time. A state that cannot be reached
@@ -384,6 +457,7 @@ module.exports = {
   isDestructiveLabel,
   isVolatileText,
   isFrameworkInternalPath,
+  isHtmlContentType,
   planNextStep,
   rankCandidates,
   recipeKey,

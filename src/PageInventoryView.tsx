@@ -15,17 +15,37 @@ function addressOf(page: DiscoveredPage): string {
 }
 
 function PageCard({ page, index, onOpen }: { page: DiscoveredPage; index: number; onOpen: (page: DiscoveredPage) => void }) {
+  // Variants are the same page re-skinned — dark mode, another language — so
+  // they share one card and swap the preview rather than taking a slot each.
+  const looks = [{ id: page.id, name: "Default", thumbnail: page.thumbnail }, ...(page.variants ?? [])];
+  const [shown, setShown] = useState(0);
+  const current = looks[Math.min(shown, looks.length - 1)];
+
   return (
     <article className="inventory-card">
       <button className="inventory-shot" onClick={() => onOpen(page)} type="button">
-        {page.thumbnail
-          ? <img alt="" src={page.thumbnail.dataUrl} />
+        {current.thumbnail
+          ? <img alt="" src={current.thumbnail.dataUrl} />
           : <span className="inventory-shot-empty">No preview</span>}
       </button>
       <div className="inventory-meta">
         <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
         <h3 title={page.name}>{page.name}</h3>
       </div>
+      {looks.length > 1 && (
+        <div className="inventory-variants">
+          {looks.map((look, position) => (
+            <button
+              aria-pressed={position === shown}
+              key={look.id}
+              onClick={() => setShown(position)}
+              type="button"
+            >
+              {look.name}
+            </button>
+          ))}
+        </div>
+      )}
       <p className="inventory-address" title={addressOf(page)}>{addressOf(page)}</p>
     </article>
   );
@@ -265,6 +285,9 @@ export default function PageInventoryView() {
             </button>
             {result.sources.sitemap > 0 && <span>{result.sources.sitemap} from sitemap</span>}
             {result.sources.crawled > 0 && <span>{result.sources.crawled} found by crawling</span>}
+            {pages.some((page) => page.variants?.length) && (
+              <span>{pages.reduce((total, page) => total + (page.variants?.length ?? 0), 0)} re-skins grouped in</span>
+            )}
             <input
               aria-label="Handoff page title"
               className="inventory-title-input"

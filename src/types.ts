@@ -303,6 +303,15 @@ export type SemanticChange = {
   kind: "spacing" | "shape" | "size" | "color";
 };
 
+export type PageVariant = {
+  id: string;
+  /** Named after the control that produced it — "Dark", "中文". */
+  name: string;
+  route: string;
+  recipe: Array<{ kind: string; locator: string; label: string }>;
+  thumbnail: { dataUrl: string; width: number; height: number } | null;
+};
+
 export type DiscoveredPage = {
   id: string;
   name: string;
@@ -314,6 +323,8 @@ export type DiscoveredPage = {
   recipe: Array<{ kind: string; locator: string; label: string }>;
   depth: number;
   thumbnail: { dataUrl: string; width: number; height: number } | null;
+  /** The same page re-skinned — theme or language — not separate pages. */
+  variants: PageVariant[];
 };
 
 export type ForeignProject = {

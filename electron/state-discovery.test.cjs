@@ -8,6 +8,7 @@ const {
   isVolatileText,
   isDestructiveLabel,
   isFrameworkInternalPath,
+  isHtmlContentType,
   planNextStep,
   rankCandidates,
   signatureOf
@@ -24,6 +25,7 @@ function fakeSession(screens, { startRoute = "/" } = {}) {
     const screen = screens[key];
     if (!screen) return null;
     return {
+      contentType: screen.contentType ?? "text/html",
       title: screen.title ?? key,
       heading: screen.title ?? key,
       url: screen.url ?? key,
@@ -32,11 +34,14 @@ function fakeSession(screens, { startRoute = "/" } = {}) {
       fingerprint: (screen.fingerprint ?? [key]).map(
         (entry) => (entry.includes("|") ? entry : `div|${entry}||120x90`)
       ),
+      // Distinct screens get distinct skeletons unless a test says otherwise,
+      // so only deliberate re-skins are grouped.
+      skeleton: screen.skeleton ?? screen.fingerprint ?? [key],
       candidates: (screen.controls ?? []).map((control) => ({
         locator: control.locator,
         label: control.label,
         role: control.role ?? "button",
-        href: null,
+        href: control.href ?? null,
         inNav: Boolean(control.inNav),
         hasExpanded: false
       }))
@@ -278,4 +283,100 @@ test("a different address is a page even when it looks almost identical", async 
     states.some((state) => state.route === "/about"),
     `/about missing from ${JSON.stringify(states.map((s) => s.route))}`
   );
+});
+
+test("groups a re-skinned page as one page with variants", async () => {
+  // A theme or language switch rewrites text and colours across the whole app
+  // while leaving the structure alone. Listing those as separate pages doubles
+  // the inventory: a real scan produced English and Chinese copies of every page.
+  const shared = ["main@0", "h1@1"];
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home-en"], skeleton: shared,
+      controls: [
+        { locator: "#zh", label: "中文", to: "home-zh" },
+        { locator: "#dark", label: "Dark", to: "home-dark" }
+      ]
+    },
+    "home-zh": { url: "/", fingerprint: ["home-zh"], skeleton: shared, controls: [] },
+    "home-dark": { url: "/", fingerprint: ["home-dark"], skeleton: shared, controls: [] }
+  });
+
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(states.length, 1, `expected one page, got ${JSON.stringify(states.map((s) => s.name))}`);
+  assert.deepEqual(states[0].variants.map((variant) => variant.name), ["中文", "Dark"]);
+  // Each variant keeps its own way back, so it can be captured again.
+  assert.deepEqual(states[0].variants.map((variant) => variant.recipe[0].locator), ["#zh", "#dark"]);
+});
+
+test("keeps genuinely different pages apart", async () => {
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#reports", label: "Reports", role: "tab", to: "reports" }]
+    },
+    reports: { url: "/", fingerprint: ["reports"], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(states.length, 2, "different structure must stay a separate page");
+  assert.equal(states[0].variants.length, 0);
+});
+
+test("does not merge two addresses that happen to share a structure", async () => {
+  // Sibling pages of one template have identical tag structure. They are
+  // separate pages, so the address has to take part in the grouping.
+  const shared = ["main@0", "h1@1"];
+  const session = fakeSession({
+    "/": { url: "/", fingerprint: ["home"], skeleton: shared,
+      controls: [{ locator: "#about", label: "About", role: "link", to: "/about" }] },
+    "/about": { url: "/about", fingerprint: ["about"], skeleton: shared, controls: [] }
+  });
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(states.length, 2, "same structure at a different address is a different page");
+  assert.equal(states[0].variants.length, 0);
+});
+
+test("does not re-walk an address it already has", async () => {
+  // The brand link sits on every page and points home. Following it from each
+  // page re-walks a known page and wastes most of the crawl.
+  const home = { locator: "#brand", label: "Catfolio", role: "link", href: "/", to: "/" };
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#import", label: "Import", role: "link", href: "/import", to: "/import" }]
+    },
+    "/import": {
+      url: "/import", fingerprint: ["import"], skeleton: ["main@0", "form@1"],
+      controls: [home]
+    }
+  });
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 2 });
+  assert.deepEqual(states.map((state) => state.route).sort(), ["/", "/import"]);
+  assert.ok(
+    session.visits.every((visit) => visit.locator !== "#brand"),
+    "a link to a page already in the inventory must not be clicked"
+  );
+});
+
+test("an endpoint that answers with JSON is not a page", async () => {
+  assert.equal(isHtmlContentType("text/html; charset=utf-8"), true);
+  assert.equal(isHtmlContentType("application/xhtml+xml"), true);
+  assert.equal(isHtmlContentType("application/json"), false);
+  assert.equal(isHtmlContentType("text/xml"), false);
+  // Unknown type must not silently drop a real page.
+  assert.equal(isHtmlContentType(""), true);
+
+  const session = fakeSession({
+    "/": {
+      url: "/", contentType: "text/html", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#api", label: "Holdings JSON", role: "link", href: "/api/holdings", to: "/api/holdings" }]
+    },
+    "/api/holdings": {
+      url: "/api/holdings", contentType: "application/json",
+      fingerprint: ["pre-json"], skeleton: ["pre@0"], controls: []
+    }
+  });
+  const { states, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.deepEqual(states.map((state) => state.route), ["/"]);
+  assert.match(filtered.map((item) => item.reason).join(" "), /application\/json/);
 });
