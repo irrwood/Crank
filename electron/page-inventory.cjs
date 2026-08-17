@@ -11,6 +11,7 @@ const { startForeignServer } = require("./foreign-server.cjs");
 const { startLocalRendererServer } = require("./static-server.cjs");
 const { readdir } = require("node:fs/promises");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
+const { createAttachedSession, listTargets } = require("./cdp-session.cjs");
 
 /**
  * Builds a page inventory from nothing but a URL.
@@ -135,6 +136,49 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
 }
 
 /**
+ * Scans the app already running behind a debugging port.
+ *
+ * The pages worth handing to a designer are the ones with real content in
+ * them, and for an app whose screens are drawn from a process — an Electron
+ * renderer, a front end with a backend — those exist only in the copy the
+ * person is actually running. Serving the interface again produces the same
+ * app with nothing in it.
+ */
+async function scanAttached(port, { targetId = null, onStatus, ...options } = {}) {
+  const safePort = Number(port);
+  if (!Number.isInteger(safePort) || safePort < 1 || safePort > 65535) {
+    return { ok: false, message: "That is not a port number." };
+  }
+  let targets;
+  try {
+    targets = await listTargets(safePort);
+  } catch (cause) {
+    return {
+      ok: false,
+      message: `Nothing is listening for a debugger on port ${safePort}. Start the app with --remote-debugging-port=${safePort}, then try again.`
+    };
+  }
+  if (targets.length === 0) {
+    return { ok: false, message: `Port ${safePort} answered, but has no application window open.` };
+  }
+  const target = targetId ? targets.find((entry) => entry.id === targetId) ?? targets[0] : targets[0];
+  onStatus?.({ phase: "starting", detail: `Attached to ${target.title}` });
+
+  let origin;
+  try {
+    origin = new URL(target.url).origin;
+  } catch {
+    return { ok: false, message: `That window is showing ${target.url || "nothing"}, which cannot be scanned.` };
+  }
+
+  const session = await createAttachedSession(target, { origin });
+  const result = await runScan(session, origin, new URL(target.url).pathname || "/", { ...options, onStatus });
+  return result.ok
+    ? { ...result, servedBy: `attached to ${target.title}`, attached: true, windows: targets }
+    : result;
+}
+
+/**
  * Turns discovered states into pages by revisiting and capturing each one.
  *
  * Capture is the long half — every page is loaded again, waited on and
@@ -246,7 +290,21 @@ async function recapturePage(target, page, options = {}) {
  * `seedPaths` lets a caller supply addresses it already knows about; they are
  * merged with whatever the sitemap and the crawl turn up.
  */
-async function scanUrl(target, {
+async function scanUrl(target, options = {}) {
+  const normalized = normalizeTargetUrl(target);
+  if (!normalized.ok) return { ok: false, message: normalized.message };
+  const { origin, startPath } = normalized;
+  return runScan(createDiscoverySession(origin), origin, startPath, options);
+}
+
+/**
+ * The scan itself, over whichever session was handed to it.
+ *
+ * A window UI Sync opened and an app it attached to differ only in how the
+ * page is reached; what is discovered and captured must not differ at all, or
+ * the two would disagree about what a project contains.
+ */
+async function runScan(session, origin, startPath, {
   seedPaths = [],
   maxStates = 60,
   maxDepth = 1,
@@ -257,11 +315,6 @@ async function scanUrl(target, {
   onProgress,
   onStatus
 } = {}) {
-  const normalized = normalizeTargetUrl(target);
-  if (!normalized.ok) return { ok: false, message: normalized.message };
-  const { origin, startPath } = normalized;
-
-  const session = createDiscoverySession(origin);
   try {
     const reachable = await session.goto(startPath);
     if (!reachable) {
@@ -502,4 +555,4 @@ async function scanFolder(root, options = {}) {
   }));
 }
 
-module.exports = { exploreFromPage, normalizeTargetUrl, parseSitemapPaths, recapturePage, scanFolder, scanUrl, withProjectServer };
+module.exports = { exploreFromPage, listTargets, normalizeTargetUrl, parseSitemapPaths, recapturePage, scanAttached, scanFolder, scanUrl, withProjectServer };

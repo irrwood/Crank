@@ -357,6 +357,8 @@ export default function PageInventoryView() {
   const [source, setSource] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showAddress, setShowAddress] = useState(false);
+  const [showAttach, setShowAttach] = useState(false);
+  const [port, setPort] = useState("9222");
   const [choices, setChoices] = useState<WorkspacePackage[] | null>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [foreign, setForeign] = useState<{ info: ForeignProject; message: string } | null>(null);
@@ -479,6 +481,26 @@ export default function PageInventoryView() {
       finishScan(inventory);
     } catch (cause) {
       notify("error", cause instanceof Error ? cause.message : "The scan failed.");
+    }
+  };
+
+  const scanAttached = async () => {
+    if (!window.uiSync?.scanAttached) {
+      notify("error", "重启 UI Sync 才能用这个——窗口是新的,主进程还是启动时那份。");
+      return;
+    }
+    const number = Number(port);
+    if (!Number.isInteger(number) || number < 1 || number > 65535) {
+      notify("error", "端口填个数字就行,比如 9222。");
+      return;
+    }
+    beginScan(`debug:${number}`);
+    try {
+      const inventory = await window.uiSync.scanAttached(number);
+      if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
+      finishScan(inventory);
+    } catch (cause) {
+      notify("error", cause instanceof Error ? cause.message : "连不上那个端口。");
     }
   };
 
@@ -845,6 +867,24 @@ export default function PageInventoryView() {
                   value={seeds}
                 />
                 <button disabled={!address.trim()} type="submit">扫描</button>
+              </form>
+            )}
+            <button className="inventory-link" onClick={() => setShowAttach((value) => !value)} type="button">
+              {showAttach ? "收起" : "界面里的内容要登录、要真实数据?连上你正在跑的那个应用"}
+            </button>
+            {showAttach && (
+              <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scanAttached(); }}>
+                <p className="inventory-note">
+                  单独把界面跑起来只能拿到空壳——数据在你正在运行的那个进程里。带调试端口启动它,UI Sync 连过去扫那一个窗口,不另开应用:
+                  <code>npx electron . --remote-debugging-port=9222</code>
+                </p>
+                <input
+                  aria-label="Debugging port"
+                  onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                  placeholder="9222"
+                  value={port}
+                />
+                <button disabled={!port.trim()} type="submit">连上去扫</button>
               </form>
             )}
           </div>

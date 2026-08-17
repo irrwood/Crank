@@ -5,7 +5,7 @@ const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
-const { exploreFromPage, normalizeTargetUrl, recapturePage, scanFolder, scanUrl, withProjectServer } = require("./page-inventory.cjs");
+const { exploreFromPage, listTargets, normalizeTargetUrl, recapturePage, scanAttached, scanFolder, scanUrl, withProjectServer } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
@@ -1518,6 +1518,42 @@ function registerIpc() {
   ipcMain.handle("inventory:forget", async (_event, id) => {
     await inventoryRegistry().forget(z.string().regex(/^[a-f0-9]{16}$/).parse(id));
     return inventoryRegistry().grouped();
+  });
+
+  /**
+   * Scans the app already running behind a debugging port. Remembered as a
+   * target in its own right: the same app served renderer-only and the same app
+   * attached to are different scans of different content, and merging them
+   * would let an empty shell overwrite a real inventory.
+   */
+  ipcMain.handle("inventory:scan-attached", async (event, port) => {
+    const safePort = z.number().int().min(1).max(65535).parse(port);
+    const target = `debug:${safePort}`;
+    const id = targetId("url", target);
+    const send = (channel, value) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
+    };
+    await inventoryRegistry().remember("url", target);
+    send("inventory:started", { kind: "url", target });
+    const scanned = await scanAttached(safePort, {
+      onStatus: (status) => send("inventory:status", status),
+      onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
+    });
+    const inventory = scanned.ok
+      ? { ...scanned, source: { kind: "url", target }, pages: await keepWanted(id, scanned.pages) }
+      : scanned;
+    if (inventory.ok) await inventoryRegistry().saveInventory("url", target, inventory);
+    send("inventory:finished", { ok: inventory.ok });
+    return { ...inventory, id };
+  });
+
+  ipcMain.handle("inventory:debug-windows", async (_event, port) => {
+    const safePort = z.number().int().min(1).max(65535).parse(port);
+    try {
+      return { ok: true, windows: await listTargets(safePort) };
+    } catch {
+      return { ok: false, windows: [] };
+    }
   });
 
   ipcMain.handle("inventory:scan", async (event, url, seedPaths) => {

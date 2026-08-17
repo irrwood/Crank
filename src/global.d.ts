@@ -9,6 +9,12 @@ declare global {
       getProjectPreviews: (root: string) => Promise<ProjectPreview[]>;
       scanUrl: (url: string, seedPaths?: string[]) => Promise<PageInventory>;
       scanFolder: (root: string, workspaceRoot?: string) => Promise<PageInventory>;
+      /** Scans the app already running behind a Chromium debugging port. */
+      scanAttached: (port: number) => Promise<PageInventory>;
+      listDebugWindows: (port: number) => Promise<{
+        ok: boolean;
+        windows: Array<{ id: string; title: string; url: string }>;
+      }>;
       startRecording: (target: string) => Promise<{ ok: boolean; origin?: string; message?: string }>;
       captureRecording: () => Promise<{ ok: boolean; count?: number; message?: string }>;
       stopRecording: () => Promise<{ ok: boolean; pages: DiscoveredPage[] }>;
