@@ -10,14 +10,18 @@ The active product scope is web and Electron projects. Prefer Electron and Chrom
 
 1. Never hard-code a customer project path, Figma file, node ID, project name, or pairing code.
 2. Treat every connected source folder and Figma file as user-owned external data.
-3. Keep source inspection and runtime capture local. Send only normalized visual structure during an explicit sync action.
-4. Capture third-party renderers in an isolated, sandboxed Electron session with Node integration disabled and external network requests blocked.
+3. Local means nothing about the project leaves the machine: send only normalized visual structure, and only during an explicit sync action. It does not mean capture refuses to load what the page itself loads — see rule 11.
+4. Capture third-party renderers in an isolated, sandboxed Electron session with Node integration disabled. Block what can change the project or run someone else's code in it — any non-GET request, and off-host scripts and data calls. Subresources the page merely draws are not that; see rule 11.
 5. Stable source identity comes from source semantics and deterministic DOM identity. Runtime instances and frames are observations attached to that identity.
 6. Preserve editable Figma layers and remembered frame identity. Do not replace linked frames with screenshots.
 7. Validate IPC, bridge payloads, stored registry data, and runtime capture data with Zod.
-8. Do not silently substitute missing fonts, assets, renderer builds, or unsupported dynamic states.
+8. Never substitute a missing font, asset, renderer build, or unsupported dynamic state *silently*. Substituting and naming what was substituted is the required behaviour; refusing is not. Twice this rule was implemented as a refusal and cost far more than it protected: a page with one unavailable font produced no layers at all, and a font Figma did not have left an empty frame on the canvas after the frame had already been created.
 9. A selected folder can be a workspace. Discover every independently runnable application package and register each one as its own project.
 10. Raster fallbacks must be bounded to the unsupported renderer itself. If a page contains SceneKit, Metal, WebView, video, canvas, or another opaque renderer, capture only that renderer's visible bounds as an image and preserve the rest of the page as editable text, shapes, layout, and vector layers. The presence of an opaque descendant must never cause its ancestor, page, or entire window to be rasterized.
+11. A browser is the floor. A page that renders correctly when someone simply opens it must not come back from a scan worse than that — missing its typeface, its images, or its layers. Capture is a browser; producing less than one is a defect, never a trade-off to be weighed. When something genuinely cannot be captured, report the gap and deliver the rest: a partial result names what is missing, an empty one names nothing.
+12. Prefer a deterministic anchor over a resemblance. Identity derived from source — an attribute injected at build time, a route, a recorded click path — beats identity inferred from what a node looks like, and the inferred kind is the fallback for projects whose build UI Sync does not control. Injected anchors must never be written into the user's files.
+
+Rules here are decisions, not axioms. Where evidence contradicts one, change it and say what the evidence was; rules 3, 4 and 8 were narrowed after each was read as a prohibition it never stated.
 
 ## SwiftUI PDF-to-Figma rules
 
