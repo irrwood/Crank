@@ -51,6 +51,60 @@ function PageCard({ page, index, onOpen }: { page: DiscoveredPage; index: number
   );
 }
 
+
+function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => void }) {
+  const looks = [
+    { id: page.id, name: "Default", snapshot: page.snapshot, thumbnail: page.thumbnail },
+    ...(page.variants ?? [])
+  ];
+  const [shown, setShown] = useState(0);
+  const current = looks[Math.min(shown, looks.length - 1)];
+
+  return (
+    <div className="inventory-overlay" onClick={onClose} role="presentation">
+      <figure onClick={(event) => event.stopPropagation()} role="presentation">
+        <figcaption>
+          <strong>{page.name}</strong>
+          <code>{addressOf(page)}</code>
+          {looks.length > 1 && (
+            <span className="inventory-variants">
+              {looks.map((look, position) => (
+                <button
+                  aria-pressed={position === shown}
+                  key={look.id}
+                  onClick={() => setShown(position)}
+                  type="button"
+                >
+                  {look.name}
+                </button>
+              ))}
+            </span>
+          )}
+          <button onClick={onClose} type="button">Close</button>
+        </figcaption>
+        {current.snapshot?.html
+          ? (
+            <iframe
+              className="inventory-frame"
+              sandbox=""
+              srcDoc={current.snapshot.html}
+              title={page.name}
+            />
+          )
+          : current.thumbnail
+            ? <img alt="" src={current.thumbnail.dataUrl} />
+            : <p>Nothing was captured for this page.</p>}
+        {(current.snapshot?.stats?.rasterised?.length ?? 0) > 0 && (
+          <p className="inventory-frame-note">
+            {current.snapshot?.stats.rasterised.length} area(s) held pixels and were captured as images:{" "}
+            {current.snapshot?.stats.rasterised.join(", ")}. Everything else is live markup.
+          </p>
+        )}
+      </figure>
+    </div>
+  );
+}
+
 export default function PageInventoryView() {
   const [address, setAddress] = useState("");
   const [seeds, setSeeds] = useState("");
@@ -451,20 +505,7 @@ export default function PageInventoryView() {
         </>
       )}
 
-      {focused && (
-        <div className="inventory-overlay" onClick={() => setFocused(null)} role="presentation">
-          <figure onClick={(event) => event.stopPropagation()} role="presentation">
-            <figcaption>
-              <strong>{focused.name}</strong>
-              <code>{addressOf(focused)}</code>
-              <button onClick={() => setFocused(null)} type="button">Close</button>
-            </figcaption>
-            {focused.thumbnail
-              ? <img alt="" src={focused.thumbnail.dataUrl} />
-              : <p>No preview was captured for this page.</p>}
-          </figure>
-        </div>
-      )}
+      {focused && <PageOverlay onClose={() => setFocused(null)} page={focused} />}
     </main>
   );
 }

@@ -3373,3 +3373,11 @@ button.screen-figma-link {
   margin: 0 0 4px; font-size: 30px; font-weight: 600;
   letter-spacing: 0.16em; font-variant-numeric: tabular-nums;
 }
+
+.inventory-frame {
+  width: min(1240px, 92vw); height: 78vh; border: 0; border-radius: 10px;
+  background: #fff; display: block;
+}
+.inventory-frame-note { margin: 0; color: rgba(255, 255, 255, 0.68); font-size: 11.5px; max-width: 92vw; }
+.inventory-overlay figcaption .inventory-variants button { color: rgba(255, 255, 255, 0.72); border-color: rgba(255, 255, 255, 0.3); }
+.inventory-overlay figcaption .inventory-variants button[aria-pressed="true"] { color: #fff; border-color: #fff; }
