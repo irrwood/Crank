@@ -86,7 +86,7 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
         <small>
           {busy
             ? "scanning…"
-            : `${target.pageCount === null ? "not scanned" : `${target.pageCount} pages`} · ${whenScanned(target.lastScannedAt)}`}
+            : `${target.pageCount === null ? "not scanned" : `${target.pageCount} ${target.pageCount === 1 ? "page" : "pages"}`} · ${whenScanned(target.lastScannedAt)}`}
         </small>
       </span>
       <span className="target-actions">
@@ -229,10 +229,12 @@ export default function PageInventoryView() {
   // thing you can do.
   const [jobs, setJobs] = useState<Record<string, { status: ScanStatus | null; progress: ScanProgress[]; target: string }>>({});
   const [result, setResult] = useState<PageInventory | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Messages float at the bottom instead of taking a slot at the top: an error
+  // pushing the header down moves everything the moment you most want it still.
+  const [toasts, setToasts] = useState<Array<{ id: number; kind: "error" | "done"; text: string; path?: string }>>([]);
   const [focused, setFocused] = useState<DiscoveredPage | null>(null);
   const [showFiltered, setShowFiltered] = useState(false);
-  const [saved, setSaved] = useState<string | null>(null);
+
   const [title, setTitle] = useState("Design handoff");
   const [source, setSource] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -250,6 +252,14 @@ export default function PageInventoryView() {
     { pairingCode?: string; screenCount?: number; fileName?: string; requiresPairing?: boolean; missing?: string[]; dropped?: string[] } | null
   >(null);
   const progressRef = useRef<HTMLDivElement>(null);
+  const toastSeq = useRef(0);
+
+  const notify = (kind: "error" | "done", text: string, path?: string) => {
+    const id = (toastSeq.current += 1);
+    setToasts((current) => [...current, { id, kind, text, path }]);
+    setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), kind === "error" ? 9000 : 6000);
+  };
+  const dismiss = (id: number) => setToasts((current) => current.filter((toast) => toast.id !== id));
 
   /** The job belonging to whatever is on screen; others keep running unseen. */
   const activeJob = activeId ? jobs[activeId] : undefined;
@@ -299,9 +309,7 @@ export default function PageInventoryView() {
   // Kicking off a scan clears the view for it but never locks the window: the
   // job runs against its own sidebar entry, so you can open something else.
   const beginScan = (label: string) => {
-    setError(null);
-    setResult(null);
-    setSaved(null);
+        setResult(null);
     setFocused(null);
     setSource(label);
   };
@@ -321,7 +329,7 @@ export default function PageInventoryView() {
       return;
     }
     setResult(inventory);
-    if (!inventory.ok) setError(inventory.message);
+    if (!inventory.ok) notify("error", inventory.message);
   };
 
   const scanFolder = async (root: string) => {
@@ -335,7 +343,7 @@ export default function PageInventoryView() {
       if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
       finishScan(inventory);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The scan failed.");
+      notify("error", cause instanceof Error ? cause.message : "The scan failed.");
     }
   };
 
@@ -349,17 +357,16 @@ export default function PageInventoryView() {
       if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
       finishScan(inventory);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The scan failed.");
+      notify("error", cause instanceof Error ? cause.message : "The scan failed.");
     }
   };
 
   const startRecording = async () => {
     if (!window.uiSync?.startRecording) return;
     const target = address.trim() || (result?.ok ? result.origin : "");
-    if (!target) { setError("Enter the address to record from."); return; }
-    setError(null);
-    const outcome = await window.uiSync.startRecording(target);
-    if (!outcome.ok) { setError(outcome.message ?? "Recording could not start."); return; }
+    if (!target) { notify("error", "Enter the address to record from."); return; }
+        const outcome = await window.uiSync.startRecording(target);
+    if (!outcome.ok) { notify("error", outcome.message ?? "Recording could not start."); return; }
     setRecording([]);
   };
 
@@ -381,24 +388,27 @@ export default function PageInventoryView() {
 
   const sendToFigma = async () => {
     if (!result?.ok || !window.uiSync?.sendInventoryToFigma) return;
-    setError(null);
-    try {
+        try {
       const outcome = await window.uiSync.sendInventoryToFigma(
         { origin: result.origin, pages: result.pages },
         figmaUrl.trim()
       );
-      if (!outcome.ok) { setError(outcome.message ?? "The export could not be prepared."); return; }
+      if (!outcome.ok) { notify("error", outcome.message ?? "The export could not be prepared."); return; }
       setFigmaSession(outcome);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The export failed.");
+      notify("error", cause instanceof Error ? cause.message : "The export failed.");
     }
   };
 
   const openSaved = async (target: InventoryTarget) => {
     const saved = await window.uiSync?.openInventory?.(target.id);
-    if (!saved) { setError(`No stored scan for ${target.name}. Rescan it.`); return; }
-    setError(null);
-    setChoices(null);
+    if (!saved) {
+      // Never scanned, or a scan that did not finish. Doing it is more useful
+      // than telling the user it has not been done.
+      rescan(target);
+      return;
+    }
+        setChoices(null);
     setForeign(null);
     setResult(saved);
     setActiveId(target.id);
@@ -424,7 +434,7 @@ export default function PageInventoryView() {
     const file = event.dataTransfer.files[0];
     const dropped = file && window.uiSync?.getDroppedPath?.(file);
     if (dropped) void scanFolder(dropped);
-    else setError("Drop a project folder.");
+    else notify("error", "Drop a project folder.");
   };
 
   const chooseFolder = async () => {
@@ -434,15 +444,14 @@ export default function PageInventoryView() {
 
   const exportPage = async () => {
     if (!result?.ok || !window.uiSync?.exportHandoffPage) return;
-    setError(null);
-    try {
+        try {
       const outcome = await window.uiSync.exportHandoffPage(
         { origin: result.origin, pages: result.pages, filtered: result.filtered },
         title.trim() || "Design handoff"
       );
-      if (outcome.saved && outcome.filePath) setSaved(outcome.filePath);
+      if (outcome.saved && outcome.filePath) notify("done", "Handoff page saved", outcome.filePath);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The page could not be saved.");
+      notify("error", cause instanceof Error ? cause.message : "The page could not be saved.");
     }
   };
 
@@ -455,7 +464,7 @@ export default function PageInventoryView() {
         activeId={activeId}
         busyIds={Object.keys(jobs)}
         entries={entries}
-        onAdd={() => { setResult(null); setActiveId(null); setChoices(null); setForeign(null); setError(null); }}
+        onAdd={() => { setResult(null); setActiveId(null); setChoices(null); setForeign(null); }}
         onForget={(target) => void forget(target)}
         onOpen={(target) => void openSaved(target)}
         onRescan={rescan}
@@ -597,7 +606,6 @@ export default function PageInventoryView() {
         </section>
       )}
 
-      {error && <p className="inventory-error">{error}</p>}
 
       {result?.ok && (
         <>
@@ -608,10 +616,10 @@ export default function PageInventoryView() {
                 <Globe2 size={13} />
                 <span>{result.origin}</span>
                 <span className="header-sep">·</span>
-                <span>{pages.length} pages</span>
+                <span>{pages.length} {pages.length === 1 ? "page" : "pages"}</span>
                 {result.sources.sitemap > 0 && <span className="header-sep">· {result.sources.sitemap} from sitemap</span>}
                 {result.sources.crawled > 0 && <span className="header-sep">· {result.sources.crawled} crawled</span>}
-                {reskins > 0 && <span className="header-sep">· {reskins} re-skins grouped</span>}
+                {reskins > 0 && <span className="header-sep">· {reskins} {reskins === 1 ? "re-skin" : "re-skins"} grouped</span>}
               </div>
             </div>
             <div className="project-header-actions">
@@ -661,36 +669,6 @@ export default function PageInventoryView() {
             )}
           </div>
 
-          {saved && (
-            <p className="inventory-saved">
-              Saved to <code>{saved}</code>
-              <button onClick={() => void window.uiSync?.revealFile?.(saved)} type="button">Show in Finder</button>
-            </p>
-          )}
-
-          {figmaSession && (
-            <section className="inventory-recording">
-              <strong>
-                {figmaSession.screenCount} page{figmaSession.screenCount === 1 ? "" : "s"} ready for {figmaSession.fileName}
-              </strong>
-              <p>
-                Open the UI Sync plugin in that Figma file and enter this code. The layers are built
-                there — frames, text and vectors, not a screenshot.
-              </p>
-              <p className="inventory-pairing">{figmaSession.pairingCode}</p>
-              {(figmaSession.missing?.length ?? 0) > 0 && (
-                <p className="inventory-note">
-                  Not included, no layers were captured: {figmaSession.missing?.join(", ")}
-                </p>
-              )}
-              {(figmaSession.dropped?.length ?? 0) > 0 && (
-                <p className="inventory-note">
-                  Over the 120-page limit, left out: {figmaSession.dropped?.join(", ")}
-                </p>
-              )}
-            </section>
-          )}
-
           {showFiltered && (
             <section className="inventory-filtered">
               <p>Left out for changing too little of the screen to be a page:</p>
@@ -737,6 +715,24 @@ export default function PageInventoryView() {
       )}
 
       {focused && <PageOverlay onClose={() => setFocused(null)} page={focused} />}
+
+      {toasts.length > 0 && (
+        <div className="toast-stack">
+          {toasts.map((toast) => (
+            <div className={`toast is-${toast.kind}`} key={toast.id}>
+              <span>{toast.text}</span>
+              {toast.path && (
+                <button onClick={() => void window.uiSync?.revealFile?.(toast.path!)} type="button">
+                  Show in Finder
+                </button>
+              )}
+              <button aria-label="Dismiss" className="toast-close" onClick={() => dismiss(toast.id)} type="button">
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </main>
     </div>
   );
