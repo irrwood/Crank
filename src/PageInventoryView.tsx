@@ -560,6 +560,27 @@ export default function PageInventoryView() {
     };
   }, [figmaSession?.pairingCode]);
 
+  /**
+   * Says why a per-page action cannot run, instead of doing nothing.
+   *
+   * The bridge is built when the window opens, so a UI Sync left running while
+   * it was updated has the new menu but not the calls behind it — the interface
+   * hot-reloads, the main process does not. A menu item that quietly does
+   * nothing reads as a broken feature rather than a stale window.
+   */
+  const bridge = <K extends "recapturePage" | "explorePage" | "dropPage">(method: K) => {
+    if (!window.uiSync) {
+      notify("error", "这个动作要在 UI Sync 应用里才能用。");
+      return null;
+    }
+    const call = window.uiSync[method];
+    if (!call) {
+      notify("error", "重启 UI Sync 才能用这个——窗口是新的,主进程还是启动时那份。");
+      return null;
+    }
+    return call;
+  };
+
   /** What the scan is of, which is what every per-page action acts on. */
   const sourceOf = (): { kind: "folder" | "url"; target: string } | null => {
     if (!result?.ok) return null;
@@ -570,10 +591,12 @@ export default function PageInventoryView() {
 
   const recapture = async (page: DiscoveredPage) => {
     const where = sourceOf();
-    if (!where || !window.uiSync?.recapturePage) return;
+    const call = bridge("recapturePage");
+    if (!call) return;
+    if (!where) { notify("error", "这一页不知道属于哪个项目,重新扫描一次就好。"); return; }
     setBusyPage(page.id);
     try {
-      const outcome = await window.uiSync.recapturePage(where, page);
+      const outcome = await call(where, page);
       if (!outcome.ok || !outcome.page) {
         notify("error", outcome.message ?? "这一页没能重新捕获。");
         return;
@@ -593,11 +616,13 @@ export default function PageInventoryView() {
 
   const explore = async (page: DiscoveredPage) => {
     const where = sourceOf();
-    if (!where || !result?.ok || !window.uiSync?.explorePage) return;
+    const call = bridge("explorePage");
+    if (!call) return;
+    if (!where || !result?.ok) { notify("error", "这一页不知道属于哪个项目,重新扫描一次就好。"); return; }
     setBusyPage(page.id);
     try {
       const held = result.pages.map((entry) => ({ id: entry.id, route: entry.route, url: entry.url }));
-      const outcome = await window.uiSync.explorePage(where, page, held);
+      const outcome = await call(where, page, held);
       if (!outcome.ok) {
         notify("error", outcome.message ?? "这一页往下没走通。");
         return;
@@ -633,8 +658,10 @@ export default function PageInventoryView() {
 
   const dropPage = async (page: DiscoveredPage) => {
     const where = sourceOf();
-    if (!where || !window.uiSync?.dropPage) return;
-    await window.uiSync.dropPage(where, page.id);
+    const call = bridge("dropPage");
+    if (!call) return;
+    if (!where) { notify("error", "这一页不知道属于哪个项目,重新扫描一次就好。"); return; }
+    await call(where, page.id);
     setResult((current) => (current?.ok
       ? { ...current, pages: current.pages.filter((entry) => entry.id !== page.id) }
       : current));
