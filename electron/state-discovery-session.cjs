@@ -2,6 +2,8 @@ const { BrowserWindow } = require("electron");
 const { randomBytes } = require("node:crypto");
 const { collectUiState, isFrameworkInternalPath } = require("./state-discovery.cjs");
 const { MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
+const { serializeRenderedApplication } = require("./figma-tree.cjs");
+const { assignKeys } = require("./node-identity.cjs");
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -190,6 +192,22 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
         );
       } catch (cause) {
         return { html: null, error: cause instanceof Error ? cause.message : String(cause) };
+      }
+    },
+    /**
+     * The layer tree the Figma plugin builds from. Same page, same session as
+     * the HTML snapshot — one visit produces both.
+     */
+    async captureFigmaTree() {
+      try {
+        const tree = await contents.executeJavaScript(
+          `(${serializeRenderedApplication.toString()})()`,
+          true
+        );
+        if (tree?.tree) assignKeys(tree.tree);
+        return tree;
+      } catch (cause) {
+        return { error: cause instanceof Error ? cause.message : String(cause) };
       }
     },
     async capture() {

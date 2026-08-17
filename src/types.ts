@@ -316,6 +316,9 @@ export type HtmlSnapshot = {
   };
 };
 
+/** The layer tree the Figma plugin builds from, keyed for stable re-matching. */
+export type FigmaTree = { width: number; height: number; tree: unknown };
+
 export type PageVariant = {
   id: string;
   /** Named after the control that produced it — "Dark", "中文". */
@@ -339,6 +342,8 @@ export type DiscoveredPage = {
   thumbnail: { dataUrl: string; width: number; height: number } | null;
   /** The rendered markup: sharp at any zoom, text selectable, SVG intact. */
   snapshot: HtmlSnapshot | null;
+  /** Layers ready for Figma, captured on the same visit as the markup. */
+  figmaTree: FigmaTree | null;
   /** The same page re-skinned — theme or language — not separate pages. */
   variants: PageVariant[];
 };

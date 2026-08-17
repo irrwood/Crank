@@ -116,6 +116,7 @@ async function scanUrl(target, {
   maxActionsPerState = 12,
   withThumbnails = true,
   withHtml = true,
+  withFigmaTree = true,
   onProgress
 } = {}) {
   const normalized = normalizeTargetUrl(target);
@@ -160,7 +161,8 @@ async function scanUrl(target, {
       const snapshot = captured?.html
         ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
         : null;
-      return { thumbnail, snapshot };
+      const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
+      return { thumbnail, snapshot, figmaTree: figma?.tree ? figma : null };
     };
 
     const pages = [];
