@@ -3400,7 +3400,44 @@ button.screen-figma-link {
   inset: auto;
   min-width: 0;
   min-height: 0;
+  padding: 0;
+  gap: 0;
   background: #e8e8e5;
+}
+
+/* The header keeps the older interface's proportions and stays put while the
+   gallery scrolls under it. */
+.inventory-page > .project-header { position: sticky; top: 0; z-index: 4; }
+.inventory-page > .inventory-header { padding: 26px 30px 0; }
+.inventory-page > .inventory-form,
+.inventory-page > .inventory-drop,
+.inventory-page > .inventory-choices,
+.inventory-page > .inventory-recording,
+.inventory-page > .inventory-progress,
+.inventory-page > .inventory-error,
+.inventory-page > .inventory-saved,
+.inventory-page > .inventory-filtered,
+.inventory-page > .inventory-grid,
+.inventory-page > .inventory-rows { margin: 0 30px 22px; }
+.inventory-page > .inventory-drop { margin-top: 18px; }
+.inventory-page > .inventory-grid,
+.inventory-page > .inventory-rows { margin-bottom: 60px; }
+
+.connection-line .header-sep { opacity: 0.6; }
+
+.inventory-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 30px 12px;
+}
+
+.inventory-figma-row {
+  display: flex; gap: 8px; align-items: center;
+  padding: 12px 30px; background: #fff;
+  border-bottom: 1px solid rgba(32, 33, 31, 0.08);
+}
+.inventory-figma-row input {
+  flex: 1; min-width: 0; padding: 8px 12px; border-radius: 9px; font: inherit; font-size: 12.5px;
+  border: 1px solid rgba(32, 33, 31, 0.14); background: #fbfbfa; color: inherit;
 }
 
 .target-empty { margin: 6px 10px; font-size: 12px; opacity: 0.45; }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, FolderGit2, Globe2, Plus, RefreshCw, X } from "lucide-react";
+import { ChevronRight, Download, Figma, FolderGit2, Globe2, Plus, RefreshCw, X } from "lucide-react";
 import type { DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 
 /**
@@ -242,6 +242,7 @@ export default function PageInventoryView() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [view, setView] = useState<"gallery" | "compact" | "list">("gallery");
+  const [figmaOpen, setFigmaOpen] = useState(false);
   const [figmaSession, setFigmaSession] = useState<
     { pairingCode?: string; screenCount?: number; fileName?: string; requiresPairing?: boolean; missing?: string[]; dropped?: string[] } | null
   >(null);
@@ -429,6 +430,7 @@ export default function PageInventoryView() {
   };
 
   const pages = result?.ok ? result.pages : [];
+  const reskins = pages.reduce((total, page) => total + (page.variants?.length ?? 0), 0);
 
   return (
     <div className="app-frame">
@@ -563,43 +565,59 @@ export default function PageInventoryView() {
 
       {result?.ok && (
         <>
-          <div className="inventory-summary">
-            <strong>{pages.length} pages</strong>
-            <span title={source ?? undefined}>{source?.split("/").filter(Boolean).pop() ?? result.origin}</span>
+          <header className="project-header">
+            <div className="project-header-copy">
+              <h1>{source?.split("/").filter(Boolean).pop() ?? result.origin}</h1>
+              <div className="connection-line">
+                <Globe2 size={13} />
+                <span>{result.origin}</span>
+                <span className="header-sep">·</span>
+                <span>{pages.length} pages</span>
+                {result.sources.sitemap > 0 && <span className="header-sep">· {result.sources.sitemap} from sitemap</span>}
+                {result.sources.crawled > 0 && <span className="header-sep">· {result.sources.crawled} crawled</span>}
+                {reskins > 0 && <span className="header-sep">· {reskins} re-skins grouped</span>}
+              </div>
+            </div>
+            <div className="project-header-actions">
+              <button
+                aria-label="Rescan"
+                className="secondary-button project-refresh-button"
+                onClick={() => { if (source) source.startsWith("http") ? void scan(source) : void scanFolder(source); }}
+                title="Rescan"
+                type="button"
+              >
+                <RefreshCw size={14} />
+              </button>
+              <button className="secondary-button" onClick={() => void exportPage()} type="button">
+                <Download size={14} /> Save handoff page
+              </button>
+              <button className="secondary-button" onClick={() => setFigmaOpen((value) => !value)} type="button">
+                <Figma size={14} /> Send to Figma
+              </button>
+            </div>
+          </header>
+
+          {figmaOpen && (
+            <div className="inventory-figma-row">
+              <input
+                aria-label="Figma design URL"
+                onChange={(event) => setFigmaUrl(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter") void sendToFigma(); }}
+                placeholder="Paste the Figma design URL to send these pages into"
+                value={figmaUrl}
+              />
+              <button className="secondary-button" disabled={!figmaUrl.trim()} onClick={() => void sendToFigma()} type="button">
+                Send {pages.length} pages
+              </button>
+            </div>
+          )}
+
+          <div className="inventory-toolbar">
             <span className="view-switch">
               {([["gallery", "Gallery"], ["compact", "Compact"], ["list", "List"]] as const).map(([id, label]) => (
                 <button aria-pressed={view === id} key={id} onClick={() => setView(id)} type="button">{label}</button>
               ))}
             </span>
-            {result.sources.sitemap > 0 && <span>{result.sources.sitemap} from sitemap</span>}
-            {result.sources.crawled > 0 && <span>{result.sources.crawled} found by crawling</span>}
-            {pages.some((page) => page.variants?.length) && (
-              <span>{pages.reduce((total, page) => total + (page.variants?.length ?? 0), 0)} re-skins grouped in</span>
-            )}
-            <input
-              aria-label="Handoff page title"
-              className="inventory-title-input"
-              onChange={(event) => setTitle(event.target.value)}
-              value={title}
-            />
-            <button className="inventory-export" onClick={() => void exportPage()} type="button">
-              Save handoff page…
-            </button>
-            <input
-              aria-label="Figma design URL"
-              className="inventory-title-input"
-              onChange={(event) => setFigmaUrl(event.target.value)}
-              placeholder="Figma design URL"
-              value={figmaUrl}
-            />
-            <button
-              className="inventory-export"
-              disabled={!figmaUrl.trim()}
-              onClick={() => void sendToFigma()}
-              type="button"
-            >
-              Send to Figma
-            </button>
             {result.filtered.length > 0 && (
               <button className="inventory-link" onClick={() => setShowFiltered((value) => !value)} type="button">
                 {showFiltered ? "Hide" : "Show"} {result.filtered.length} left out
