@@ -131,7 +131,10 @@ function preferredFonts(available) {
     cjkHeavy: findCjkWeight(["Heavy", "Black", "Bold", "Semibold"]),
     cjkBlack: findCjkWeight(["Black", "Heavy", "Bold", "Semibold"]),
     available: names,
-    loaded: new Set()
+    loaded: new Set(),
+    // Families the page asked for that Figma does not have, collected so the
+    // substitution can be reported instead of guessed at.
+    substituted: new Set()
   };
 }
 
@@ -206,7 +209,13 @@ async function resolveMeasuredFont(fonts, measuredStyle, value) {
     });
     return ensureFontLoaded(fonts, matches[0]);
   }
-  throw new Error(`The webpage uses ${requested.join(", ")}, but that font is unavailable in Figma. Install or enable the font, then sync again.`);
+  // Substituted and named, not refused. Throwing here aborted the render after
+  // the frame had already been created, so one font Figma happened not to have
+  // left the whole page as an empty rectangle on the canvas — every shape,
+  // image and vector on it lost to a typeface. What is reported back is the
+  // list, so nothing is swapped silently.
+  for (const family of requested) fonts.substituted.add(family);
+  return fontForText(fonts, value, weightName(desiredWeight));
 }
 
 function weightName(value) {
@@ -1941,7 +1950,8 @@ async function buildMappings(job) {
     figma.currentPage.selection = created;
     figma.viewport.scrollAndZoomIntoView(created);
   }
-  return results;
+  const loaded = fontPromise ? await fontPromise : null;
+  return { mappings: results, substitutedFonts: loaded ? [...loaded.substituted] : [] };
 }
 
 function paintToCss(paints) {
@@ -2016,14 +2026,15 @@ async function runJob(payload, pairingCode, connectionToken) {
     type: "progress",
     message: payload.operation === "pull" ? `Reading ${payload.screens.length} editable pages…` : `Restoring ${payload.screens.length} page identities…`
   });
-  const mappings = payload.operation === "pull" ? null : await buildMappings({ ...payload, pairingCode });
+  const built = payload.operation === "pull" ? null : await buildMappings({ ...payload, pairingCode });
+  const mappings = built ? built.mappings : null;
   const screens = await snapshotPullJob(payload);
   const completion = await fetch(`${BRIDGE_URL}/v1/jobs/${pairingCode}/complete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload.operation === "pull"
       ? { operation: "pull", fileName: figma.root.name, screens }
-      : { operation: "push", fileName: figma.root.name, mappings, screens })
+      : { operation: "push", fileName: figma.root.name, mappings, screens, substitutedFonts: built.substitutedFonts })
   });
   const result = await completion.json();
   if (!completion.ok) throw new Error(result.error || "UI Sync could not save the mappings");
@@ -2032,6 +2043,12 @@ async function runJob(payload, pairingCode, connectionToken) {
     await figma.clientStorage.setAsync(CONNECTION_STORAGE_KEY, { token: connectionToken });
   }
 
+  if (built?.substitutedFonts?.length) {
+    figma.ui.postMessage({
+      type: "progress",
+      message: `Figma does not have ${built.substitutedFonts.join(", ")} — those runs use the closest it has.`
+    });
+  }
   figma.ui.postMessage({
     type: "complete",
     createdCount: result.createdCount,

@@ -98,6 +98,12 @@ export function FigmaSyncDialog({
           </div>
         )}
 
+        {isComplete && (status.substitutedFonts?.length ?? 0) > 0 && (
+          <p className="dialog-note">
+            Figma 没有 {status.substitutedFonts!.join("、")}，这些文字用了它有的最接近的字体。
+          </p>
+        )}
+
         {hasFailed && (
           <div className="automatic-error">
             <AlertCircle size={17} />

@@ -172,6 +172,8 @@ export type AutomaticMappingStatus = {
   createdCount?: number;
   reusedCount?: number;
   renderedCount?: number;
+  /** Families the page asked for that Figma does not have. */
+  substitutedFonts?: string[];
   message?: string | null;
   project?: ProjectInfo;
   pullPreview?: PullPreview | null;

@@ -1313,7 +1313,8 @@ button.screen-figma-link {
 
 /* What will not arrive. It sits with the copy, not beside the result, so it is
    read before the sync reports success. */
-.dialog-copy p.dialog-note {
+.dialog-copy p.dialog-note,
+.automatic-mapping-dialog > p.dialog-note {
   margin: -12px 0 20px;
   padding: 7px 9px;
   border-radius: 6px;

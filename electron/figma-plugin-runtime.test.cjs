@@ -1045,6 +1045,10 @@ test("Figma bridge rebuilds rendered DOM as editable Figma layers", async () => 
   assert.ok(completion.screens[0].nodes.some((node) => node.text === "A paragraph that wraps onto two lines."));
   assert.ok(completion.screens[0].nodes.some((node) => node.text === "First\nSecond"));
 
+  // A font Figma does not have is substituted and named. It used to throw,
+  // which aborted the render *after* the frame existed — so one missing
+  // typeface left the whole page as an empty rectangle on the canvas, every
+  // shape, image and vector on it lost.
   const missingFontJob = JSON.parse(JSON.stringify(job));
   missingFontJob.operation = "push";
   missingFontJob.screens[0].id = "missing-font";
@@ -1053,5 +1057,13 @@ test("Figma bridge rebuilds rendered DOM as editable Figma layers", async () => 
   missingFontJob.screens[0].domTree.children[0].style.resolvedFontFamily = "Unavailable Sans";
   job = missingFontJob;
   await figma.ui.onmessage({ type: "connect", pairingCode: "777777" });
-  assert.ok(messages.some((message) => message.type === "error" && message.message.includes("Unavailable Sans")));
+
+  assert.ok(!messages.some((message) => message.type === "error"), "a missing font is not a failure");
+  const substituted = page.children.find((node) => node.name === "Missing Font");
+  assert.ok(substituted, "the frame is created");
+  assert.equal(substituted.children[0].name, "UI Sync · Editable DOM", "and it is not left empty");
+  assert.ok(substituted.findAll((node) => node.name === "Link icon").length > 0, "the vector on it survives the missing font");
+  const swapped = substituted.findAll((node) => node.type === "TEXT").find((node) => node.characters === "Application pages");
+  assert.notEqual(swapped.fontName.family, "Unavailable Sans", "the run uses something Figma actually has");
+  assert.deepEqual(completion.substitutedFonts, ["Unavailable Sans"], "and the swap is reported, never silent");
 });

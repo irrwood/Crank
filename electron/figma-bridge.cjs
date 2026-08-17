@@ -156,7 +156,10 @@ const pushCompletionSchema = z.object({
     disposition: z.enum(["created", "reused"]),
     contentDisposition: z.enum(["rendered", "reused", "preserved"])
   })).min(1).max(120),
-  screens: z.array(screenSnapshotSchema).min(1).max(120).optional()
+  screens: z.array(screenSnapshotSchema).min(1).max(120).optional(),
+  // Families the page asked for that Figma does not have. Reported rather than
+  // refused: a font Figma lacks must not cost the page every shape on it.
+  substitutedFonts: z.array(z.string().min(1).max(160)).max(40).optional()
 });
 const pullCompletionSchema = z.object({
   operation: z.literal("pull"),
@@ -226,6 +229,7 @@ function createFigmaBridge({ port = DEFAULT_PORT, onComplete, onDisconnect = asy
       reusedCount: job.reusedCount ?? 0,
       renderedCount: job.renderedCount ?? 0,
       message: job.message ?? null,
+      substitutedFonts: job.substitutedFonts ?? [],
       pullPreview: job.pullPreview ?? null
     };
   }
@@ -322,6 +326,7 @@ function createFigmaBridge({ port = DEFAULT_PORT, onComplete, onDisconnect = asy
           job.createdCount = result.mappings.filter((mapping) => mapping.disposition === "created").length;
           job.reusedCount = result.mappings.filter((mapping) => mapping.disposition === "reused").length;
           job.renderedCount = result.mappings.filter((mapping) => mapping.contentDisposition === "rendered").length;
+          job.substitutedFonts = result.substitutedFonts ?? [];
         } else {
           job.pullPreview = completionData?.pullPreview ?? null;
           job.renderedCount = result.screens.length;
