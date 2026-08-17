@@ -185,9 +185,32 @@ function createBrowsingSession(origin, driver) {
      * The layer tree the Figma plugin builds from. Same page, same session as
      * the HTML snapshot — one visit produces both.
      */
+    /**
+     * Handed back as text, not as an object.
+     *
+     * A layer tree is deep — one node per rendered element, nested as the page
+     * is — and returning that graph across the process boundary means cloning
+     * it structurally, which fails on a real page: two thirds of a portfolio
+     * came back with no layers at all, reported only as "script failed to
+     * execute". The markup capture beside it never had the problem because it
+     * always returned a string. Serialising in the page and parsing here costs
+     * one pass and cannot fail on depth.
+     */
     async captureFigmaTree() {
       try {
-        const tree = await evaluate(`(${serializeRenderedApplication.toString()})()`);
+        // Caught in the page, because the error that crosses the boundary is
+        // only ever "script failed to execute" — which says nothing about which
+        // page, which element, or why, and left two thirds of a real portfolio
+        // silently arriving with no layers.
+        const json = await evaluate(`(() => {
+          try {
+            return JSON.stringify((${serializeRenderedApplication.toString()})());
+          } catch (cause) {
+            return JSON.stringify({ error: String(cause && cause.message || cause).slice(0, 300) });
+          }
+        })()`);
+        if (typeof json !== "string" || !json) return { error: "The page returned no layer tree." };
+        const tree = JSON.parse(json);
         if (tree?.tree) assignKeys(tree.tree);
         return tree;
       } catch (cause) {
