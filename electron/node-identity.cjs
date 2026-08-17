@@ -56,7 +56,15 @@ function assignKeys(tree, parentKey = "root") {
   if (!tree || typeof tree !== "object") return tree;
   const counts = new Map();
   const walk = (node, parent) => {
-    const trait = shortHash(traitOf(node));
+    // An element that says where it was written needs no resemblance to be
+    // recognised by. The trait is what remains for everything else: a project
+    // whose build UI Sync does not control, an app it merely attached to, a
+    // page it was handed as a URL.
+    const anchored = typeof node?.source === "string" && node.source;
+    const trait = anchored ? `src:${shortHash(node.source)}` : shortHash(traitOf(node));
+    // Counted either way. Anchors are per JSX element, so one written inside a
+    // loop is genuinely several nodes on screen and they still have to be told
+    // apart.
     const seen = counts.get(`${parent}|${trait}`) ?? 0;
     counts.set(`${parent}|${trait}`, seen + 1);
     const key = `${parent}/${trait}:${seen}`;

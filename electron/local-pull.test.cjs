@@ -65,3 +65,21 @@ test("creates a deterministic SwiftUI text and font patch in its mapped file", a
   assert.match(plan.changedFiles[0].next, /Text\("After"\)/);
   assert.match(plan.changedFiles[0].next, /size: 20/);
 });
+
+test("the baseline keeps where a node was written, and Figma never sees it", () => {
+  const tree = {
+    id: "root/src:aaa:0", selector: ".card", kind: "element", source: "src/Card.tsx:8:3",
+    width: 200, height: 100, style: { backgroundColor: "rgb(255, 255, 255)", borderRadius: 8 },
+    children: [{
+      id: "root/src:aaa:0/src:bbb:0", selector: ".title", kind: "text", source: "src/Card.tsx:9:5",
+      text: "Total", width: 80, height: 20, style: { fontSize: 16, fontWeight: 600 }, children: []
+    }]
+  };
+  const flat = flattenEditableDom(tree);
+  assert.equal(flat[0].source, "src/Card.tsx:8:3");
+  assert.equal(flat[1].source, "src/Card.tsx:9:5", "so a pull can edit that line rather than guess a selector");
+
+  // A page from a project UI Sync did not build carries none, and still works.
+  const unanchored = flattenEditableDom({ ...tree, source: undefined, children: [] });
+  assert.equal(unanchored[0].source, null);
+});

@@ -1,6 +1,7 @@
 const path = require("node:path");
 const { access, readFile } = require("node:fs/promises");
 const { createRequire } = require("node:module");
+const { createSourceAnchorPlugin } = require("./source-anchors.cjs");
 
 /**
  * Serves an Electron app's interface as an ordinary web page.
@@ -86,7 +87,10 @@ async function startRendererServer(root, { port = 0 } = {}) {
     server = await createServer({
       configFile: false,
       root: detected.rendererRoot,
-      plugins: react ? [react()] : [],
+      // The anchor rides along in the project's own React plugin, so UI Sync
+      // needs no Babel of its own and the project's version is the one that
+      // parses its code. It is a transform: the files on disk are untouched.
+      plugins: react ? [react({ babel: { plugins: [createSourceAnchorPlugin(root)] } })] : [],
       server: { port, host: "127.0.0.1" },
       clearScreen: false,
       logLevel: "warn"

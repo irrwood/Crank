@@ -242,7 +242,12 @@ function serializeRenderedApplication() {
     const style = getComputedStyle(element);
     if (!visible(style, rect)) return null;
     const selector = sourceSelector(element, inheritedSelector);
-    const common = { ...bounds(rect, parentRect), id: identity, selector, name: safeName(element) };
+    // Where this element was written, when the project was served through a
+    // build UI Sync controls. It is the identity the node keeps, and the exact
+    // place the pull direction edits — neither has to be inferred from what the
+    // node happens to look like.
+    const source = element.getAttribute?.("data-ui-sync-src") || null;
+    const common = { ...bounds(rect, parentRect), id: identity, selector, name: safeName(element), ...(source ? { source } : {}) };
 
     if (element instanceof SVGElement && element.tagName.toLowerCase() === "svg") {
       return {

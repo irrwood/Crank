@@ -106,3 +106,40 @@ test("the identity a layer is remembered by is the stable one", () => {
   assert.equal(idOf(before, "Holdings"), idOf(after, "Holdings"), "a new banner above must not rename it");
   for (const node of flatten(after)) assert.equal(node.id, node.key, "one identity, not two");
 });
+
+test("an anchored node keeps its identity when everything about it changes", () => {
+  // The trait is kind, name, selector and text. Redesign a button — rename the
+  // class, rewrite the label — and every one of those moves, so a resemblance
+  // cannot recognise it. What the element says about where it was written does
+  // not move, and that is the whole point of asking the build for it.
+  const before = { kind: "element", name: "Save", selector: ".btn-primary", source: "src/Form.tsx:12:5", width: 90, height: 32, children: [] };
+  const after = { kind: "element", name: "Confirm", selector: ".button--accent", source: "src/Form.tsx:12:5", width: 120, height: 40, children: [] };
+  assert.equal(assignKeys({ ...before }).id, assignKeys({ ...after }).id);
+});
+
+test("two elements written on different lines are two elements", () => {
+  const page = (extra) => ({
+    kind: "element", name: "Root", source: "src/Page.tsx:1:1", width: 100, height: 100,
+    children: [
+      { kind: "element", name: "Card", source: "src/Page.tsx:9:7", width: 10, height: 10, children: [] },
+      { kind: "element", name: "Card", source: "src/Page.tsx:14:7", width: 10, height: 10, children: [] },
+      ...(extra ? [{ kind: "element", name: "Banner", source: "src/Page.tsx:4:3", width: 10, height: 10, children: [] }] : [])
+    ]
+  });
+  const plain = flatten(assignKeys(page(false)));
+  const withBanner = flatten(assignKeys(page(true)));
+  assert.notEqual(plain[1].id, plain[2].id, "same name, different line — different nodes");
+  const idAt = (nodes, line) => nodes.find((node) => node.source?.endsWith(`:${line}:7`))?.id;
+  assert.equal(idAt(plain, 9), idAt(withBanner, 9), "an element added above renames nothing");
+  assert.equal(idAt(plain, 14), idAt(withBanner, 14));
+});
+
+test("a node with no anchor still gets one from what it is", () => {
+  const mixed = assignKeys({
+    kind: "element", name: "Root", width: 100, height: 100,
+    children: [{ kind: "text", name: "Text", text: "Hello", width: 10, height: 10 }]
+  });
+  const [root, text] = flatten(mixed);
+  assert.ok(root.id.startsWith("root/"), "projects UI Sync does not build still work");
+  assert.ok(text.id.startsWith(root.id));
+});

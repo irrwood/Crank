@@ -33,6 +33,12 @@ function flattenEditableDom(tree) {
     const common = {
       id: node.id,
       selector: node.selector ?? null,
+      // Where this node was written, when the project was served through a
+      // build UI Sync controls. Recorded at push time so a pull can edit that
+      // exact line instead of hunting for a CSS rule and giving up when the
+      // match is not unique. It is stripped before the job reaches Figma —
+      // nothing about someone's file layout needs to travel.
+      source: node.source ?? null,
       kind: node.kind,
       width: node.width,
       height: node.height,
