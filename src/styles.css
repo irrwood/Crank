@@ -3193,7 +3193,13 @@ button.screen-figma-link {
 /* ---------- URL-first page inventory ---------- */
 
 .inventory-page {
-  min-height: 100vh;
+  /* #root is overflow:hidden for the older interface, and its 100% height
+     chain resolves to zero here, so a percentage height gives this view
+     nothing to measure against. Anchoring to the viewport makes it its own
+     scroll container regardless of what its ancestors do. */
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
   padding: 40px 48px 72px;
   display: flex;
   flex-direction: column;
