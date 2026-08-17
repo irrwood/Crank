@@ -173,7 +173,7 @@ async function exploreFromPage(target, page, { pages: held = [], maxStates = 20,
   if (!normalized.ok) return { ok: false, message: normalized.message };
   const session = createDiscoverySession(normalized.origin);
   try {
-    const { states, skipped, filtered, inert, reached } = await discoverStates(session, {
+    const { states, skipped, filtered, inert, start, reached } = await discoverStates(session, {
       from: { route: page.route, recipe: page.recipe ?? [] },
       seenAddresses: held.flatMap((entry) => [entry.route, entry.url].filter(Boolean)),
       // One click further than the page already sits, counted from where it is
@@ -185,8 +185,12 @@ async function exploreFromPage(target, page, { pages: held = [], maxStates = 20,
     if (!reached) {
       return { ok: false, message: `Could not reach 「${page.name}」 again — the way back to it has changed. Rescan the project.` };
     }
+    // The page walked from is excluded because it *is* that page, not because
+    // its id happens to match one already held: an inventory saved by an older
+    // version stores an id this walk would never compute again, and comparing
+    // the two handed the starting page back as a discovery.
     const knownIds = new Set(held.map((entry) => entry.id));
-    const found = states.filter((state) => !knownIds.has(state.id));
+    const found = states.filter((state) => state !== start && !knownIds.has(state.id));
     return {
       ok: true,
       origin: normalized.origin,

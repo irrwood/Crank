@@ -576,3 +576,31 @@ test("says so when the page it was asked to continue from cannot be reached", as
   assert.equal(reached, false);
   assert.equal(states.length, 0);
 });
+
+test("hands back the page it began at, so it is never mistaken for a discovery", async () => {
+  // An inventory saved before identity became route-and-recipe stores a page id
+  // this walk would never compute again. Recognising the starting page by
+  // comparing ids therefore failed, and continuing from a page added a second
+  // copy of that very page — which then got dropped, taking the real page's
+  // identity with it.
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#settings", label: "Settings", role: "tab", to: "settings" }]
+    },
+    settings: { url: "/", fingerprint: ["settings"], skeleton: ["form@0"], controls: [] }
+  });
+
+  const { states, start } = await discoverStates(session, {
+    from: { route: "/", recipe: [] },
+    maxDepth: 1
+  });
+
+  assert.ok(start, "the starting state is named");
+  assert.equal(states[0], start, "and it is the first one recorded");
+  const staleId = "state-697d148ae8b0893668f6449a";
+  const found = states.filter((state) => state !== start && state.id !== staleId);
+  assert.equal(found.length, 1, "only the genuinely new state survives");
+  assert.ok(found[0].name.includes("Settings"));
+  assert.notEqual(start.id, staleId, "the recomputed id does not match the stored one — which was the trap");
+});

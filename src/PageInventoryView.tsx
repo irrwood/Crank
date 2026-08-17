@@ -629,7 +629,12 @@ export default function PageInventoryView() {
       }
       const found = outcome.pages ?? [];
       if (found.length === 0) {
-        notify("done", `「${page.name}」后面没有再找到新页面。`);
+        // "Nothing found" and "nothing on this page responds" look the same
+        // from outside, and only the second is worth acting on.
+        const dead = outcome.inert?.length ?? 0;
+        notify("done", dead > 0
+          ? `「${page.name}」上的 ${dead} 个控件点了都没反应,往下走不通。`
+          : `「${page.name}」后面没有再找到新页面。`);
         return;
       }
       setResult((current) => {

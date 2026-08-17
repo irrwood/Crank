@@ -363,6 +363,9 @@ async function discoverStates(session, {
   const filtered = [];
   // Controls that left the page exactly as it was.
   const inert = [];
+  // The state a continued walk began at, so the caller can tell it apart from
+  // what the walk actually found.
+  let start = null;
   // Every page carries the same navigation. Clicking a link whose destination
   // is already in the inventory re-walks a known page from every other page —
   // wasted time, and near-duplicates when the arrival state differs slightly.
@@ -479,15 +482,18 @@ async function discoverStates(session, {
 
   if (from) {
     // Replay to the state being continued from and record it, so its own
-    // controls become the frontier. It comes back among the states; the caller
-    // already has it and drops it by identity.
+    // controls become the frontier. It is handed back as `start` rather than
+    // left for the caller to recognise: the caller knows it by the id stored
+    // when it was first found, and an inventory written by an older version
+    // carries an id this walk would never compute again. Matching on that made
+    // the page the walk began at come back as a discovery.
     let snapshot = await session.goto(from.route);
     for (const step of from.recipe ?? []) {
       if (!snapshot) break;
       snapshot = await session.click(step.locator);
     }
-    if (!snapshot) return { states, skipped, filtered, inert, reached: false };
-    await record(snapshot, from.recipe ?? [], from.route);
+    if (!snapshot) return { states, skipped, filtered, inert, start: null, reached: false };
+    start = await record(snapshot, from.recipe ?? [], from.route);
   } else {
     for (const route of routes) {
       if (states.length >= maxStates) break;
@@ -567,7 +573,7 @@ async function discoverStates(session, {
     await record(snapshot, recipe, step.from.entryRoute);
   }
 
-  return { states, skipped, filtered, inert, reached: true };
+  return { states, skipped, filtered, inert, start, reached: true };
 }
 
 module.exports = {
