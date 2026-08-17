@@ -151,7 +151,40 @@ function createInventoryRegistry(directory) {
       await mkdir(path.join(directory, "baselines"), { recursive: true });
       await writeFile(
         path.join(directory, "baselines", `${id}.json`),
-        JSON.stringify({ pushedAt: new Date().toISOString(), fileKey, screens: baselines })
+        // The frames outlive the baseline they were drawn from: a page pushed
+        // again belongs in the frame it already has, whether or not this push
+        // arrives.
+        JSON.stringify({
+          pushedAt: new Date().toISOString(),
+          fileKey,
+          frames: (await this.loadFigmaBaseline(id))?.frames ?? {},
+          screens: baselines
+        })
+      );
+      return id;
+    },
+
+    /**
+     * Replaces the sent baseline with what Figma reports it now holds, and
+     * records which frame each page became.
+     *
+     * Figma rounds sizes and substitutes fonts, so a page that arrived intact
+     * still differs from the payload that produced it. Comparing a later pull
+     * against what was sent would report that round trip as a designer's edit.
+     * The frames are what a second push reuses instead of drawing the page
+     * again beside the first.
+     */
+    async recordFigmaPush(id, { frames = {}, screens = {} } = {}) {
+      const current = (await this.loadFigmaBaseline(id)) ?? { pushedAt: null, fileKey: null, screens: {} };
+      await mkdir(path.join(directory, "baselines"), { recursive: true });
+      await writeFile(
+        path.join(directory, "baselines", `${id}.json`),
+        JSON.stringify({
+          ...current,
+          pushedAt: new Date().toISOString(),
+          frames: { ...(current.frames ?? {}), ...frames },
+          screens: { ...current.screens, ...screens }
+        })
       );
       return id;
     },

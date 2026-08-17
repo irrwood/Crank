@@ -122,3 +122,23 @@ test("keeps what was sent to Figma, so a pull has something to compare against",
     assert.equal(await registry.loadFigmaBaseline(id), null, "a forgotten project keeps no baseline");
   });
 });
+
+test("replaces the sent baseline with what Figma says it holds, and names the frames", async () => {
+  await withRegistry(async (registry) => {
+    const id = await registry.saveFigmaBaseline("url", "http://localhost:5173", {
+      home: [{ id: "root", kind: "text", fontSize: 17.4 }],
+      about: [{ id: "root", kind: "element", width: 900 }]
+    }, { fileKey: "abc123" });
+
+    await registry.recordFigmaPush(id, {
+      frames: { home: { nodeId: "12:3", frameName: "Home" } },
+      screens: { home: [{ id: "root", kind: "text", fontSize: 17 }] }
+    });
+
+    const stored = await registry.loadFigmaBaseline(id);
+    assert.equal(stored.screens.home[0].fontSize, 17, "Figma rounded it, and Figma is what a pull compares against");
+    assert.equal(stored.screens.about[0].width, 900, "a page the push did not report keeps the baseline it was sent with");
+    assert.deepEqual(stored.frames.home, { nodeId: "12:3", frameName: "Home" });
+    assert.equal(stored.fileKey, "abc123", "the file it landed in survives the update");
+  });
+});

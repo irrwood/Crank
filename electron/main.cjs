@@ -223,6 +223,11 @@ const pendingDesignEdits = new Map();
 
 const registryPath = () => path.join(app.getPath("userData"), "projects.json");
 const deviceConnectionPath = () => path.join(app.getPath("userData"), "figma-device-connection.json");
+
+// Built on first use: the path it lives under is only known once the app is
+// ready, and a push completes long after the IPC handler that started it.
+let inventoryStore = null;
+const inventoryRegistry = () => (inventoryStore ??= createInventoryRegistry(app.getPath("userData")));
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -352,6 +357,24 @@ async function resetDeviceConnection(token) {
   const current = await readDeviceConnection();
   if (current?.token !== token) return;
   await writeDeviceConnection({ token: randomBytes(32).toString("hex"), confirmed: false });
+}
+
+/**
+ * Records a push that came from a scan rather than a registered project.
+ *
+ * The two flows share the bridge but not their memory: a scanned URL is not in
+ * projects.json, so the older path rejected its completion as an unregistered
+ * project and the plugin reported a failure over frames it had just drawn.
+ */
+async function saveInventoryPush(context, result) {
+  await inventoryRegistry().recordFigmaPush(context.inventoryId, {
+    frames: Object.fromEntries(
+      (result.mappings ?? []).map((mapping) => [mapping.screenId, { nodeId: mapping.nodeId, frameName: mapping.frameName }])
+    ),
+    screens: Object.fromEntries(
+      (result.screens ?? []).filter((screen) => screen.nodes.length > 0).map((screen) => [screen.screenId, screen.nodes])
+    )
+  });
 }
 
 async function saveAutomaticMappings(context, result) {
@@ -1238,20 +1261,20 @@ function registerIpc() {
     // Register before scanning, not after: the project should appear in the
     // sidebar the moment it is dropped, so the wait is something to walk away
     // from rather than something to sit in front of.
-    await inventoryRegistry.remember("folder", safeRoot, { parent });
+    await inventoryRegistry().remember("folder", safeRoot, { parent });
     send("inventory:started", { kind: "folder", target: safeRoot });
     const inventory = await scanFolder(safeRoot, {
       onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
     if (inventory.ok) {
-      await inventoryRegistry.saveInventory("folder", safeRoot, inventory, { parent });
+      await inventoryRegistry().saveInventory("folder", safeRoot, inventory, { parent });
       // A folder that also holds projects gets them registered underneath it,
       // unscanned. Dropping a folder means "index what is in here", and the
       // sidebar should show that shape straight away rather than after the
       // user has hunted each one down separately.
       for (const item of inventory.packages ?? []) {
-        await inventoryRegistry.remember("folder", item.root, { parent: safeRoot });
+        await inventoryRegistry().remember("folder", item.root, { parent: safeRoot });
       }
     }
     send("inventory:finished", { ok: inventory.ok });
@@ -1298,23 +1321,28 @@ function registerIpc() {
     const built = buildFigmaJob(parsed, { projectName: parsed.origin, figmaFileName: link.fileName });
     if (!built.ok) return built;
 
+    const kind = parsed.origin?.startsWith("http") ? "url" : "folder";
+    const target = parsed.origin ?? "";
+    // A page the plugin has already drawn is sent back to its own frame. The
+    // renderer holds the scan, not what became of it, so the frames are read
+    // from what the last push recorded.
+    const known = (await inventoryRegistry().loadFigmaBaseline(targetId(kind, target)))?.frames ?? {};
+    for (const screen of built.job.screens) {
+      screen.currentNodeId = screen.currentNodeId ?? known[screen.id]?.nodeId ?? null;
+    }
+
     // What is being sent becomes the baseline a later pull compares against.
     // flattenEditableDom is the same reader the original pull path uses, so
     // both directions agree on what a node's properties are.
     const baselines = Object.fromEntries(
       built.job.screens.map((screen) => [screen.id, flattenEditableDom(screen.domTree)])
     );
-    await inventoryRegistry.saveFigmaBaseline(
-      parsed.origin?.startsWith("http") ? "url" : "folder",
-      parsed.origin ?? "",
-      baselines,
-      { fileKey: link.fileKey }
-    );
+    const inventoryId = await inventoryRegistry().saveFigmaBaseline(kind, target, baselines, { fileKey: link.fileKey });
 
     const connection = await ensureDeviceConnection();
     const session = figmaBridge.enqueue(
       built.job,
-      { root: parsed.origin ?? "", figmaFileKey: link.fileKey, connectionToken: connection.token },
+      { root: target, inventoryId, figmaFileKey: link.fileKey, connectionToken: connection.token },
       connection.token,
       new Map()
     );
@@ -1354,18 +1382,16 @@ function registerIpc() {
     shell.showItemInFolder(safePath);
   });
 
-  const inventoryRegistry = createInventoryRegistry(app.getPath("userData"));
-
-  ipcMain.handle("inventory:targets", async () => inventoryRegistry.grouped());
+  ipcMain.handle("inventory:targets", async () => inventoryRegistry().grouped());
 
   ipcMain.handle("inventory:open", async (_event, id) => {
     const safeId = z.string().regex(/^[a-f0-9]{16}$/).parse(id);
-    return inventoryRegistry.loadInventory(safeId);
+    return inventoryRegistry().loadInventory(safeId);
   });
 
   ipcMain.handle("inventory:forget", async (_event, id) => {
-    await inventoryRegistry.forget(z.string().regex(/^[a-f0-9]{16}$/).parse(id));
-    return inventoryRegistry.grouped();
+    await inventoryRegistry().forget(z.string().regex(/^[a-f0-9]{16}$/).parse(id));
+    return inventoryRegistry().grouped();
   });
 
   ipcMain.handle("inventory:scan", async (event, url, seedPaths) => {
@@ -1375,13 +1401,13 @@ function registerIpc() {
     const send = (channel, value) => {
       if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
     };
-    await inventoryRegistry.remember("url", target);
+    await inventoryRegistry().remember("url", target);
     send("inventory:started", { kind: "url", target });
     const inventory = await scanUrl(target, {
       seedPaths: seeds,
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
-    if (inventory.ok) await inventoryRegistry.saveInventory("url", target, inventory);
+    if (inventory.ok) await inventoryRegistry().saveInventory("url", target, inventory);
     send("inventory:finished", { ok: inventory.ok });
     return { ...inventory, id };
   });
@@ -2013,7 +2039,9 @@ app.whenReady().then(async () => {
     onComplete: async (context, result) => {
       const completion = result.operation === "pull"
         ? await preparePullPreview(context, result)
-        : await saveAutomaticMappings(context, result);
+        : context.inventoryId
+          ? await saveInventoryPush(context, result)
+          : await saveAutomaticMappings(context, result);
       await confirmDeviceConnection(context.connectionToken);
       return completion;
     },
