@@ -42,6 +42,19 @@ function isFrameworkInternalPath(pathname) {
  * An endpoint that answers with JSON or XML is not a page, however well it
  * renders in a browser window.
  */
+/**
+ * True when two addresses are the same page at a different scroll position.
+ * Following anchors recorded "copper.html#overview", "#mobile" and
+ * "#clearloop" as three pages of one document.
+ */
+function isSameDocument(before, after) {
+  const strip = (value) => String(value ?? "").split("#")[0];
+  const hashOf = (value) => String(value ?? "").split("#")[1] ?? "";
+  if (strip(before) !== strip(after)) return false;
+  // Hash routing genuinely changes page; a bare anchor does not.
+  return !hashOf(after).startsWith("/");
+}
+
 function isHtmlContentType(contentType) {
   const value = String(contentType ?? "").toLowerCase();
   if (!value) return true;
@@ -276,6 +289,9 @@ function collectUiState() {
     const href = element.getAttribute("href");
     // Anything leaving the origin is navigation away from the app, not a state.
     if (href && /^(?:[a-z]+:)?\/\//i.test(href) && !href.startsWith(location.origin)) continue;
+    // A plain anchor scrolls the page it is already on. Hash routing is the
+    // exception and is written "#/somewhere".
+    if (href && href.startsWith("#") && !href.startsWith("#/")) continue;
     candidates.push({
       locator,
       label: accessibleName(element),
@@ -461,6 +477,16 @@ async function discoverStates(session, {
     // Navigation is exempt: a different address is a different page however
     // similar it looks. Sibling pages of one template can differ by a single
     // heading, and judging those by pixels would delete a whole nav bar.
+    const scrolledOnly = isSameDocument(step.from.state.url, snapshot.url);
+    if (scrolledOnly && snapshot.url !== step.from.state.url) {
+      filtered.push({
+        label: step.action.label,
+        from: step.from.state.name,
+        reason: "an anchor on the same page",
+        magnitude: 0
+      });
+      continue;
+    }
     const navigated = Boolean(snapshot.url) && snapshot.url !== step.from.state.url;
     const magnitude = changeMagnitude(step.from.state.fingerprint, snapshot.fingerprint, snapshot.viewport);
     if (!navigated && magnitude < minChangeRatio) {
@@ -490,6 +516,7 @@ module.exports = {
   isVolatileText,
   isFrameworkInternalPath,
   isHtmlContentType,
+  isSameDocument,
   planNextStep,
   rankCandidates,
   recipeKey,

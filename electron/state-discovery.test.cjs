@@ -10,6 +10,7 @@ const {
   isDestructiveLabel,
   isFrameworkInternalPath,
   isHtmlContentType,
+  isSameDocument,
   planNextStep,
   rankCandidates,
   signatureOf
@@ -428,4 +429,30 @@ test("an appearance switch does not get to name a page", () => {
     chooseStateName({ recipe: [{ label: "Holdings" }], route: "/", heading: "Portfolio", title: "Catfolio" }),
     "Holdings · Portfolio"
   );
+});
+
+test("an anchor is the same page scrolled, not another page", () => {
+  assert.equal(isSameDocument("/pages/copper.html", "/pages/copper.html#overview"), true);
+  assert.equal(isSameDocument("/pages/copper.html#overview", "/pages/copper.html#mobile"), true);
+  assert.equal(isSameDocument("/pages/copper.html", "/pages/memo.html"), false);
+  // Hash routing really does change page.
+  assert.equal(isSameDocument("/", "/#/settings"), false);
+});
+
+test("does not record anchors of a page it already has", async () => {
+  const session = fakeSession({
+    "/doc": {
+      url: "/doc", fingerprint: ["doc"], skeleton: ["main@0"],
+      controls: [
+        { locator: "#a", label: "Overview", role: "link", to: "anchor-a" },
+        { locator: "#b", label: "Mobile", role: "link", to: "anchor-b" }
+      ]
+    },
+    "anchor-a": { url: "/doc#overview", fingerprint: ["doc-a"], skeleton: ["main@0"], controls: [] },
+    "anchor-b": { url: "/doc#mobile", fingerprint: ["doc-b"], skeleton: ["main@0"], controls: [] }
+  });
+  const { states, filtered } = await discoverStates(session, { routes: ["/doc"], maxDepth: 1 });
+  assert.equal(states.length, 1, `one document, got ${JSON.stringify(states.map((s) => s.route))}`);
+  assert.equal(filtered.length, 2);
+  assert.match(filtered[0].reason, /anchor/);
 });

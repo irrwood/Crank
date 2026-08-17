@@ -119,7 +119,8 @@ async function scanUrl(target, {
   withThumbnails = true,
   withHtml = true,
   withFigmaTree = true,
-  onProgress
+  onProgress,
+  onStatus
 } = {}) {
   const normalized = normalizeTargetUrl(target);
   if (!normalized.ok) return { ok: false, message: normalized.message };
@@ -168,7 +169,14 @@ async function scanUrl(target, {
     };
 
     const pages = [];
-    for (const state of states) {
+    for (const [index, state] of states.entries()) {
+      // Capture is the long half — every page is revisited, waited on, and
+      // photographed. Without saying so the window goes silent for minutes
+      // after discovery finishes, which reads as having hung.
+      onStatus?.({
+        phase: "capturing",
+        detail: `Capturing page ${index + 1} of ${states.length} — ${state.name}`
+      });
       const shot = await shoot(state.route, state.recipe);
       const variants = [];
       for (const variant of state.variants ?? []) {
@@ -274,6 +282,7 @@ async function findWorkspacePackages(root) {
 }
 
 async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...options } = {}) {
+  const forward = { ...options, onStatus };
   const packages = allowWorkspaceRoot ? [] : await findWorkspacePackages(root);
 
   // A folder can be a site *and* contain projects — a portfolio with a couple
@@ -319,7 +328,7 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
         if (ran.ok) {
           onStatus?.({ phase: "scanning", detail: ran.attached ? `Reusing ${ran.url}` : `Serving at ${ran.url}` });
           try {
-            const inventory = await scanUrl(ran.url, { ...options, seedPaths });
+            const inventory = await scanUrl(ran.url, { ...forward, seedPaths });
             return inventory.ok ? { ...inventory, servedBy: ran.command, attached: Boolean(ran.attached) } : inventory;
           } finally {
             ran.stop?.();
@@ -341,7 +350,7 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
         onStatus?.({ phase: "scanning", detail: `Serving at ${server.origin}` });
         try {
           const inventory = await scanUrl(server.origin, {
-            ...options,
+            ...forward,
             seedPaths: [...new Set([...seedPaths, ...staticSite.pages.map((page) => `/${page}`)])],
             // Enough room for every file found, unless the caller asked for less.
             maxStates: options.maxStates ?? Math.max(60, staticSite.pages.length + 20)
@@ -368,7 +377,7 @@ async function scanFolder(root, { onStatus, allowWorkspaceRoot = false, ...optio
 
   onStatus?.({ phase: "scanning", detail: started.attached ? `Reusing ${started.url}` : `Serving at ${started.url}` });
   try {
-    const inventory = await scanUrl(started.url, { ...options, seedPaths: [...seedPaths, ...(options.seedPaths ?? [])] });
+    const inventory = await scanUrl(started.url, { ...forward, seedPaths: [...seedPaths, ...(options.seedPaths ?? [])] });
     return inventory.ok ? { ...inventory, servedBy: started.command, attached: Boolean(started.attached) } : inventory;
   } finally {
     // Never stop a server this scan did not start.

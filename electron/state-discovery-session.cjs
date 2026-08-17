@@ -181,6 +181,15 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       }
       if (!clicked) return null;
       await settle(patient ? { quietFor: 3, interval: 400, maxWait: 15_000 } : undefined);
+      // A link can carry the window off-site even when its href looked local.
+      // The load is blocked, leaving a dead page: report nothing rather than
+      // fingerprinting the error.
+      try {
+        const here = await contents.executeJavaScript("location.origin", true);
+        if (here !== origin) return null;
+      } catch {
+        return null;
+      }
       return read();
     },
     async captureHtml() {

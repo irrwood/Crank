@@ -395,7 +395,7 @@ export type PageInventory =
 
 export type PageInventoryFiltered = { label: string; from: string; reason: string; magnitude: number };
 
-export type ScanStatus = { phase: "starting" | "scanning"; detail: string; id?: string };
+export type ScanStatus = { phase: "starting" | "scanning" | "capturing"; detail: string; id?: string };
 
 /** Which target a background scan belongs to, so it can run while you look elsewhere. */
 export type ScanLifecycle = {
