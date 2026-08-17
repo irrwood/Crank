@@ -16,6 +16,11 @@ declare global {
         source: { kind: "folder" | "url"; target: string },
         page: DiscoveredPage
       ) => Promise<{ ok: boolean; message?: string; page?: DiscoveredPage }>;
+      explorePage: (
+        source: { kind: "folder" | "url"; target: string },
+        page: DiscoveredPage,
+        held: Array<{ id: string; route: string; url?: string }>
+      ) => Promise<{ ok: boolean; message?: string; pages?: DiscoveredPage[] }>;
       dropPage: (source: { kind: "folder" | "url"; target: string }, pageId: string) => Promise<{ ok: boolean }>;
       sendInventoryToFigma: (
         inventory: { origin?: string; source?: { kind: "folder" | "url"; target: string }; pages: DiscoveredPage[] },

@@ -343,6 +343,12 @@ function collectUiState() {
  */
 async function discoverStates(session, {
   routes = ["/"],
+  // Start at one known state instead of at the app's entry routes, so the walk
+  // can be continued from a page already in an inventory.
+  from = null,
+  // Addresses the caller already holds. A link to one of them is not followed,
+  // which is what keeps continuing from one page cheap.
+  seenAddresses = [],
   maxStates = 40,
   maxDepth = 1,
   maxActionsPerState = 12,
@@ -381,6 +387,7 @@ async function discoverStates(session, {
     knownAddresses.add(withoutHash || "/");
   };
   for (const route of routes) remember(route);
+  for (const address of seenAddresses) remember(address);
 
   /**
    * A state reached by clicking may simply be another address. Directly
@@ -470,10 +477,23 @@ async function discoverStates(session, {
     return state;
   };
 
-  for (const route of routes) {
-    if (states.length >= maxStates) break;
-    const snapshot = await session.goto(route);
-    if (snapshot) await record(snapshot, [], route);
+  if (from) {
+    // Replay to the state being continued from and record it, so its own
+    // controls become the frontier. It comes back among the states; the caller
+    // already has it and drops it by identity.
+    let snapshot = await session.goto(from.route);
+    for (const step of from.recipe ?? []) {
+      if (!snapshot) break;
+      snapshot = await session.click(step.locator);
+    }
+    if (!snapshot) return { states, skipped, filtered, inert, reached: false };
+    await record(snapshot, from.recipe ?? [], from.route);
+  } else {
+    for (const route of routes) {
+      if (states.length >= maxStates) break;
+      const snapshot = await session.goto(route);
+      if (snapshot) await record(snapshot, [], route);
+    }
   }
 
   while (states.length < maxStates) {
@@ -547,7 +567,7 @@ async function discoverStates(session, {
     await record(snapshot, recipe, step.from.entryRoute);
   }
 
-  return { states, skipped, filtered, inert };
+  return { states, skipped, filtered, inert, reached: true };
 }
 
 module.exports = {

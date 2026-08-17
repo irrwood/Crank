@@ -5,7 +5,7 @@ const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
-const { normalizeTargetUrl, recapturePage, scanFolder, scanUrl, withProjectServer } = require("./page-inventory.cjs");
+const { exploreFromPage, normalizeTargetUrl, recapturePage, scanFolder, scanUrl, withProjectServer } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
@@ -1330,6 +1330,50 @@ function registerIpc() {
     recording.close();
     recording = null;
     return { ok: true, pages };
+  });
+
+  /**
+   * Walks one level further out from a single page and adds whatever is new to
+   * the kept inventory. The pages already held are passed in so their addresses
+   * are not walked again.
+   */
+  ipcMain.handle("inventory:explore-page", async (event, source, page, held) => {
+    const where = z.object({ kind: z.enum(["folder", "url"]), target: z.string().min(1).max(2000) }).parse(source);
+    const safePage = handoffPageSchema.parse(page);
+    const known = z.array(z.object({
+      id: z.string().max(200),
+      route: z.string().max(2000),
+      url: z.string().max(2000).optional()
+    })).max(500).parse(held ?? []);
+    const id = targetId(where.kind, where.target);
+    const send = (detail, phase = "scanning") => {
+      if (!event.sender.isDestroyed()) event.sender.send("inventory:status", { phase, detail, id });
+    };
+
+    send(`Looking past ${safePage.name}`, "starting");
+    const job = (url) => exploreFromPage(url, safePage, {
+      pages: known,
+      onStatus: (status) => send(status.detail, status.phase),
+      onProgress: (state) => {
+        if (!event.sender.isDestroyed()) event.sender.send("inventory:progress", { name: state.name, route: state.route, depth: state.depth, id });
+      }
+    });
+    const outcome = where.kind === "url"
+      ? await job(where.target)
+      : await withProjectServer(where.target, { onStatus: (status) => send(status.detail, status.phase) }, job);
+    if (!outcome.ok) return outcome;
+
+    // Anything dropped before stays dropped, even when found down a new path.
+    const found = await keepWanted(id, outcome.pages);
+    const stored = await inventoryRegistry().loadInventory(id);
+    if (stored?.ok && found.length > 0) {
+      const seen = new Set(stored.pages.map((entry) => entry.id));
+      await inventoryRegistry().updateInventory(id, {
+        ...stored,
+        pages: [...stored.pages, ...found.filter((entry) => !seen.has(entry.id))]
+      });
+    }
+    return { ...outcome, pages: found };
   });
 
   /**

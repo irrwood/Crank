@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   captureRecording: () => ipcRenderer.invoke("inventory:record-capture"),
   stopRecording: () => ipcRenderer.invoke("inventory:record-stop"),
   recapturePage: (source, page) => ipcRenderer.invoke("inventory:recapture", source, page),
+  explorePage: (source, page, held) => ipcRenderer.invoke("inventory:explore-page", source, page, held),
   dropPage: (source, pageId) => ipcRenderer.invoke("inventory:drop-page", source, pageId),
   sendInventoryToFigma: (inventory, figmaUrl) => ipcRenderer.invoke("inventory:send-to-figma", inventory, figmaUrl),
   getFigmaExportStatus: (pairingCode) => ipcRenderer.invoke("inventory:figma-status", pairingCode),

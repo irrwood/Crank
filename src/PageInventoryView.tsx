@@ -39,7 +39,7 @@ function shortfall(session: FigmaExportSession): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
-type PageAction = "recapture" | "figma" | "drop";
+type PageAction = "recapture" | "explore" | "figma" | "drop";
 
 /**
  * The menu a page opens on right-click.
@@ -82,6 +82,7 @@ function PageMenu({ at, busy, onPick, onClose }: {
 
   const items: Array<{ id: PageAction; label: string; danger?: boolean }> = [
     { id: "recapture", label: "重新捕获这一页" },
+    { id: "explore", label: "从这一页再往下点一层" },
     { id: "figma", label: "只把这一页送去 Figma" },
     { id: "drop", label: "把这一页删掉", danger: true }
   ];
@@ -590,6 +591,35 @@ export default function PageInventoryView() {
     }
   };
 
+  const explore = async (page: DiscoveredPage) => {
+    const where = sourceOf();
+    if (!where || !result?.ok || !window.uiSync?.explorePage) return;
+    setBusyPage(page.id);
+    try {
+      const held = result.pages.map((entry) => ({ id: entry.id, route: entry.route, url: entry.url }));
+      const outcome = await window.uiSync.explorePage(where, page, held);
+      if (!outcome.ok) {
+        notify("error", outcome.message ?? "这一页往下没走通。");
+        return;
+      }
+      const found = outcome.pages ?? [];
+      if (found.length === 0) {
+        notify("done", `「${page.name}」后面没有再找到新页面。`);
+        return;
+      }
+      setResult((current) => {
+        if (!current?.ok) return current;
+        const seen = new Set(current.pages.map((entry) => entry.id));
+        return { ...current, pages: [...current.pages, ...found.filter((entry) => !seen.has(entry.id))] };
+      });
+      notify("done", `从「${page.name}」又找到 ${found.length} 个页面。`);
+    } catch (cause) {
+      notify("error", cause instanceof Error ? cause.message : "这一页往下没走通。");
+    } finally {
+      setBusyPage(null);
+    }
+  };
+
   const sendOnePage = async (page: DiscoveredPage) => {
     if (!result?.ok) return;
     if (!figmaUrl.trim()) {
@@ -1001,6 +1031,7 @@ export default function PageInventoryView() {
             const { page } = menu;
             setMenu(null);
             if (action === "recapture") void recapture(page);
+            else if (action === "explore") void explore(page);
             else if (action === "figma") void sendOnePage(page);
             else void dropPage(page);
           }}

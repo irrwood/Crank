@@ -135,6 +135,72 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
 }
 
 /**
+ * Turns discovered states into pages by revisiting and capturing each one.
+ *
+ * Capture is the long half — every page is loaded again, waited on and
+ * photographed — so it says which page it is on. Without that the window goes
+ * silent for minutes once discovery finishes, which reads as having hung.
+ */
+async function captureStates(session, states, options, onStatus) {
+  const pages = [];
+  for (const [index, state] of states.entries()) {
+    onStatus?.({
+      phase: "capturing",
+      detail: `Capturing page ${index + 1} of ${states.length} — ${state.name}`
+    });
+    const { reached, ...shot } = await capturePage(session, state, options);
+    const variants = [];
+    for (const variant of state.variants ?? []) {
+      const { reached: found, ...look } = await capturePage(session, variant, options);
+      variants.push({ ...variant, ...look });
+    }
+    pages.push({ ...state, ...shot, variants });
+  }
+  return pages;
+}
+
+/**
+ * Walks one more level out from a page already in an inventory.
+ *
+ * A scan stops at a fixed depth, and what it did not walk is exactly the
+ * unclicked controls of the pages it kept. Continuing from one of them costs a
+ * replay of that page rather than of the project, and links back to pages
+ * already held are not followed, so the work stays proportional to what is
+ * actually new.
+ */
+async function exploreFromPage(target, page, { pages: held = [], maxStates = 20, onStatus, onProgress, ...options } = {}) {
+  const normalized = normalizeTargetUrl(target);
+  if (!normalized.ok) return { ok: false, message: normalized.message };
+  const session = createDiscoverySession(normalized.origin);
+  try {
+    const { states, skipped, filtered, inert, reached } = await discoverStates(session, {
+      from: { route: page.route, recipe: page.recipe ?? [] },
+      seenAddresses: held.flatMap((entry) => [entry.route, entry.url].filter(Boolean)),
+      // One click further than the page already sits, counted from where it is
+      // rather than from the app's root.
+      maxDepth: (page.recipe?.length ?? 0) + 1,
+      maxStates,
+      onProgress
+    });
+    if (!reached) {
+      return { ok: false, message: `Could not reach 「${page.name}」 again — the way back to it has changed. Rescan the project.` };
+    }
+    const knownIds = new Set(held.map((entry) => entry.id));
+    const found = states.filter((state) => !knownIds.has(state.id));
+    return {
+      ok: true,
+      origin: normalized.origin,
+      pages: await captureStates(session, found, options, onStatus),
+      skipped,
+      filtered,
+      inert
+    };
+  } finally {
+    session.close();
+  }
+}
+
+/**
  * Captures one page again, leaving the rest of the inventory alone.
  *
  * A page can come out wrong on its own — data that had not arrived, an image
@@ -209,29 +275,7 @@ async function scanUrl(target, {
       onProgress
     });
 
-    // Recapture from each recipe so the shot matches the recorded state rather
-    // than whatever the crawl happened to leave on screen.
-    const shoot = async (route, recipe) => {
-      const { reached, ...shot } = await capturePage(session, { route, recipe }, { withThumbnails, withHtml, withFigmaTree });
-      return shot;
-    };
-
-    const pages = [];
-    for (const [index, state] of states.entries()) {
-      // Capture is the long half — every page is revisited, waited on, and
-      // photographed. Without saying so the window goes silent for minutes
-      // after discovery finishes, which reads as having hung.
-      onStatus?.({
-        phase: "capturing",
-        detail: `Capturing page ${index + 1} of ${states.length} — ${state.name}`
-      });
-      const shot = await shoot(state.route, state.recipe);
-      const variants = [];
-      for (const variant of state.variants ?? []) {
-        variants.push({ ...variant, ...(await shoot(variant.route, variant.recipe)) });
-      }
-      pages.push({ ...state, ...shot, variants });
-    }
+    const pages = await captureStates(session, states, { withThumbnails, withHtml, withFigmaTree }, onStatus);
 
     return {
       ok: true,
@@ -454,4 +498,4 @@ async function scanFolder(root, options = {}) {
   }));
 }
 
-module.exports = { normalizeTargetUrl, parseSitemapPaths, recapturePage, scanFolder, scanUrl, withProjectServer };
+module.exports = { exploreFromPage, normalizeTargetUrl, parseSitemapPaths, recapturePage, scanFolder, scanUrl, withProjectServer };

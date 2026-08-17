@@ -536,3 +536,43 @@ test("a control that opened something small is still a judgement about size", as
   assert.equal(inert.length, 0, "the page did change");
   assert.equal(filtered[0].reason, "changed too little to be a page");
 });
+
+test("continues from one page without re-walking the ones already held", async () => {
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#reports", label: "Reports", role: "link", href: "/reports", to: "/reports" }]
+    },
+    "/reports": {
+      url: "/reports", fingerprint: ["reports"], skeleton: ["table@0"],
+      controls: [
+        { locator: "#archive", label: "Archive", role: "tab", to: "archive" },
+        { locator: "#home", label: "Home", role: "link", href: "/", to: "/" }
+      ]
+    },
+    archive: { url: "/reports", fingerprint: ["archive"], skeleton: ["table@0", "aside@1"], controls: [] }
+  });
+
+  // The first scan stopped at depth 1 and never opened the Archive tab.
+  const { states } = await discoverStates(session, {
+    from: { route: "/reports", recipe: [] },
+    seenAddresses: ["/", "/reports"],
+    maxDepth: 1
+  });
+
+  const names = states.map((state) => state.name);
+  assert.ok(names.some((name) => name.includes("Archive")), `expected Archive, got ${JSON.stringify(names)}`);
+  assert.ok(names.some((name) => name.includes("Reports")), "the page continued from comes back too, for the caller to drop");
+  assert.ok(!session.visits.some((visit) => visit.kind === "goto" && visit.route === "/"),
+    "the home page is already held and must not be walked again");
+});
+
+test("says so when the page it was asked to continue from cannot be reached", async () => {
+  const session = fakeSession({ "/": { url: "/", fingerprint: ["home"], controls: [] } });
+  const { reached, states } = await discoverStates(session, {
+    from: { route: "/gone", recipe: [] },
+    maxDepth: 1
+  });
+  assert.equal(reached, false);
+  assert.equal(states.length, 0);
+});
