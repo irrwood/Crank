@@ -3368,3 +3368,8 @@ button.screen-figma-link {
   padding: 3px 10px; border-radius: 999px;
   background: rgba(128, 128, 128, 0.14); opacity: 0.85;
 }
+
+.inventory-pairing {
+  margin: 0 0 4px; font-size: 30px; font-weight: 600;
+  letter-spacing: 0.16em; font-variant-numeric: tabular-nums;
+}

@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("uiSync", {
   startRecording: (target) => ipcRenderer.invoke("inventory:record-start", target),
   captureRecording: () => ipcRenderer.invoke("inventory:record-capture"),
   stopRecording: () => ipcRenderer.invoke("inventory:record-stop"),
+  sendInventoryToFigma: (inventory, figmaUrl) => ipcRenderer.invoke("inventory:send-to-figma", inventory, figmaUrl),
+  getFigmaExportStatus: (pairingCode) => ipcRenderer.invoke("inventory:figma-status", pairingCode),
   onRecorded: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("inventory:recorded", listener);

@@ -70,6 +70,10 @@ export default function PageInventoryView() {
   const [foreign, setForeign] = useState<{ info: ForeignProject; message: string } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [recording, setRecording] = useState<DiscoveredPage[] | null>(null);
+  const [figmaUrl, setFigmaUrl] = useState("");
+  const [figmaSession, setFigmaSession] = useState<
+    { pairingCode?: string; screenCount?: number; fileName?: string; requiresPairing?: boolean; missing?: string[]; dropped?: string[] } | null
+  >(null);
   const progressRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -175,6 +179,21 @@ export default function PageInventoryView() {
       const known = new Set(current.pages.map((page) => page.signature));
       return { ...current, pages: [...current.pages, ...recorded.filter((page) => !known.has(page.signature))] };
     });
+  };
+
+  const sendToFigma = async () => {
+    if (!result?.ok || !window.uiSync?.sendInventoryToFigma) return;
+    setError(null);
+    try {
+      const outcome = await window.uiSync.sendInventoryToFigma(
+        { origin: result.origin, pages: result.pages },
+        figmaUrl.trim()
+      );
+      if (!outcome.ok) { setError(outcome.message ?? "The export could not be prepared."); return; }
+      setFigmaSession(outcome);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The export failed.");
+    }
   };
 
   const onDrop = (event: React.DragEvent) => {
@@ -352,6 +371,21 @@ export default function PageInventoryView() {
             <button className="inventory-export" onClick={() => void exportPage()} type="button">
               Save handoff page…
             </button>
+            <input
+              aria-label="Figma design URL"
+              className="inventory-title-input"
+              onChange={(event) => setFigmaUrl(event.target.value)}
+              placeholder="Figma design URL"
+              value={figmaUrl}
+            />
+            <button
+              className="inventory-export"
+              disabled={!figmaUrl.trim()}
+              onClick={() => void sendToFigma()}
+              type="button"
+            >
+              Send to Figma
+            </button>
             {result.filtered.length > 0 && (
               <button className="inventory-link" onClick={() => setShowFiltered((value) => !value)} type="button">
                 {showFiltered ? "Hide" : "Show"} {result.filtered.length} left out
@@ -364,6 +398,29 @@ export default function PageInventoryView() {
               Saved to <code>{saved}</code>
               <button onClick={() => void window.uiSync?.revealFile?.(saved)} type="button">Show in Finder</button>
             </p>
+          )}
+
+          {figmaSession && (
+            <section className="inventory-recording">
+              <strong>
+                {figmaSession.screenCount} page{figmaSession.screenCount === 1 ? "" : "s"} ready for {figmaSession.fileName}
+              </strong>
+              <p>
+                Open the UI Sync plugin in that Figma file and enter this code. The layers are built
+                there — frames, text and vectors, not a screenshot.
+              </p>
+              <p className="inventory-pairing">{figmaSession.pairingCode}</p>
+              {(figmaSession.missing?.length ?? 0) > 0 && (
+                <p className="inventory-note">
+                  Not included, no layers were captured: {figmaSession.missing?.join(", ")}
+                </p>
+              )}
+              {(figmaSession.dropped?.length ?? 0) > 0 && (
+                <p className="inventory-note">
+                  Over the 120-page limit, left out: {figmaSession.dropped?.join(", ")}
+                </p>
+              )}
+            </section>
           )}
 
           {showFiltered && (

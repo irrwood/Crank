@@ -8,6 +8,7 @@ const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, di
 const { normalizeTargetUrl, scanFolder, scanUrl } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
+const { buildFigmaJob } = require("./figma-export.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
 const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
@@ -161,6 +162,12 @@ const handoffPageSchema = z.object({
     width: z.number().finite(),
     height: z.number().finite()
   }).nullable(),
+  figmaTree: z.object({
+    width: z.number().finite(),
+    height: z.number().finite(),
+    tree: z.unknown()
+  }).nullable().optional(),
+  figmaNodeId: z.string().regex(/^\d+:\d+$/).nullable().optional(),
   snapshot: z.object({
     html: z.string().max(60_000_000),
     bytes: z.number().finite(),
@@ -1320,6 +1327,39 @@ function registerIpc() {
     recording.close();
     recording = null;
     return { ok: true, pages };
+  });
+
+  ipcMain.handle("inventory:send-to-figma", async (_event, inventory, figmaUrl) => {
+    if (!figmaBridge) throw new Error("The local Figma bridge is not running");
+    const link = parseFigmaDesignUrl(z.string().min(1).max(2000).parse(figmaUrl));
+    if (!link) return { ok: false, message: "That is not a Figma design URL." };
+
+    const parsed = handoffInventorySchema.parse(inventory);
+    const built = buildFigmaJob(parsed, { projectName: parsed.origin, figmaFileName: link.fileName });
+    if (!built.ok) return built;
+
+    const connection = await ensureDeviceConnection();
+    const session = figmaBridge.enqueue(
+      built.job,
+      { root: parsed.origin ?? "", figmaFileKey: link.fileKey, connectionToken: connection.token },
+      connection.token,
+      new Map()
+    );
+    return {
+      ok: true,
+      ...session,
+      requiresPairing: !connection.confirmed,
+      fileName: link.fileName,
+      // Named so the caller can say what will not arrive, rather than letting
+      // a short export look complete.
+      missing: built.missing,
+      dropped: built.dropped
+    };
+  });
+
+  ipcMain.handle("inventory:figma-status", async (_event, pairingCode) => {
+    if (!figmaBridge) throw new Error("The local Figma bridge is not running");
+    return figmaBridge.getStatus(pairingCodeSchema.parse(pairingCode));
   });
 
   ipcMain.handle("inventory:export", async (_event, inventory, title) => {

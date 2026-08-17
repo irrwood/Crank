@@ -19,18 +19,18 @@ const baseScreenSchema = z.object({
 const domBoundsSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_:/-]{1,500}$/),
   selector: z.string().min(1).max(240).nullable(),
-  x: z.number().finite().min(-10000).max(10000),
-  y: z.number().finite().min(-10000).max(10000),
-  width: z.number().finite().min(0.5).max(10000),
-  height: z.number().finite().min(0.5).max(10000),
+  x: z.number().finite().min(-40000).max(40000),
+  y: z.number().finite().min(-40000).max(40000),
+  width: z.number().finite().min(0.5).max(40000),
+  height: z.number().finite().min(0.5).max(40000),
   name: z.string().min(1).max(100)
 });
 const cssColorSchema = z.string().min(1).max(80);
 const textLineRectSchema = z.object({
-  x: z.number().finite().min(-10000).max(10000),
-  y: z.number().finite().min(-10000).max(10000),
-  width: z.number().finite().min(0).max(10000),
-  height: z.number().finite().min(0).max(10000)
+  x: z.number().finite().min(-40000).max(40000),
+  y: z.number().finite().min(-40000).max(40000),
+  width: z.number().finite().min(0).max(40000),
+  height: z.number().finite().min(0).max(40000)
 }).strict();
 const domNodeSchema = z.lazy(() => z.discriminatedUnion("kind", [
   domBoundsSchema.extend({
@@ -49,7 +49,9 @@ const domNodeSchema = z.lazy(() => z.discriminatedUnion("kind", [
       opacity: z.number().finite().min(0).max(1),
       clipsContent: z.boolean()
     }),
-    children: z.array(domNodeSchema).max(400)
+    // A real dashboard has containers with thousands of rows. Refusing them
+    // would export a page missing most of its content.
+    children: z.array(domNodeSchema).max(6000)
   }),
   domBoundsSchema.extend({
     kind: z.literal("text"),
@@ -76,8 +78,8 @@ const domNodeSchema = z.lazy(() => z.discriminatedUnion("kind", [
     lineCount: z.number().int().min(1).max(1000).optional(),
     lineRects: z.array(textLineRectSchema).min(1).max(1000).optional(),
     lineBreakOffsets: z.array(z.number().int().min(1).max(3999)).max(999).optional(),
-    layoutWidth: z.number().finite().min(0.5).max(10000).optional(),
-    layoutX: z.number().finite().min(-10000).max(10000).optional()
+    layoutWidth: z.number().finite().min(0.5).max(40000).optional(),
+    layoutX: z.number().finite().min(-40000).max(40000).optional()
   }),
   domBoundsSchema.extend({ kind: z.literal("svg"), svg: z.string().min(1).max(250000) }),
   domBoundsSchema.extend({ kind: z.literal("image"), dataUrl: z.string().regex(/^data:image\/(?:png|jpeg|webp);base64,/).max(8_000_000) })
@@ -106,14 +108,14 @@ const screenSchema = z.discriminatedUnion("renderMode", [
   }),
   baseScreenSchema.extend({
     renderMode: z.literal("editable-dom"),
-    width: z.number().int().min(320).max(4096),
-    height: z.number().int().min(320).max(4096),
+    width: z.number().int().min(320).max(40000),
+    height: z.number().int().min(320).max(40000),
     domTree: domNodeSchema
   }),
   baseScreenSchema.extend({
     renderMode: z.literal("snapshot"),
-    width: z.number().int().min(320).max(4096),
-    height: z.number().int().min(320).max(4096)
+    width: z.number().int().min(320).max(40000),
+    height: z.number().int().min(320).max(40000)
   })
 ]);
 
@@ -129,8 +131,8 @@ const figmaDomNodeSnapshotSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_:/-]{1,500}$/),
   selector: z.string().min(1).max(240).nullable(),
   kind: z.enum(["element", "text", "svg", "image"]),
-  width: z.number().finite().min(0).max(10000),
-  height: z.number().finite().min(0).max(10000),
+  width: z.number().finite().min(0).max(40000),
+  height: z.number().finite().min(0).max(40000),
   backgroundColor: z.string().max(80).nullable(),
   radius: z.number().finite().min(0).max(5000).nullable(),
   fontSize: z.number().finite().min(0).max(400).nullable(),
