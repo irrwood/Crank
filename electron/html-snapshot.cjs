@@ -11,24 +11,47 @@
  * counted so a snapshot that quietly degraded can be spotted.
  */
 
-const MAX_ASSET_BYTES = 2_500_000;
-const MAX_TOTAL_ASSET_BYTES = 40_000_000;
+const MAX_ASSET_BYTES = 12_000_000;
+const MAX_TOTAL_ASSET_BYTES = 60_000_000;
+/** Above this a raster image is redrawn smaller; vectors are never touched. */
+const DOWNSCALE_OVER_BYTES = 250_000;
+const DOWNSCALE_TO_WIDTH = 1600;
 
 /**
  * Runs inside the page. Serialised with toString(), so it must be
  * self-contained and use no closure variables.
  */
 async function captureHtmlDocument(limits) {
-  const { maxAssetBytes, maxTotalAssetBytes } = limits;
+  const { maxAssetBytes, maxTotalAssetBytes, downscaleOverBytes, downscaleToWidth } = limits;
   const stats = {
     stylesheets: 0,
     inlinedAssets: 0,
     rasterised: [],
+    downscaled: [],
     skippedAssets: [],
     svgPreserved: 0,
     bytes: 0
   };
   let assetBudget = maxTotalAssetBytes;
+
+  const shrink = async (blob, label) => {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      if (bitmap.width <= downscaleToWidth) { bitmap.close?.(); return null; }
+      const scale = downscaleToWidth / bitmap.width;
+      const canvas = document.createElement("canvas");
+      canvas.width = downscaleToWidth;
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close?.();
+      const smaller = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.86));
+      if (!smaller || smaller.size >= blob.size) return null;
+      stats.downscaled.push(`${String(label).split("/").pop()} ${Math.round(blob.size / 1024)}KB → ${Math.round(smaller.size / 1024)}KB`);
+      return smaller;
+    } catch {
+      return null;
+    }
+  };
 
   const asDataUrl = async (url) => {
     if (!url || url.startsWith("data:")) return url || null;
@@ -50,13 +73,19 @@ async function captureHtmlDocument(limits) {
         stats.skippedAssets.push(`${absolute.slice(0, 100)} (${Math.round(blob.size / 1024)}KB)`);
         return null;
       }
-      assetBudget -= blob.size;
+      // A hero image at 2.3MB carries far more resolution than a handoff
+      // needs, and this site has 88MB of them. Vectors are left alone — they
+      // cost nothing and lose everything by being redrawn.
+      const shrinkable = blob.size > downscaleOverBytes && /^image\/(png|jpeg|webp)$/.test(blob.type);
+      const encoded = shrinkable ? await shrink(blob, absolute) : null;
+      const finalBlob = encoded ?? blob;
+      assetBudget -= finalBlob.size;
       stats.inlinedAssets += 1;
       return await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
         reader.onerror = () => resolve(null);
-        reader.readAsDataURL(blob);
+        reader.readAsDataURL(finalBlob);
       });
     } catch {
       return null;
@@ -205,4 +234,4 @@ async function captureHtmlDocument(limits) {
   return { html, stats, viewport: { width: window.innerWidth, height: document.documentElement.scrollHeight } };
 }
 
-module.exports = { MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument };
+module.exports = { DOWNSCALE_OVER_BYTES, DOWNSCALE_TO_WIDTH, MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument };

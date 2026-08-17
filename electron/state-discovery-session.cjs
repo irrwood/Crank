@@ -1,7 +1,7 @@
 const { BrowserWindow } = require("electron");
 const { randomBytes } = require("node:crypto");
 const { collectUiState, isFrameworkInternalPath } = require("./state-discovery.cjs");
-const { MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
+const { DOWNSCALE_OVER_BYTES, DOWNSCALE_TO_WIDTH, MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
 const { serializeRenderedApplication } = require("./figma-tree.cjs");
 const { assignKeys } = require("./node-identity.cjs");
 
@@ -132,6 +132,29 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
     }
   };
 
+  /**
+   * Scrolls the page through once and returns to the top.
+   *
+   * Reveal-on-scroll animations leave everything below the fold hidden until
+   * it comes into view, so a capture taken without scrolling holds only the
+   * first screen: this portfolio's home page had 44 elements visible and 108
+   * hidden, and 134 visible after. Lazy images need the same pass.
+   */
+  const revealAll = async () => {
+    try {
+      await contents.executeJavaScript(`(async () => {
+        const step = Math.max(200, window.innerHeight * 0.8);
+        const height = document.documentElement.scrollHeight;
+        for (let y = step, steps = 0; y < height + step && steps < 24; y += step, steps += 1) {
+          window.scrollTo(0, y);
+          await new Promise((resolve) => setTimeout(resolve, 140));
+        }
+        window.scrollTo(0, 0);
+        await new Promise((resolve) => setTimeout(resolve, 220));
+      })()`, true);
+    } catch {}
+  };
+
   const read = async () => {
     try {
       return await contents.executeJavaScript(`(${collectUiState.toString()})()`, true);
@@ -178,8 +201,13 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
         return null;
       }
       // Discovery only needs the structure, so it does not wait for data to
-      // land. Capture does — a chart drawn after the fetch would be missing.
+      // land. Capture does — a chart drawn after the fetch would be missing,
+      // and anything that reveals on scroll would never have appeared.
       await settle(patient ? { quietFor: 3, interval: 150, maxWait: 15_000, grace: 1_200 } : undefined);
+      if (patient) {
+        await revealAll();
+        await settle({ quietFor: 2, interval: 120, maxWait: 4_000 });
+      }
       return read();
     },
     async click(locator, { patient = false } = {}) {
@@ -197,6 +225,10 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
       }
       if (!clicked) return null;
       await settle(patient ? { quietFor: 3, interval: 150, maxWait: 15_000, grace: 1_200 } : undefined);
+      if (patient) {
+        await revealAll();
+        await settle({ quietFor: 2, interval: 120, maxWait: 4_000 });
+      }
       // A link can carry the window off-site even when its href looked local.
       // The load is blocked, leaving a dead page: report nothing rather than
       // fingerprinting the error.
@@ -210,7 +242,12 @@ function createDiscoverySession(origin, { width = 1220, height = 790 } = {}) {
     },
     async captureHtml() {
       try {
-        const limits = { maxAssetBytes: MAX_ASSET_BYTES, maxTotalAssetBytes: MAX_TOTAL_ASSET_BYTES };
+        const limits = {
+          maxAssetBytes: MAX_ASSET_BYTES,
+          maxTotalAssetBytes: MAX_TOTAL_ASSET_BYTES,
+          downscaleOverBytes: DOWNSCALE_OVER_BYTES,
+          downscaleToWidth: DOWNSCALE_TO_WIDTH
+        };
         return await contents.executeJavaScript(
           `(${captureHtmlDocument.toString()})(${JSON.stringify(limits)})`,
           true
