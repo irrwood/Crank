@@ -66,3 +66,28 @@ test("inline data is not a request to judge", () => {
   assert.equal(requestVerdict("data:image/png;base64,AAA", "GET", "image", host).allow, true);
   assert.equal(requestVerdict("nonsense", "GET", "other", host).allow, false);
 });
+
+const installedApp = "file:///Applications/Ledger.app/Contents/Resources/app.asar/dist/";
+
+test("an installed app may read the files it is made of", () => {
+  // Its markup, styles, fonts and pictures all arrive over file:. A browser
+  // draws every one of them when the person opens the app, and a capture that
+  // blocked them would photograph a page stripped of everything it is made of.
+  const document = requestVerdict(`${installedApp}index.html`, "GET", "document", installedApp);
+  assert.equal(document.allow, true);
+  assert.equal(requestVerdict(`${installedApp}assets/logo.png`, "GET", "image", installedApp).allow, true);
+  assert.equal(requestVerdict(`${installedApp}assets/Inter.woff2`, "GET", "font", installedApp).allow, true);
+});
+
+test("a page served over http still may not read the disk", () => {
+  const verdict = requestVerdict("file:///Users/me/.ssh/id_rsa", "GET", "xhr", "127.0.0.1:5173");
+  assert.equal(verdict.allow, false);
+  assert.equal(verdict.reason, "external");
+});
+
+test("an installed app is still held to what a scan is allowed to do", () => {
+  // The app is someone's real one, with their real data behind it: reading it
+  // back is the whole point, and writing to it is exactly what must not happen.
+  assert.equal(requestVerdict(`${installedApp}api/notes`, "POST", "xhr", installedApp).allow, false);
+  assert.equal(requestVerdict("https://analytics.example.com/collect", "GET", "script", installedApp).allow, false);
+});

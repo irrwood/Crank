@@ -235,6 +235,20 @@ test("names a state from the control that opened it, not a drifting heading", ()
   assert.equal(chooseStateName({ recipe: [], route: "/holdings/detail" }), "Holdings Detail");
 });
 
+test("a hash route names its page, not the document every page shares", () => {
+  // An installed app loads one file and routes inside it, so naming a page
+  // after the document calls every one of them Index. The route the app
+  // actually navigated is the part after the "#".
+  assert.equal(chooseStateName({ recipe: [], route: "index.html#/settings" }), "Settings");
+  assert.equal(chooseStateName({ recipe: [], route: "index.html#/inbox/archive" }), "Inbox Archive");
+  // The document an installed app opens at is its front door, the same page
+  // "/" is for a site: naming it after the file it happens to live in says
+  // nothing about it.
+  assert.equal(chooseStateName({ recipe: [], route: "index.html" }), "Home");
+  // A plain anchor is a position on a page, not a route, and still names nothing.
+  assert.equal(chooseStateName({ recipe: [], route: "/pricing#details" }), "Pricing");
+});
+
 test("does not repeat an identical name part", () => {
   assert.equal(humanizeStateName(["新任务", "新任务"]), "新任务");
 });

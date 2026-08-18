@@ -153,10 +153,19 @@ function isAppearanceLabel(label) {
 function humanizeRoute(route) {
   const value = String(route ?? "").trim();
   if (!value || value === "/") return "Home";
-  const [path, query] = value.split("?");
+  const [address, hash = ""] = value.split("#");
+  const [path, query] = address.split("?");
   const fromQuery = query ? query.split("&").map((pair) => pair.split("=").pop()).join(" ") : "";
-  const fromPath = path.split("/").filter(Boolean).join(" ");
-  return (fromPath || fromQuery || "Home")
+  // Hash routing puts the app's own route after the "#", and the document in
+  // front of it is the same one on every page: "index.html#/settings" is the
+  // settings page, not another Index.
+  const fromHash = hash.startsWith("/") ? hash.split("/").filter(Boolean).join(" ") : "";
+  // An app loaded from disk starts at a document rather than at "/", and that
+  // document is its front door: "index.html" is the same page "/" is.
+  const fromPath = /^(?:index|main|app)\.\w+$/i.test(path) && !fromHash
+    ? ""
+    : path.split("/").filter(Boolean).join(" ");
+  return (fromHash || fromPath || fromQuery || "Home")
     .replace(/[-_]+/g, " ")
     .replace(/\.\w+$/, "")
     .replace(/\b\w/g, (character) => character.toUpperCase())
@@ -313,7 +322,11 @@ function collectUiState() {
     seen.add(locator);
     const href = element.getAttribute("href");
     // Anything leaving the origin is navigation away from the app, not a state.
-    if (href && /^(?:[a-z]+:)?\/\//i.test(href) && !href.startsWith(location.origin)) continue;
+    // A page loaded from disk has no origin — the browser calls it "null" for
+    // every file on the machine — so there the app is the folder it loaded
+    // from, and its own pages would otherwise all read as somewhere else.
+    const home = location.origin === "null" ? location.href.replace(/[^/]*$/, "") : location.origin;
+    if (href && /^(?:[a-z]+:)?\/\//i.test(href) && !href.startsWith(home)) continue;
     // A plain anchor scrolls the page it is already on. Hash routing is the
     // exception and is written "#/somewhere".
     if (href && href.startsWith("#") && !href.startsWith("#/")) continue;

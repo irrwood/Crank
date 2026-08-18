@@ -1,6 +1,7 @@
 const { nativeImage } = require("electron");
 const { createBrowsingSession } = require("./browsing-session.cjs");
 const { requestVerdict } = require("./request-policy.cjs");
+const { isAppOrigin, originOf } = require("./page-origin.cjs");
 
 /**
  * Drives an app UI Sync did not launch, over its debugging port.
@@ -138,8 +139,13 @@ function openSocket(url) {
 async function createAttachedSession(target, { origin, connect = openSocket } = {}) {
   const socket = await connect(target.webSocketDebuggerUrl);
   const protocol = createProtocol(socket);
-  const pageOrigin = origin ?? new URL(target.url).origin;
-  const originHost = new URL(pageOrigin).host;
+  const pageOrigin = origin ?? originOf(target.url);
+  // An installed app is its own folder or its own scheme rather than a host,
+  // and the request policy is told which of the two it is looking at. Its
+  // origin is also not a URL — "client://app" has no host to parse out — so it
+  // is passed through whole rather than taken apart.
+  const ownApp = isAppOrigin(pageOrigin);
+  const originHost = ownApp ? pageOrigin : new URL(pageOrigin).host;
   const blocked = { mutations: new Set(), external: new Set(), fetched: new Set() };
   const drawn = new Set();
   let lastRequestAt = 0;
@@ -210,10 +216,18 @@ async function createAttachedSession(target, { origin, connect = openSocket } = 
       if (!shot.data) return null;
       return nativeImage.createFromBuffer(Buffer.from(shot.data, "base64"));
     },
-    clearStorage: () => protocol.send("Storage.clearDataForOrigin", {
-      origin: pageOrigin,
-      storageTypes: "cookies,local_storage,indexeddb,websql,service_workers,cache_storage"
-    }),
+    // What an installed app keeps is kept under one origin for the whole app
+    // rather than one per address. Clearing it between pages would sign the
+    // person out of the application Crank is scanning —
+    // their real one, with their real session in it. A theme carried over from
+    // an earlier click is the smaller of the two costs, and is reported as a
+    // variant rather than silently mixed in.
+    clearStorage: () => (ownApp
+      ? Promise.resolve(null)
+      : protocol.send("Storage.clearDataForOrigin", {
+        origin: pageOrigin,
+        storageTypes: "cookies,local_storage,indexeddb,websql,service_workers,cache_storage"
+      })),
     // Only the connection is ours. The window belongs to whoever is running the
     // app, and closing it would take their session down with the scan.
     dispose: () => protocol.close()

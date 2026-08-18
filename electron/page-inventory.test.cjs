@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const os = require("node:os");
 const path = require("node:path");
 const { mkdtemp, mkdir, writeFile, rm } = require("node:fs/promises");
-const { declaresWorkspace, normalizeTargetUrl, parseSitemapPaths, scanFolder } = require("./page-inventory.cjs");
+const { declaresWorkspace, looksLikeAppBundle, normalizeTargetUrl, parseSitemapPaths, scanFolder } = require("./page-inventory.cjs");
 
 test("accepts the addresses people actually type", () => {
   assert.deepEqual(normalizeTargetUrl("localhost:8000"), { ok: true, origin: "http://localhost:8000", startPath: "/" });
@@ -83,6 +83,29 @@ test("a folder that merely contains projects is still scanned itself", async () 
   try {
     await writeFile(path.join(root, "index.html"), "<h1>Portfolio</h1>");
     assert.equal(await declaresWorkspace(root), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an installed app is opened, not served like a project folder", async () => {
+  // A .app is a folder on disk and the one folder that is not a project: there
+  // is no dev script in there to run, only a build to open. Dropping one used
+  // to reach the project scanner, which reported the absence of a package.json
+  // — true, and nothing to do with why it could not be scanned.
+  const root = await mkdtemp(path.join(os.tmpdir(), "crank-app-"));
+  try {
+    const bundle = path.join(root, "Notes.app");
+    await mkdir(path.join(bundle, "Contents", "MacOS"), { recursive: true });
+    await writeFile(path.join(bundle, "Contents", "MacOS", "Notes"), "");
+
+    assert.equal(looksLikeAppBundle(bundle), true);
+    const outcome = await scanFolder(bundle);
+    assert.equal(outcome.ok, false);
+    // Named for what it is, before anything is started: an app with no web
+    // runtime inside exposes no debugging protocol to attach to.
+    assert.equal(outcome.reason, "not-web");
+    assert.match(outcome.message, /Notes is not built on a web runtime/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

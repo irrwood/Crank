@@ -1,4 +1,5 @@
 const { isFrameworkInternalPath } = require("./state-discovery.cjs");
+const { isAppOrigin, withinOrigin } = require("./page-origin.cjs");
 
 /**
  * Decides what a crawl is allowed to request.
@@ -43,6 +44,19 @@ function requestVerdict(url, method, resourceType, originHost, drawn = null) {
   const isLocal = parsed.host === originHost || isLoopback;
   const kind = String(resourceType || "").toLowerCase();
   const verb = String(method || "GET").toUpperCase();
+  // A packaged desktop app draws its interface from its own files, or from a
+  // scheme it registered for itself: file:// and client:// and app:// are how
+  // its markup, styles, fonts and pictures arrive. Reading those is reading the
+  // app the person already has installed — it writes nothing and runs nothing
+  // that opening the app would not have run anyway. Blocking them protects
+  // nothing and leaves the page stripped of everything it is made of, which is
+  // the one thing capture must never do.
+  if (!["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
+    if (isAppOrigin(originHost) && withinOrigin(parsed, originHost) && ["GET", "HEAD"].includes(verb)) {
+      return { allow: true, isFetch: false };
+    }
+    return { allow: false, reason: "external", host: parsed.host || parsed.protocol.replace(":", "") };
+  }
   if (!isLocal || !["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
     const readable = ["GET", "HEAD"].includes(verb) && ["http:", "https:"].includes(parsed.protocol);
     // Reading back something the page already displayed. Capture inlines its

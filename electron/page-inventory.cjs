@@ -12,6 +12,8 @@ const { startLocalRendererServer } = require("./static-server.cjs");
 const { readdir } = require("node:fs/promises");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 const { createAttachedSession, listTargets } = require("./cdp-session.cjs");
+const { describeAppBundle, launchAppBundle, looksLikeAppBundle } = require("./app-bundle.cjs");
+const { isFileOrigin, originOf, routeWithin } = require("./page-origin.cjs");
 
 /**
  * Builds a page inventory from nothing but a URL.
@@ -91,6 +93,8 @@ function parseSitemapPaths(xml, origin) {
 }
 
 async function readSitemap(origin) {
+  // An app loaded from disk has no server to ask.
+  if (isFileOrigin(origin)) return [];
   for (const candidate of ["/sitemap.xml", "/sitemap_index.xml"]) {
     const body = await fetchText(`${origin}${candidate}`);
     const paths = parseSitemapPaths(body, origin);
@@ -189,17 +193,113 @@ async function scanAttached(port, { targetId = null, onStatus, ...options } = {}
   onStatus?.({ phase: "starting", detail: `Attached to ${target.title}` });
 
   let origin;
+  let startPath;
   try {
-    origin = new URL(target.url).origin;
+    const shown = new URL(target.url);
+    origin = originOf(shown);
+    // Relative to the app rather than to the disk, for a window loaded from a
+    // file: the folders above it are where the app was installed, not a route.
+    startPath = isFileOrigin(origin)
+      ? routeWithin(shown.pathname, origin) + shown.search
+      : shown.pathname + shown.search || "/";
   } catch {
+    return { ok: false, message: `That window is showing ${target.url || "nothing"}, which cannot be scanned.` };
+  }
+  if (!origin) {
     return { ok: false, message: `That window is showing ${target.url || "nothing"}, which cannot be scanned.` };
   }
 
   const session = await createAttachedSession(target, { origin });
-  const result = await runScan(session, origin, new URL(target.url).pathname || "/", { ...options, onStatus });
+  const result = await runScan(session, origin, startPath, { ...options, onStatus });
   return result.ok
     ? { ...result, servedBy: `attached to ${target.title}`, attached: true, windows: targets }
     : result;
+}
+
+/**
+ * Opens an installed application, hands its window to a job, and puts it away.
+ *
+ * The person holding the build is often not the person who can run the
+ * project, and for them the app *is* the project. What the job then does is the
+ * attached work unchanged — the same crawl, the same guards, the same capture —
+ * because an app opened with a debugging port and an app that already had one
+ * are the same app.
+ */
+async function withAppSession(root, { onStatus } = {}, job) {
+  const bundle = await describeAppBundle(root);
+  if (!bundle) return { ok: false, message: `${root} is not an application.` };
+  if (bundle.runtime !== "electron") {
+    // Named rather than attempted: an app with no web runtime inside exposes no
+    // debugging protocol at all, and opening it would only produce a wait.
+    return {
+      ok: false,
+      reason: "not-web",
+      message: `${bundle.name} is not built on a web runtime — there is no Electron framework and no packed app inside it, so it has no pages to read. Web and Electron apps can be scanned this way.`
+    };
+  }
+
+  onStatus?.({ phase: "starting", detail: `Opening ${bundle.name} with a debugging port` });
+  const launched = await launchAppBundle(bundle);
+  if (!launched.ok) return { ok: false, message: launched.message };
+
+  const window = launched.windows[0];
+  const origin = originOf(window.url);
+  if (!origin) {
+    await launched.stop();
+    return { ok: false, message: `${bundle.name} opened a window showing ${window.url || "nothing"}, which cannot be scanned.` };
+  }
+
+  const session = await createAttachedSession(window, { origin });
+  try {
+    return await job(session, { bundle, origin, window });
+  } finally {
+    session.close();
+    // Crank opened this copy, so Crank closes it. An app left running behind
+    // the scan is one the person did not ask for and would have to find.
+    await launched.stop();
+  }
+}
+
+/** The icon macOS already draws for an installed app. */
+async function bundleIcon(root) {
+  try {
+    const image = await require("electron").app?.getFileIcon?.(root, { size: "normal" });
+    return image && !image.isEmpty() ? image.toDataURL() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where in the app the window Crank attached to already was. */
+function startPathOf(url, origin) {
+  try {
+    const shown = new URL(url);
+    return isFileOrigin(origin)
+      ? routeWithin(shown.pathname, origin) + shown.search
+      : shown.pathname + shown.search || "/";
+  } catch {
+    return "/";
+  }
+}
+
+/** Scans an installed application, from its own launch to its own shutdown. */
+async function scanAppBundle(target, { onStatus, ...options } = {}) {
+  return withAppSession(target, { onStatus }, async (session, { bundle, origin, window }) => {
+    onStatus?.({ phase: "starting", detail: `${bundle.name} is open — reading ${window.title || bundle.name}` });
+    const result = await runScan(session, origin, startPathOf(window.url, origin), { ...options, onStatus });
+    return result.ok
+      ? {
+        ...result,
+        // A page declares its icon and a scan takes it from there, but a
+        // desktop app rarely bothers — it already has one, the one it wears in
+        // the Dock, and that is what tells it apart in the list.
+        icon: result.icon ?? await bundleIcon(bundle.root),
+        servedBy: `${bundle.name}, opened with a debugging port`,
+        attached: true,
+        launched: bundle.name
+      }
+      : result;
+  });
 }
 
 /**
@@ -236,10 +336,18 @@ async function captureStates(session, states, options, onStatus) {
  * already held are not followed, so the work stays proportional to what is
  * actually new.
  */
-async function exploreFromPage(target, page, { pages: held = [], maxStates = 20, onStatus, onProgress, ...options } = {}) {
+async function exploreFromPage(target, page, options = {}) {
   const normalized = normalizeTargetUrl(target);
   if (!normalized.ok) return { ok: false, message: normalized.message };
-  const session = createDiscoverySession(normalized.origin);
+  return exploreWith(createDiscoverySession(normalized.origin), normalized.origin, page, options);
+}
+
+/** The same walk, one level out from a page of an installed application. */
+async function exploreInApp(root, page, options = {}) {
+  return withAppSession(root, options, (session, { origin }) => exploreWith(session, origin, page, options, { keepOpen: true }));
+}
+
+async function exploreWith(session, origin, page, { pages: held = [], maxStates = 20, onStatus, onProgress, ...options } = {}, { keepOpen = false } = {}) {
   try {
     const { states, skipped, filtered, inert, start, reached } = await discoverStates(session, {
       from: { route: page.route, recipe: page.recipe ?? [] },
@@ -261,14 +369,16 @@ async function exploreFromPage(target, page, { pages: held = [], maxStates = 20,
     const found = states.filter((state) => state !== start && !knownIds.has(state.id));
     return {
       ok: true,
-      origin: normalized.origin,
+      origin,
       pages: await captureStates(session, found, options, onStatus),
       skipped,
       filtered,
       inert
     };
   } finally {
-    session.close();
+    // The application's own window closes with the app; a window Crank opened
+    // for the walk is closed here.
+    if (!keepOpen) session.close();
   }
 }
 
@@ -283,7 +393,15 @@ async function exploreFromPage(target, page, { pages: held = [], maxStates = 20,
 async function recapturePage(target, page, options = {}) {
   const normalized = normalizeTargetUrl(target);
   if (!normalized.ok) return { ok: false, message: normalized.message };
-  const session = createDiscoverySession(normalized.origin);
+  return recaptureWith(createDiscoverySession(normalized.origin), page, options);
+}
+
+/** The same capture, of one page of an installed application. */
+async function recaptureInApp(root, page, options = {}) {
+  return withAppSession(root, options, (session) => recaptureWith(session, page, options, { keepOpen: true }));
+}
+
+async function recaptureWith(session, page, options = {}, { keepOpen = false } = {}) {
   try {
     const { reached, ...shot } = await capturePage(session, page, options);
     // Say so rather than handing back an emptied page, which would read as a
@@ -305,7 +423,7 @@ async function recapturePage(target, page, options = {}) {
     }
     return { ok: true, page: { ...page, ...shot, variants } };
   } finally {
-    session.close();
+    if (!keepOpen) session.close();
   }
 }
 
@@ -602,6 +720,9 @@ async function withProjectServer(root, { onStatus, allowWorkspaceRoot = false, .
 
 async function scanFolder(root, options = {}) {
   const { onStatus, allowWorkspaceRoot, ...forward } = options;
+  // An installed app is a folder too, and dropping one means the app, not its
+  // insides: there is no dev script in there to run, only a build to open.
+  if (looksLikeAppBundle(root)) return scanAppBundle(root, options);
   return withProjectServer(root, options, (url, served) => scanUrl(url, {
     ...forward,
     onStatus,
@@ -610,4 +731,4 @@ async function scanFolder(root, options = {}) {
   }));
 }
 
-module.exports = { declaresWorkspace, exploreFromPage, listTargets, normalizeTargetUrl, parseSitemapPaths, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer };
+module.exports = { declaresWorkspace, exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, parseSitemapPaths, recaptureInApp, recapturePage, scanAppBundle, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer };

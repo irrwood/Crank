@@ -2,6 +2,7 @@ const { collectUiState } = require("./state-discovery.cjs");
 const { DOWNSCALE_OVER_BYTES, DOWNSCALE_TO_WIDTH, MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
 const { serializeRenderedApplication } = require("./figma-tree.cjs");
 const { assignKeys } = require("./node-identity.cjs");
+const { isFileOrigin, routeWithin, withinOrigin } = require("./page-origin.cjs");
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -92,7 +93,15 @@ function createBrowsingSession(origin, driver) {
     })()`).catch(() => null);
   };
 
-  const read = () => evaluate(`(${collectUiState.toString()})()`).catch(() => null);
+  const read = async () => {
+    const snapshot = await evaluate(`(${collectUiState.toString()})()`).catch(() => null);
+    if (!snapshot || !isFileOrigin(origin)) return snapshot;
+    // The page reports where it is as a path on disk, and every page of an
+    // installed app shares the same long prefix — where it happens to have been
+    // installed. The route is what is left below the app's own folder, which is
+    // also what a page ends up named after.
+    return { ...snapshot, url: routeWithin(snapshot.url, origin) };
+  };
 
   /** Discovery needs structure only; capture waits for data and scrolls. */
   const rest = async (patient) => {
@@ -123,14 +132,17 @@ function createBrowsingSession(origin, driver) {
       // Resolve against the origin rather than assigning to pathname: a route
       // like "/?view=settings" would otherwise be encoded into the path as
       // "/%3Fview=settings" and silently load the wrong view.
-      const path = typeof route === "string" && route ? route : "/";
+      // An app loaded from disk has a folder for an origin and routes relative
+      // to it, so its own root is "" — "/" would resolve to the root of the
+      // file system rather than to the app.
+      const path = typeof route === "string" && route ? route : isFileOrigin(origin) ? "" : "/";
       let target;
       try {
         target = new URL(path, origin);
       } catch {
         return null;
       }
-      if (target.origin !== origin) return null;
+      if (!withinOrigin(target, origin)) return null;
       timing.forgetFetch();
       try {
         await navigate(target.toString());
@@ -158,9 +170,11 @@ function createBrowsingSession(origin, driver) {
       await rest(patient);
       // A link can carry the window off-site even when its href looked local.
       // The load is blocked, leaving a dead page: report nothing rather than
-      // fingerprinting the error.
+      // fingerprinting the error. Asked as an address rather than as an origin,
+      // because a page loaded from disk reports its origin as the string
+      // "null" — which matches every other file on the machine and no app.
       try {
-        if (await evaluate("location.origin") !== origin) return null;
+        if (!withinOrigin(await evaluate("location.href"), origin)) return null;
       } catch {
         return null;
       }
