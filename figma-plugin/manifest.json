@@ -1,14 +1,20 @@
 {
-  "name": "UI Sync Bridge",
+  "name": "Crank",
   "id": "1533373984774514799",
   "api": "1.0.0",
-  "editorType": ["figma"],
+  "editorType": [
+    "figma"
+  ],
   "main": "code.js",
   "ui": "ui.html",
   "documentAccess": "dynamic-page",
-  "permissions": ["teamlibrary"],
+  "permissions": [
+    "teamlibrary"
+  ],
   "networkAccess": {
-    "allowedDomains": ["http://localhost:38457"],
-    "reasoning": "Connects to the UI Sync desktop app on this Mac to receive local mapping jobs and return Figma node IDs."
+    "allowedDomains": [
+      "http://localhost:38457"
+    ],
+    "reasoning": "Connects to the Crank desktop app running on the same computer to receive local layer jobs and return the Figma node IDs it created. No data is sent anywhere else."
   }
 }

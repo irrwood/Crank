@@ -1,11 +1,36 @@
-# UI Sync Bridge for Figma
+# Crank for Figma
 
-This local companion plugin creates missing screen frames and restores existing mappings by stable shared plugin data.
+The companion plugin. Crank runs on your computer, walks your project, and
+sends the layers here; this plugin builds them in the open Figma file and
+remembers which frame each page became, so a second run updates those frames
+instead of drawing new ones beside them.
 
-Install it once in the Figma desktop app:
+## Install it for development
 
-1. Open **Plugins → Development → Import plugin from manifest…**
+1. In the Figma desktop app, open **Plugins → Development → Import plugin from
+   manifest…**
 2. Choose `manifest.json` in this folder.
-3. Keep UI Sync Desktop running, then launch **UI Sync Bridge** in the connected Figma Design file.
+3. Keep Crank running on the same computer, then run **Crank** from the
+   Plugins menu in the file you want the pages to land in.
 
-The plugin only connects to `localhost:38457`. It receives screen names and opaque stable IDs, not Swift source code.
+## What it can reach
+
+`localhost:38457`, and nothing else. That is the Crank app on the same machine.
+It receives page names, layer geometry and opaque stable IDs, and returns the
+Figma node IDs it created. Nothing about the file or the project leaves the
+computer.
+
+## Publishing
+
+The plugin is useless on its own — it does nothing until the desktop app is
+running and has something to send. Whichever way it is published, the
+description has to say that first, or someone will install it and see a plugin
+that appears to hang.
+
+Before submitting, check that:
+
+- `manifest.json` carries the current `name` and its existing `id`;
+- `networkAccess.reasoning` still describes what the plugin actually does,
+  since review reads it against the code;
+- the version in the file is the one that has been run end to end, because the
+  published build is a snapshot, not a link to this folder.
