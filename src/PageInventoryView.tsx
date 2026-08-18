@@ -390,7 +390,7 @@ export default function PageInventoryView() {
   const [figmaUrl, setFigmaUrl] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [view, setView] = useState<"gallery" | "compact" | "list">("gallery");
+  const [view, setView] = useState<"gallery" | "compact" | "list" | "single">("gallery");
   const [figmaOpen, setFigmaOpen] = useState(false);
   const [menu, setMenu] = useState<{ page: DiscoveredPage; at: { x: number; y: number } } | null>(null);
   const [busyPage, setBusyPage] = useState<string | null>(null);
@@ -984,11 +984,11 @@ export default function PageInventoryView() {
                   <button
                     className="connection-path"
                     onClick={() => void window.uiSync?.revealFile?.(scannedFolder)}
-                    title="在访达中显示"
+                    title={`${scannedFolder} — 在访达中显示`}
                     type="button"
                   >
                     <FolderGit2 size={13} />
-                    <span>{scannedFolder}</span>
+                    <span>{scannedFolder.split("/").filter(Boolean).pop()}</span>
                   </button>
                 ) : (
                   <><Globe2 size={13} /><span>{result.origin}</span></>
@@ -1022,23 +1022,26 @@ export default function PageInventoryView() {
           {stalled && (
             <section className="inventory-stalled">
               <p>
-                <strong>只扫到一页：界面在跑，但数据不在。</strong>
-                {" "}这一页是真的，其余部分没有出现，因为这一页上的控件点下去都没有反应。
+                <strong>只扫到一页：界面在跑，数据不在。</strong>
+                {" "}这一页是真的。其余部分没有出现，是因为界面被单独启动了——它依赖的进程没跟着跑，
+                Electron 拿不到 preload，前端拿不到后端接口，所以每一屏都是空的。
               </p>
+              {/* No launch command here. The one that used to be printed only
+                  worked for a bare `electron .`; a project built with
+                  electron-vite, Forge or a custom script fails on it outright,
+                  and a command that does not run is worse than none. This line
+                  goes in the app's own code, so how it is launched stops
+                  mattering. */}
               <p className="inventory-note">
-                Crank 单独启动了界面，但它依赖的进程没有跟着跑：Electron 拿不到 preload，前端拿不到后端接口。
-                项目列表、账号、数据都在你正在运行的那个进程里，所以这份界面每一屏都是空的。
+                要扫到真实内容，Crank 需要连上你自己跑着的那个应用，而它得开着调试端口。
+                在主进程里加一行，放在 <code>app.whenReady()</code> 之前：
               </p>
-              {/* The way out has to be reachable from where the problem is
-                  stated. Recording is not it: it opens a window of UI Sync's
-                  own onto the same address, so an app whose data lives behind
-                  a bridge is just as empty there however much you click. */}
+              <pre className="inventory-snippet">app.commandLine.appendSwitch("remote-debugging-port", "9222");</pre>
+              <p className="inventory-note">
+                不论项目用 electron-vite、Forge 还是自己的启动脚本，这一行都有效。照常启动应用，
+                然后在这里填端口。扫完想删掉也可以。
+              </p>
               <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scanAttached(); }}>
-                <p className="inventory-note">
-                  让 Crank 连上你已经开着的那个应用，扫它的真实窗口。照常启动，加一个调试端口就行。
-                  Crank 只读不写，不会另开应用，也不改你的代码。
-                  <code>npx electron . --remote-debugging-port=9222</code>
-                </p>
                 <input
                   aria-label="调试端口"
                   onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
@@ -1072,7 +1075,7 @@ export default function PageInventoryView() {
 
           <div className="inventory-toolbar">
             <span className="view-switch">
-              {([["gallery", "大图"], ["compact", "紧凑"], ["list", "列表"]] as const).map(([id, label]) => (
+              {([["gallery", "大图"], ["compact", "紧凑"], ["list", "列表"], ["single", "单页"]] as const).map(([id, label]) => (
                 <button aria-pressed={view === id} key={id} onClick={() => setView(id)} type="button">{label}</button>
               ))}
             </span>
@@ -1146,7 +1149,7 @@ export default function PageInventoryView() {
               ))}
             </ul>
           ) : (
-            <div className={`inventory-grid${view === "compact" ? " is-compact" : ""}`}>
+            <div className={`inventory-grid${view === "compact" ? " is-compact" : ""}${view === "single" ? " is-single" : ""}`}>
               {pages.map((page, index) => (
                 <PageCard
                   busy={busyPage === page.id}

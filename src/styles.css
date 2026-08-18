@@ -3638,6 +3638,16 @@ button.screen-figma-link {
 }
 
 .inventory-grid.is-compact { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 18px 14px; }
+
+/* One page per row, at whatever width the window gives. For looking at a page
+   rather than at the set of them: the thumbnail keeps its own proportions
+   instead of being cropped to a card, so a long page reads as long. */
+.inventory-grid.is-single { grid-template-columns: 1fr; gap: 44px; }
+.inventory-grid.is-single .inventory-shot { aspect-ratio: auto; cursor: zoom-in; }
+.inventory-grid.is-single .inventory-shot img { height: auto; object-fit: contain; object-position: top center; }
+.inventory-grid.is-single .inventory-shot-empty { min-height: 220px; }
+.inventory-grid.is-single .inventory-meta h3 { font-size: 15px; }
+.inventory-grid.is-single .inventory-address { font-size: 12px; }
 .inventory-grid.is-compact .inventory-meta h3 { font-size: 11.5px; }
 .inventory-grid.is-compact .inventory-address { display: none; }
 
