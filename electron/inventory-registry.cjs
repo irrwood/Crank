@@ -1,6 +1,7 @@
 const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { readFile, writeFile, mkdir, rm } = require("node:fs/promises");
+const { createAssetStore, externalise, referencesIn } = require("./asset-store.cjs");
 
 /**
  * Remembers what has been scanned, and keeps the result.
@@ -83,16 +84,36 @@ function groupTargets(targets) {
  * app draws from. Renaming it would otherwise have made every scan already on
  * disk look as though it had captured no layers at all.
  */
+/**
+ * Reads a scan taken by an older version, in the terms this one uses.
+ *
+ * Renaming or dropping a field cannot mean discarding what is already on disk:
+ * someone with a folder scanned last week would open it to nothing.
+ */
 function carryOldNames(inventory) {
   if (!inventory?.pages) return inventory;
-  const rename = (page) => (page && "figmaTree" in page && !("layerTree" in page)
-    ? (({ figmaTree, ...rest }) => ({ ...rest, layerTree: figmaTree }))(page)
-    : page);
-  return { ...inventory, pages: inventory.pages.map(rename) };
+  // The captured markup is gone: both the preview and the exported handoff file
+  // draw the layer tree now, and the markup was the largest thing in a scan by
+  // far. Dropped on read rather than kept and ignored, or the weight stays
+  // forever in every scan taken before this.
+  const carry = (look) => {
+    if (!look) return look;
+    const { figmaTree, snapshot, ...rest } = look;
+    return "figmaTree" in look && !("layerTree" in look) ? { ...rest, layerTree: figmaTree } : rest;
+  };
+  // A re-skinned page — dark, or another language — carries a whole capture of
+  // its own, so it has the same weight to shed.
+  const carryPage = (page) => (page?.variants
+    ? { ...carry(page), variants: page.variants.map(carry) }
+    : carry(page));
+  return { ...inventory, pages: inventory.pages.map(carryPage) };
 }
 
 function createInventoryRegistry(directory) {
   const listPath = path.join(directory, "inventory-targets.json");
+  // Pictures are written once under the hash of their bytes and referred to
+  // from the scan, rather than inlined into it wherever they appear.
+  const assets = createAssetStore(directory);
   const cachePath = (id) => path.join(directory, "inventories", `${id}.json`);
 
   const read = async () => {
@@ -177,17 +198,20 @@ function createInventoryRegistry(directory) {
       }
     },
 
+    assets,
+
     async saveInventory(kind, target, inventory, { parent = null } = {}) {
       const id = targetId(kind, target);
       await mkdir(path.join(directory, "inventories"), { recursive: true });
-      await writeFile(cachePath(id), JSON.stringify(inventory));
+      const lifted = await externalise(inventory, assets);
+      await writeFile(cachePath(id), JSON.stringify(lifted));
       await this.remember(kind, target, {
         pageCount: inventory?.pages?.length ?? null,
         scannedAt: new Date().toISOString(),
         parent,
         // Kept on the entry, not only inside the inventory, so the list can
         // draw it without loading a scan that runs to tens of megabytes.
-        icon: inventory?.icon ?? null
+        icon: lifted?.icon ?? null
       });
       return id;
     },
@@ -201,7 +225,7 @@ function createInventoryRegistry(directory) {
      */
     async updateInventory(id, inventory) {
       await mkdir(path.join(directory, "inventories"), { recursive: true });
-      await writeFile(cachePath(id), JSON.stringify(inventory));
+      await writeFile(cachePath(id), JSON.stringify(await externalise(inventory, assets)));
       return id;
     },
 
@@ -265,11 +289,43 @@ function createInventoryRegistry(directory) {
     },
 
     async loadInventory(id) {
+      let text;
       try {
-        return carryOldNames(JSON.parse(await readFile(cachePath(id), "utf8")));
+        text = await readFile(cachePath(id), "utf8");
       } catch {
         return null;
       }
+      let inventory;
+      try {
+        inventory = carryOldNames(JSON.parse(text));
+      } catch {
+        return null;
+      }
+      // Scans taken before pictures were stored separately carry them inline,
+      // many times over, and older ones carry the page's markup as well.
+      // Opening one is the moment all of that is in hand, so it is also the
+      // moment to write the smaller form back — once, not on every open.
+      if (!text.includes("data:image/") && !text.includes('"snapshot"')) return inventory;
+      const lifted = await externalise(inventory, assets);
+      await writeFile(cachePath(id), JSON.stringify(lifted)).catch(() => null);
+      return lifted;
+    },
+
+    /**
+     * Removes stored pictures that no scan on this machine points at any more.
+     *
+     * Run at startup rather than after a save, because what makes a picture
+     * unreferenced is usually a *different* project being forgotten, and asking
+     * every scan on disk what it still uses is not work to do mid-scan.
+     */
+    async sweepAssets() {
+      const referenced = new Set();
+      for (const entry of await read()) {
+        const stored = await this.loadInventory(entry.id);
+        if (stored) referencesIn(stored, referenced);
+        referencesIn(entry, referenced);
+      }
+      return assets.collect(referenced);
     }
   };
 }

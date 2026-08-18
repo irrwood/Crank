@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { mkdtemp, rm, writeFile, mkdir } = require("node:fs/promises");
+const { mkdtemp, rm, writeFile, mkdir, readFile, readdir } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { createInventoryRegistry, groupTargets, nameFor, targetId } = require("./inventory-registry.cjs");
@@ -178,11 +178,13 @@ test("a project keeps the icon its own pages declare", async () => {
     const icon = "data:image/png;base64,iVBORw0KGgo=";
     await registry.saveInventory("folder", "/repos/site", { ok: true, pages: [{ id: "a" }], icon });
     const [entry] = await registry.list();
-    assert.equal(entry.icon, icon);
+    // Held as a reference like every other picture; the window resolves it
+    // through the crank-asset scheme rather than carrying the bytes in a list.
+    assert.equal(await registry.assets.dataUrl(entry.icon), icon);
 
     // A later scan that finds none keeps the one already known.
     await registry.saveInventory("folder", "/repos/site", { ok: true, pages: [{ id: "a" }], icon: null });
-    assert.equal((await registry.list())[0].icon, icon);
+    assert.equal((await registry.list())[0].icon, entry.icon);
   });
 });
 
@@ -201,5 +203,96 @@ test("a scan saved before the rename still has its layers", async () => {
     const loaded = await registry.loadInventory(id);
     assert.equal(loaded.pages[0].layerTree.width, 1220);
     assert.ok(!("figmaTree" in loaded.pages[0]), "and it is not carried under both names");
+  });
+});
+
+test("a picture repeated across pages is saved once, and reopens whole", async () => {
+  await withRegistry(async (registry, directory) => {
+    const shared = `data:image/webp;base64,${Buffer.from("one screenshot").toString("base64")}`;
+    const id = await registry.saveInventory("url", "http://app.test", {
+      ok: true,
+      pages: [
+        { id: "a", thumbnail: { dataUrl: shared, width: 1220 } },
+        { id: "b", thumbnail: { dataUrl: shared, width: 1220 } }
+      ]
+    });
+
+    const onDisk = await readFile(path.join(directory, "inventories", `${id}.json`), "utf8");
+    assert.equal(onDisk.includes("base64"), false, "the scan holds references, not pictures");
+    assert.equal((await readdir(path.join(directory, "assets"))).length, 1);
+
+    const loaded = await registry.loadInventory(id);
+    assert.equal(loaded.pages[0].thumbnail.dataUrl, loaded.pages[1].thumbnail.dataUrl);
+    assert.equal(await registry.assets.dataUrl(loaded.pages[0].thumbnail.dataUrl), shared);
+  });
+});
+
+test("a scan taken before this is converted the first time it is opened", async () => {
+  await withRegistry(async (registry, directory) => {
+    const inline = `data:image/png;base64,${Buffer.from("old inline capture").toString("base64")}`;
+    const id = targetId("folder", "/Users/me/old");
+    await mkdir(path.join(directory, "inventories"), { recursive: true });
+    await writeFile(path.join(directory, "inventories", `${id}.json`),
+      JSON.stringify({ ok: true, pages: [{ id: "a", thumbnail: { dataUrl: inline } }] }));
+
+    const loaded = await registry.loadInventory(id);
+    assert.match(loaded.pages[0].thumbnail.dataUrl, /^crank-asset:\/\//);
+    assert.equal(await registry.assets.dataUrl(loaded.pages[0].thumbnail.dataUrl), inline, "and nothing is lost in the move");
+    assert.equal(
+      (await readFile(path.join(directory, "inventories", `${id}.json`), "utf8")).includes("base64"),
+      false,
+      "the conversion is written back, so it happens once"
+    );
+  });
+});
+
+test("a swept store keeps what the remembered projects still use", async () => {
+  await withRegistry(async (registry, directory) => {
+    const kept = `data:image/png;base64,${Buffer.from("in a live project").toString("base64")}`;
+    await registry.saveInventory("url", "http://kept.test", { ok: true, pages: [{ id: "a", thumbnail: { dataUrl: kept } }] });
+    await registry.saveInventory("url", "http://gone.test", {
+      ok: true,
+      pages: [{ id: "a", thumbnail: { dataUrl: `data:image/png;base64,${Buffer.from("orphan").toString("base64")}` } }]
+    });
+    await registry.forget(targetId("url", "http://gone.test"));
+
+    assert.deepEqual(await registry.sweepAssets(), { removed: 1 });
+    assert.equal((await readdir(path.join(directory, "assets"))).length, 1);
+    const loaded = await registry.loadInventory(targetId("url", "http://kept.test"));
+    assert.equal(await registry.assets.dataUrl(loaded.pages[0].thumbnail.dataUrl), kept);
+  });
+});
+
+test("an older scan loses its markup, not its pages", async () => {
+  await withRegistry(async (registry, directory) => {
+    const id = targetId("folder", "/Users/me/before");
+    await mkdir(path.join(directory, "inventories"), { recursive: true });
+    await writeFile(path.join(directory, "inventories", `${id}.json`), JSON.stringify({
+      ok: true,
+      pages: [{
+        id: "a",
+        name: "Home",
+        // A whole foreign document per page, images and all: the largest thing
+        // in a scan, and now drawn from the layer tree instead.
+        snapshot: { html: `<html><img src="data:image/png;base64,${"A".repeat(2000)}"></html>`, bytes: 2000 },
+        figmaTree: { width: 1220, height: 790, tree: { id: "root", kind: "element" } },
+        variants: [{
+          id: "a-dark",
+          name: "Dark",
+          snapshot: { html: "<html>dark</html>", bytes: 18 },
+          figmaTree: { width: 1220, height: 790, tree: { id: "dark-root", kind: "element" } }
+        }]
+      }]
+    }));
+
+    const loaded = await registry.loadInventory(id);
+    assert.equal("snapshot" in loaded.pages[0], false, "the markup is gone");
+    assert.equal("snapshot" in loaded.pages[0].variants[0], false, "including a re-skinned page's own copy of it");
+    assert.equal(loaded.pages[0].variants[0].layerTree.tree.id, "dark-root");
+    assert.equal(loaded.pages[0].name, "Home", "and everything else is not");
+    assert.equal(loaded.pages[0].layerTree.tree.id, "root", "including the layers, under their current name");
+
+    const rewritten = await readFile(path.join(directory, "inventories", `${id}.json`), "utf8");
+    assert.equal(rewritten.includes("snapshot"), false, "written back, so the weight is not carried again");
   });
 });

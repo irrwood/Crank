@@ -1,5 +1,4 @@
 const { collectUiState } = require("./state-discovery.cjs");
-const { DOWNSCALE_OVER_BYTES, DOWNSCALE_TO_WIDTH, MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
 const { serializeRenderedApplication } = require("./figma-tree.cjs");
 const { assignKeys } = require("./node-identity.cjs");
 const { isFileOrigin, routeWithin, withinOrigin } = require("./page-origin.cjs");
@@ -228,24 +227,6 @@ function createBrowsingSession(origin, driver) {
       }
     },
 
-    async captureHtml() {
-      try {
-        const limits = {
-          maxAssetBytes: MAX_ASSET_BYTES,
-          maxTotalAssetBytes: MAX_TOTAL_ASSET_BYTES,
-          downscaleOverBytes: DOWNSCALE_OVER_BYTES,
-          downscaleToWidth: DOWNSCALE_TO_WIDTH
-        };
-        return await evaluate(`(${captureHtmlDocument.toString()})(${JSON.stringify(limits)})`);
-      } catch (cause) {
-        return { html: null, error: cause instanceof Error ? cause.message : String(cause) };
-      }
-    },
-
-    /**
-     * The layer tree the Figma plugin builds from. Same page, same session as
-     * the HTML snapshot — one visit produces both.
-     */
     /**
      * Handed back as text, not as an object.
      *

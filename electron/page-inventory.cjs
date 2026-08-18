@@ -13,7 +13,7 @@ const { readdir } = require("node:fs/promises");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 const { createAttachedSession, listTargets } = require("./cdp-session.cjs");
 const { describeAppBundle, launchAppBundle, looksLikeAppBundle } = require("./app-bundle.cjs");
-const { isFileOrigin, originOf, routeWithin } = require("./page-origin.cjs");
+const { isAppOrigin, originOf, routeWithin } = require("./page-origin.cjs");
 
 /**
  * Builds a page inventory from nothing but a URL.
@@ -93,8 +93,8 @@ function parseSitemapPaths(xml, origin) {
 }
 
 async function readSitemap(origin) {
-  // An app loaded from disk has no server to ask.
-  if (isFileOrigin(origin)) return [];
+  // An installed app has no server to ask.
+  if (isAppOrigin(origin)) return [];
   for (const candidate of ["/sitemap.xml", "/sitemap_index.xml"]) {
     const body = await fetchText(`${origin}${candidate}`);
     const paths = parseSitemapPaths(body, origin);
@@ -124,24 +124,26 @@ async function captureThumbnail(session, width = 1220) {
  * every time is what makes a page reproducible at all: an earlier click may
  * have switched the language or theme, and that would otherwise be baked in.
  */
-async function capturePage(session, { route, recipe = [] }, { withThumbnails = true, withHtml = true, withFigmaTree = true } = {}) {
-  if (!withThumbnails) return { thumbnail: null, snapshot: null, reached: true };
+async function capturePage(session, { route, recipe = [] }, { withThumbnails = true, withFigmaTree = true } = {}) {
+  if (!withThumbnails) return { thumbnail: null, reached: true };
   await session.reset?.();
   let reached = await session.goto(route, { patient: true });
   for (const step of recipe) {
     if (!reached) break;
     reached = await session.click(step.locator, { patient: true });
   }
-  if (!reached) return { thumbnail: null, snapshot: null, reached: false };
-  // A thumbnail keeps the grid quick to draw; the markup is what carries real
-  // text, real SVG and readable colour, so both are kept.
+  if (!reached) return { thumbnail: null, reached: false };
+  // A thumbnail keeps the grid quick to draw at a distance; the layer tree is
+  // what carries real text, real SVG and readable colour, so both are kept.
+  //
+  // The page's own markup used to be kept beside them, and was by far the
+  // largest thing in a scan — a whole foreign document per page, stylesheet,
+  // fonts and inlined images and all, 145MB of one real portfolio's 350MB. Both
+  // things that drew it now draw the layers instead, which is also what
+  // actually reaches Figma, so the copy of the original page bought nothing.
   const thumbnail = await captureThumbnail(session);
-  const captured = withHtml ? await session.captureHtml() : null;
-  const snapshot = captured?.html
-    ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
-    : null;
   const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
-  return { thumbnail, snapshot, layerTree: figma?.tree ? figma : null, reached: true };
+  return { thumbnail, layerTree: figma?.tree ? figma : null, reached: true };
 }
 
 /**
@@ -199,9 +201,7 @@ async function scanAttached(port, { targetId = null, onStatus, ...options } = {}
     origin = originOf(shown);
     // Relative to the app rather than to the disk, for a window loaded from a
     // file: the folders above it are where the app was installed, not a route.
-    startPath = isFileOrigin(origin)
-      ? routeWithin(shown.pathname, origin) + shown.search
-      : shown.pathname + shown.search || "/";
+    startPath = routeWithin(shown.pathname, origin) + shown.search || "/";
   } catch {
     return { ok: false, message: `That window is showing ${target.url || "nothing"}, which cannot be scanned.` };
   }
@@ -242,18 +242,22 @@ async function withAppSession(root, { onStatus } = {}, job) {
   const launched = await launchAppBundle(bundle);
   if (!launched.ok) return { ok: false, message: launched.message };
 
-  const window = launched.windows[0];
-  const origin = originOf(window.url);
-  if (!origin) {
-    await launched.stop();
-    return { ok: false, message: `${bundle.name} opened a window showing ${window.url || "nothing"}, which cannot be scanned.` };
-  }
-
-  const session = await createAttachedSession(window, { origin });
+  // From here on the app is open, so every way out of this function goes
+  // through the shutdown. Attaching used to sit outside it, and the one app
+  // that failed to attach — a real one, serving its interface from a scheme of
+  // its own — was left running, which then made the *next* scan report that a
+  // copy was already running. One fault, reported as a different one.
+  let session = null;
   try {
+    const window = launched.windows[0];
+    const origin = originOf(window.url);
+    if (!origin) {
+      return { ok: false, message: `${bundle.name} opened a window showing ${window.url || "nothing"}, which cannot be scanned.` };
+    }
+    session = await createAttachedSession(window, { origin });
     return await job(session, { bundle, origin, window });
   } finally {
-    session.close();
+    session?.close();
     // Crank opened this copy, so Crank closes it. An app left running behind
     // the scan is one the person did not ask for and would have to find.
     await launched.stop();
@@ -274,9 +278,7 @@ async function bundleIcon(root) {
 function startPathOf(url, origin) {
   try {
     const shown = new URL(url);
-    return isFileOrigin(origin)
-      ? routeWithin(shown.pathname, origin) + shown.search
-      : shown.pathname + shown.search || "/";
+    return routeWithin(shown.pathname, origin) + shown.search || "/";
   } catch {
     return "/";
   }
@@ -452,7 +454,6 @@ async function runScan(session, origin, startPath, {
   maxDepth = 1,
   maxActionsPerState = 12,
   withThumbnails = true,
-  withHtml = true,
   withFigmaTree = true,
   onProgress,
   onStatus
@@ -474,7 +475,7 @@ async function runScan(session, origin, startPath, {
       onProgress
     });
 
-    const pages = await captureStates(session, states, { withThumbnails, withHtml, withFigmaTree }, onStatus);
+    const pages = await captureStates(session, states, { withThumbnails, withFigmaTree }, onStatus);
     // Taken once for the project, not per page: it is the same icon on all of
     // them, and it is what tells one project from another in the list.
     const icon = await session.captureIcon?.().catch(() => null) ?? null;

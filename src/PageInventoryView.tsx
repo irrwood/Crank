@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Download, Figma, FolderGit2, Globe2, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
+import type { ReactNode } from "react";
+import { AppWindowMac, ChevronRight, Download, Figma, FolderGit2, Globe2, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
 import { FigmaSyncDialog } from "./FigmaSyncDialog";
 import { PageLayers } from "./PageLayers";
-import type { AutomaticMappingStatus, DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
+import type { AutomaticMappingStatus, DiscoveredPage, FigmaTree, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 
 /**
  * The whole product in one screen: give an address, get every page.
@@ -134,40 +135,65 @@ function PageMenu({ at, busy, onPick, onClose }: {
  * Mounted only once near the viewport: this view has thirty pages in one
  * scroll, and the thumbnail stands in until then.
  */
-function PageDocument({ page }: { page: DiscoveredPage }) {
+/**
+ * Draws a captured page's layers at whatever width there is room for.
+ *
+ * The layers sit at the pixel positions they were captured at, which is wider
+ * than the pane they are shown in. Scaling the whole drawing keeps every
+ * position true to the capture, and because it is a transform rather than a
+ * resize, text stays text — sharp at any zoom instead of a blurry picture of
+ * itself.
+ */
+function ScaledLayers({ layerTree, lazy = false, fallback }: {
+  layerTree: FigmaTree | null | undefined;
+  /** Wait until the drawing is nearly on screen. A grid of them is expensive. */
+  lazy?: boolean;
+  fallback: ReactNode;
+}) {
   const holder = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-  const [scale, setScale] = useState(1);
-  const captureWidth = page.layerTree?.width || 1220;
+  const [near, setNear] = useState(!lazy);
+  const [scale, setScale] = useState(0);
+  const captureWidth = layerTree?.width || 1220;
 
   useEffect(() => {
     const element = holder.current;
     if (!element) return;
-    const watcher = new IntersectionObserver(
-      (entries) => { if (entries.some((entry) => entry.isIntersecting)) setVisible(true); },
-      { rootMargin: "600px 0px" }
-    );
-    watcher.observe(element);
     const sizer = new ResizeObserver(([entry]) => {
       if (entry) setScale(entry.contentRect.width / captureWidth);
     });
     sizer.observe(element);
+    if (!lazy) return () => sizer.disconnect();
+    const watcher = new IntersectionObserver(
+      (entries) => { if (entries.some((entry) => entry.isIntersecting)) setNear(true); },
+      { rootMargin: "600px 0px" }
+    );
+    watcher.observe(element);
     return () => { watcher.disconnect(); sizer.disconnect(); };
-  }, [captureWidth]);
+  }, [captureWidth, lazy]);
 
-  const height = (page.layerTree?.height || 790) * scale;
+  // A transform does not change how much room the element asks for, so the
+  // holder is told the drawn height or it keeps the unscaled one.
+  const height = (layerTree?.height || 790) * scale;
   return (
     <div className="page-document" ref={holder} style={{ height: height > 0 ? height : undefined }}>
-      {visible && page.layerTree?.tree ? (
+      {near && layerTree?.tree ? (
         <div className="page-layers-frame" style={{ transform: `scale(${scale})` }}>
-          <PageLayers height={page.layerTree.height} tree={page.layerTree.tree} width={captureWidth} />
+          <PageLayers height={layerTree.height} tree={layerTree.tree} width={captureWidth} />
         </div>
-      ) : page.thumbnail ? (
-        <img alt="" src={page.thumbnail.dataUrl} />
-      ) : (
-        <span className="inventory-shot-empty">没有预览</span>
-      )}
+      ) : fallback}
     </div>
+  );
+}
+
+function PageDocument({ page }: { page: DiscoveredPage }) {
+  return (
+    <ScaledLayers
+      fallback={page.thumbnail
+        ? <img alt="" src={page.thumbnail.dataUrl} />
+        : <span className="inventory-shot-empty">没有预览</span>}
+      layerTree={page.layerTree}
+      lazy
+    />
   );
 }
 
@@ -237,6 +263,9 @@ function whenScanned(value: string | null): string {
   return `${days} 天前`;
 }
 
+/** An installed app is a folder on disk, and the one folder that is not a project. */
+const isAppBundle = (target: string) => target.replace(/\/+$/, "").toLowerCase().endsWith(".app");
+
 function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }: {
   target: InventoryTarget; active: boolean; busy?: boolean; nested?: boolean;
   onOpen: (target: InventoryTarget) => void;
@@ -257,7 +286,9 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
             // The app's own icon, taken from the page it declares it on. A row
             // wearing the placeholder is one that has not been scanned yet.
             ? <img alt="" src={target.icon} />
-            : target.kind === "folder" ? <FolderGit2 size={14} /> : <Globe2 size={14} />}
+            : target.kind !== "folder"
+              ? <Globe2 size={14} />
+              : isAppBundle(target.target) ? <AppWindowMac size={14} /> : <FolderGit2 size={14} />}
       </span>
       <span className="project-copy">
         <strong>{target.name}</strong>
@@ -371,7 +402,7 @@ function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd
 
 function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => void }) {
   const looks = [
-    { id: page.id, name: "默认", snapshot: page.snapshot, thumbnail: page.thumbnail },
+    { id: page.id, layerTree: page.layerTree, name: "默认", thumbnail: page.thumbnail },
     ...(page.variants ?? [])
   ];
   const [shown, setShown] = useState(0);
@@ -399,23 +430,16 @@ function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => v
           )}
           <button onClick={onClose} type="button">关闭</button>
         </figcaption>
-        {current.snapshot?.html
-          ? (
-            <iframe
-              className="inventory-frame"
-              sandbox=""
-              srcDoc={current.snapshot.html}
-              title={page.name}
-            />
-          )
-          : current.thumbnail
-            ? <img alt="" src={current.thumbnail.dataUrl} />
-            : <p>Nothing was captured for this page.</p>}
-        {(current.snapshot?.stats?.rasterised?.length ?? 0) > 0 && (
-          <p className="inventory-frame-note">
-            {current.snapshot?.stats.rasterised.length} area(s) held pixels and were captured as images:{" "}
-            {current.snapshot?.stats.rasterised.join(", ")}. Everything else is live markup.
-          </p>
+        <div className="inventory-frame">
+          <ScaledLayers
+            fallback={current.thumbnail
+              ? <img alt="" src={current.thumbnail.dataUrl} />
+              : <p className="inventory-shot-empty">这个页面没有抓到任何东西。</p>}
+            layerTree={current.layerTree}
+          />
+        </div>
+        {current.layerTree?.error && (
+          <p className="inventory-frame-note">图层没读出来：{current.layerTree.error}</p>
         )}
       </figure>
     </div>
@@ -813,7 +837,7 @@ export default function PageInventoryView() {
     const file = event.dataTransfer.files[0];
     const dropped = file && window.uiSync?.getDroppedPath?.(file);
     if (dropped) void scanFolder(dropped);
-    else notify("error", "请拖入一个项目文件夹。");
+    else notify("error", "请拖入一个项目文件夹，或者一个装好的 app。");
   };
 
   const chooseFolder = async () => {
@@ -921,7 +945,10 @@ export default function PageInventoryView() {
             <FolderGit2 size={26} />
             <h1>把项目文件夹拖进来</h1>
             <p>Crank 会把它跑起来，走遍每一个页面，交给你一份可编辑的图层。</p>
-            <button className="primary-button" onClick={() => void chooseFolder()} type="button">选择文件夹</button>
+            <p className="onboarding-alt-line">
+              手里只有装好的 app？把 <code>.app</code> 拖进来也行——Crank 会带调试端口打开它，扫完再替你关掉。
+            </p>
+            <button className="primary-button" onClick={() => void chooseFolder()} type="button">选择文件夹或 app</button>
           </div>
 
           <ol className="onboarding-steps">
@@ -1047,7 +1074,7 @@ export default function PageInventoryView() {
                     title={`${scannedFolder} — 在访达中显示`}
                     type="button"
                   >
-                    <FolderGit2 size={13} />
+                    {isAppBundle(scannedFolder) ? <AppWindowMac size={13} /> : <FolderGit2 size={13} />}
                     <span>{scannedFolder.split("/").filter(Boolean).pop()}</span>
                   </button>
                 ) : (

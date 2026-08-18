@@ -6,6 +6,25 @@
  * screenshots inside this app would hand the user nothing they could keep.
  */
 
+/**
+ * Draws one layer, the same way the app's own preview draws it.
+ *
+ * The single view used to embed the captured markup — a whole foreign document
+ * per page, stylesheet, fonts and all, which is what made a scan of a real
+ * portfolio 350MB. Drawing from the layer tree instead costs a fortieth of that
+ * and shows what will actually reach Figma, rather than what the browser could
+ * still make of the original page.
+ */
+function drawLayer(layer, paint) {
+  const painted = paint.paintLayer(layer);
+  const style = escapeHtml(paint.styleText(painted.style));
+  if (painted.tag === "img") return `<img alt="" src="${escapeHtml(painted.src)}" style="${style}">`;
+  const inside = painted.text !== undefined
+    ? escapeHtml(painted.text)
+    : painted.children.map((child) => drawLayer(child, paint)).join("");
+  return `<div style="${style}">${inside}</div>`;
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -69,11 +88,12 @@ figcaption a { margin-left: auto; color: var(--accent); font-size: 11.5px; text-
 .addr { margin: 0; color: var(--muted); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .single { max-width: 1280px; margin: 0 auto; }
-.single img { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
-.frame iframe {
-  width: 100%; height: 78vh; border: 1px solid var(--line); border-radius: 12px;
-  background: #fff; display: block;
-}
+.frame > img { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.frame { border: 1px solid var(--line); border-radius: 12px; background: #fff; overflow: hidden; }
+/* Drawn at the size it was captured, then scaled to whatever width the page is
+   read at. A transform keeps text as text, so it stays sharp when zoomed in. */
+.layers { position: relative; transform-origin: top left; }
+.layers * { box-sizing: border-box; }
 .note { color: var(--muted); font-size: 11.5px; margin: 10px 0 0; }
 .shot { position: relative; }
 .looks { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
@@ -103,6 +123,8 @@ function show(id) {
   if (single) url.searchParams.set("screen", id); else url.searchParams.delete("screen");
   history.replaceState(null, "", url);
   window.scrollTo({ top: 0 });
+  // A hidden section has no width, so nothing in it could be fitted until now.
+  fit();
 }
 document.addEventListener("click", (event) => {
   const pick = event.target.closest("[data-look-pick]");
@@ -114,6 +136,7 @@ document.addEventListener("click", (event) => {
     group.querySelectorAll("[data-look-pick]").forEach((button) => {
       button.setAttribute("aria-pressed", String(button.dataset.lookPick === wanted));
     });
+    fit();
     return;
   }
   const trigger = event.target.closest("[data-target]");
@@ -121,14 +144,39 @@ document.addEventListener("click", (event) => {
   event.preventDefault();
   show(trigger.dataset.target);
 });
+/**
+ * Fits each drawing to the width it is being read at.
+ *
+ * The layers are placed at the pixel positions they were captured at, which is
+ * wider than most windows. Scaling the whole drawing keeps every position true
+ * to the capture, and because it is a transform rather than a resize, the text
+ * is still text at any zoom.
+ */
+function fit() {
+  document.querySelectorAll(".layers").forEach((drawing) => {
+    const captured = parseFloat(drawing.style.width) || 0;
+    const available = drawing.parentElement.clientWidth;
+    if (!captured || !available) return;
+    const scale = Math.min(1, available / captured);
+    drawing.style.transform = "scale(" + scale + ")";
+    // The transform does not change how much room the element asks for, so the
+    // frame is told the drawn height directly or it keeps the unscaled one.
+    drawing.parentElement.style.height = Math.round((parseFloat(drawing.style.height) || 0) * scale) + "px";
+  });
+}
+window.addEventListener("resize", fit);
 show(params.get("screen") || "overview");
+fit();
 `;
 
 /**
  * @param inventory result from scanUrl
  * @param meta      { title, generatedAt }
  */
-function renderHandoffPage(inventory, { title = "Design handoff", generatedAt = new Date().toISOString() } = {}) {
+// Loaded rather than required: what a layer looks like is decided in one place
+// the window also draws from, and that place is a module.
+async function renderHandoffPage(inventory, { title = "Design handoff", generatedAt = new Date().toISOString() } = {}) {
+  const paint = await import("../shared/layer-paint.js");
   const pages = inventory?.pages ?? [];
   // A page and its re-skins share one slot: the same page in dark mode or
   // another language is not another page, so the looks are toggled in place.
@@ -158,17 +206,17 @@ function renderHandoffPage(inventory, { title = "Design handoff", generatedAt = 
         <p class="addr">${escapeHtml(addressOf(page))}</p>
       </figure>`).join("");
 
-  // The single view shows the captured markup, not a picture of it: sharp at
-  // any zoom, text selectable, SVG still vector. The grid keeps thumbnails so
-  // it stays quick to draw.
+  // The single view draws the layers, not a picture of them: sharp at any zoom,
+  // text selectable, SVG still vector. The grid keeps thumbnails so it stays
+  // quick to draw.
   const singles = pages.map((page) => {
-    const looks = [{ id: page.id, name: "Default", snapshot: page.snapshot, thumbnail: page.thumbnail },
+    const looks = [{ id: page.id, layerTree: page.layerTree, name: "Default", thumbnail: page.thumbnail },
       ...(page.variants ?? [])];
     const frames = looks.map((look, index) => {
-      if (look.snapshot?.html) {
-        return `<iframe data-look="${index}"${index === 0 ? "" : " hidden"} loading="lazy"
-          sandbox="allow-same-origin" title="${escapeHtml(page.name)}"
-          srcdoc="${escapeHtml(look.snapshot.html)}"></iframe>`;
+      const tree = look.layerTree?.tree;
+      if (tree) {
+        return `<div class="layers" data-look="${index}"${index === 0 ? "" : " hidden"}
+          style="height:${Math.round(tree.height || 0)}px;width:${Math.round(tree.width || 0)}px">${drawLayer(tree, paint)}</div>`;
       }
       if (look.thumbnail) {
         return `<img data-look="${index}"${index === 0 ? "" : " hidden"}
@@ -181,8 +229,8 @@ function renderHandoffPage(inventory, { title = "Design handoff", generatedAt = 
           `<button type="button" data-look-pick="${index}"${index === 0 ? ' aria-pressed="true"' : ""}>${escapeHtml(look.name)}</button>`
         ).join("")}</div>`
       : "";
-    const notes = page.snapshot?.stats?.rasterised?.length
-      ? `<p class="note">${page.snapshot.stats.rasterised.length} area(s) could only be captured as pixels: ${escapeHtml(page.snapshot.stats.rasterised.join(", "))}. Everything else is live markup.</p>`
+    const notes = page.layerTree?.error
+      ? `<p class="note">These layers could not be read: ${escapeHtml(page.layerTree.error)}</p>`
       : "";
     return `
     <section data-screen="${escapeHtml(page.id)}" class="single" hidden>

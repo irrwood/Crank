@@ -3478,8 +3478,8 @@ button.screen-figma-link {
 }
 
 .inventory-frame {
-  width: min(1240px, 92vw); height: 78vh; border: 0; border-radius: 10px;
-  background: #fff; display: block;
+  width: min(1240px, 92vw); max-height: 78vh; border: 0; border-radius: 10px;
+  background: #fff; display: block; overflow: auto;
 }
 .inventory-frame-note { margin: 0; color: rgba(255, 255, 255, 0.68); font-size: 11.5px; max-width: 92vw; }
 .inventory-overlay figcaption .inventory-variants button { color: rgba(255, 255, 255, 0.72); border-color: rgba(255, 255, 255, 0.3); }
@@ -3530,6 +3530,11 @@ button.screen-figma-link {
 .onboarding-drop svg { opacity: 0.32; }
 .onboarding-drop h1 { margin: 4px 0 0; font-size: 19px; letter-spacing: -0.01em; }
 .onboarding-drop p { margin: 0 0 6px; font-size: 13px; opacity: 0.6; max-width: 40ch; line-height: 1.55; }
+.onboarding-drop .onboarding-alt-line { font-size: 12px; opacity: 0.48; margin: -2px 0 8px; }
+.onboarding-drop .onboarding-alt-line code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  padding: 1px 5px; border-radius: 5px; background: rgba(32, 33, 31, 0.07);
+}
 
 .onboarding-steps {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

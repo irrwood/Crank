@@ -17,15 +17,15 @@ const inventory = {
   skipped: []
 };
 
-test("carries its own images so the file stands alone", () => {
-  const html = renderHandoffPage(inventory);
+test("carries its own images so the file stands alone", async () => {
+  const html = await renderHandoffPage(inventory);
   assert.match(html, /data:image\/png;base64,AAAA/);
   assert.ok(!/<img[^>]+src="(?!data:)/.test(html), "no image may point outside the file");
   assert.ok(!/https?:\/\/[^"']*\.(?:css|js)/.test(html), "no external stylesheet or script");
 });
 
-test("shows every page with a reproducible address", () => {
-  const html = renderHandoffPage(inventory);
+test("shows every page with a reproducible address", async () => {
+  const html = await renderHandoffPage(inventory);
   assert.match(html, /All pages/);
   assert.match(html, /全部记录/);
   assert.match(html, /click “全部记录”/);
@@ -38,13 +38,13 @@ test("states the address as steps only when clicks are needed", () => {
   assert.equal(addressOf(inventory.pages[1]), "/ → click “全部记录”");
 });
 
-test("reports what was left out, with the number that decided it", () => {
-  const html = renderHandoffPage(inventory);
+test("reports what was left out, with the number that decided it", async () => {
+  const html = await renderHandoffPage(inventory);
   assert.match(html, /Search tasks — changed 0\.7% of the screen/);
 });
 
-test("escapes page names rather than trusting them", () => {
-  const html = renderHandoffPage({
+test("escapes page names rather than trusting them", async () => {
+  const html = await renderHandoffPage({
     ok: true, origin: "http://x", filtered: [],
     pages: [{ id: "s", name: '<img src=x onerror="alert(1)">', route: "/", recipe: [], depth: 0, thumbnail: null }]
   });
@@ -52,13 +52,13 @@ test("escapes page names rather than trusting them", () => {
   assert.match(html, /&lt;img src=x/);
 });
 
-test("survives an empty scan", () => {
-  const html = renderHandoffPage({ ok: true, origin: "http://x", pages: [], filtered: [] });
+test("survives an empty scan", async () => {
+  const html = await renderHandoffPage({ ok: true, origin: "http://x", pages: [], filtered: [] });
   assert.match(html, /No pages were found/);
 });
 
-test("gives a re-skinned page one slot with a toggle", () => {
-  const html = renderHandoffPage({
+test("gives a re-skinned page one slot with a toggle", async () => {
+  const html = await renderHandoffPage({
     ok: true, origin: "http://x", filtered: [],
     pages: [{
       id: "state-a", name: "Home", route: "/", recipe: [], depth: 0,
@@ -80,8 +80,8 @@ test("gives a re-skinned page one slot with a toggle", () => {
   assert.match(html, /hidden/, "only the first look is visible at rest");
 });
 
-test("shows no toggle when a page has one look", () => {
-  const html = renderHandoffPage({
+test("shows no toggle when a page has one look", async () => {
+  const html = await renderHandoffPage({
     ok: true, origin: "http://x", filtered: [],
     pages: [{ id: "s", name: "Home", route: "/", recipe: [], depth: 0, variants: [],
       thumbnail: { dataUrl: "data:image/png;base64,A", width: 10, height: 10 } }]
@@ -91,33 +91,63 @@ test("shows no toggle when a page has one look", () => {
   assert.ok(!html.includes('class="looks"'), "and no switcher row");
 });
 
-test("shows captured markup rather than a picture of it", () => {
-  const html = renderHandoffPage({
+test("draws the layers rather than a picture of them", async () => {
+  const html = await renderHandoffPage({
     ok: true, origin: "http://x", filtered: [],
     pages: [{
       id: "s", name: "Analytics", route: "/analytics", recipe: [], depth: 0, variants: [],
       thumbnail: { dataUrl: "data:image/png;base64,A", width: 10, height: 10 },
-      snapshot: {
-        html: "<!doctype html><html><body><h1>Analytics</h1></body></html>",
-        bytes: 58,
-        stats: { stylesheets: 1, inlinedAssets: 0, rasterised: ["canvas 800×400"], skippedAssets: [], svgPreserved: 8 }
+      layerTree: {
+        tree: {
+          kind: "element", id: "root", x: 0, y: 0, width: 1220, height: 790,
+          style: { backgroundColor: "rgb(255, 255, 255)" },
+          children: [
+            { kind: "text", id: "t", x: 40, y: 32, width: 300, height: 38, text: "Analytics",
+              style: { color: "rgb(17, 17, 17)", fontSize: 32, fontWeight: 600 } },
+            { kind: "image", id: "i", x: 40, y: 96, width: 200, height: 120, dataUrl: "data:image/webp;base64,CHART" }
+          ]
+        }
       }
     }]
   });
-  assert.match(html, /<iframe[^>]+srcdoc=/, "the page itself must be embedded");
-  assert.match(html, /&lt;h1&gt;Analytics&lt;\/h1&gt;/, "and escaped so it cannot break out");
-  // What could not be kept as markup is stated, not hidden.
-  assert.match(html, /1 area\(s\) could only be captured as pixels: canvas 800×400/);
+  assert.match(html, /class="layers"[^>]*style="height:790px;width:1220px"/, "drawn at the size it was captured");
+  assert.match(html, /font-size:32px/, "with the captured type");
+  assert.match(html, />Analytics</, "and the text as text, selectable and sharp");
+  assert.match(html, /base64,CHART/, "images inside the drawing come with it");
+  assert.ok(!html.includes("<iframe"), "no foreign document is embedded");
   // The grid still uses the thumbnail for speed.
   assert.match(html, /base64,A/);
 });
 
-test("falls back to the thumbnail when no markup was captured", () => {
-  const html = renderHandoffPage({
+test("a page name inside the layers cannot become markup", async () => {
+  const html = await renderHandoffPage({
     ok: true, origin: "http://x", filtered: [],
-    pages: [{ id: "s", name: "Home", route: "/", recipe: [], depth: 0, variants: [], snapshot: null,
+    pages: [{
+      id: "s", name: "Home", route: "/", recipe: [], depth: 0, variants: [], thumbnail: null,
+      layerTree: { tree: { kind: "text", id: "t", x: 0, y: 0, width: 10, height: 10,
+        text: '<img src=x onerror="alert(1)">', style: {} } }
+    }]
+  });
+  assert.ok(!html.includes('onerror="alert(1)"'), "captured text is someone else's content");
+  assert.match(html, /&lt;img src=x/);
+});
+
+test("says so when the layers could not be read", async () => {
+  const html = await renderHandoffPage({
+    ok: true, origin: "http://x", filtered: [],
+    pages: [{ id: "s", name: "Home", route: "/", recipe: [], depth: 0, variants: [],
+      layerTree: { error: "The page returned no layer tree." },
       thumbnail: { dataUrl: "data:image/png;base64,B", width: 10, height: 10 } }]
   });
-  assert.ok(!html.includes("<iframe"), "no empty frame when there is no markup");
+  assert.match(html, /could not be read: The page returned no layer tree/);
+});
+
+test("falls back to the thumbnail when no layers were captured", async () => {
+  const html = await renderHandoffPage({
+    ok: true, origin: "http://x", filtered: [],
+    pages: [{ id: "s", name: "Home", route: "/", recipe: [], depth: 0, variants: [], layerTree: null,
+      thumbnail: { dataUrl: "data:image/png;base64,B", width: 10, height: 10 } }]
+  });
+  assert.ok(!html.includes('class="layers"'), "no empty drawing when there is nothing to draw");
   assert.match(html, /base64,B/);
 });

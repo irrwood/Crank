@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { paintLayer } from "../shared/layer-paint.js";
 
 /**
  * Draws a captured page from its layer tree.
@@ -12,10 +13,8 @@ import type { CSSProperties } from "react";
  *
  * One template, any project. What differs between projects is the data.
  *
- * The tree it draws is not Figma's shape — it is the browser's: CSS colour
- * strings, CSS property names, DOM kinds. Figma's own shapes are made when a
- * job is built and stay on that side. Anything here that reaches for one is a
- * bug, not a shortcut.
+ * What a layer looks like is decided in shared/layer-paint.js, because an
+ * exported handoff file draws the same trees in Node and the two must agree.
  */
 
 type Layer = {
@@ -35,91 +34,15 @@ type Layer = {
   children?: Layer[];
 };
 
-const px = (value: unknown) => (typeof value === "number" ? `${value}px` : undefined);
-
-/** Borders are captured per side; Figma keeps one, and so does this. */
-function borderOf(style: Record<string, unknown>): CSSProperties {
-  const sides = [
-    [style.borderTopWidth, style.borderTopColor],
-    [style.borderRightWidth, style.borderRightColor],
-    [style.borderBottomWidth, style.borderBottomColor],
-    [style.borderLeftWidth, style.borderLeftColor]
-  ] as Array<[unknown, unknown]>;
-  const found = sides.find(([width]) => typeof width === "number" && width > 0);
-  return found ? { border: `${found[0]}px solid ${found[1]}` } : {};
-}
-
-/**
- * The capture keeps the browser's own shadow string, and this draws to CSS, so
- * it passes straight through. Figma's effect objects are made at the export
- * boundary and belong to that side of it — reaching for them here was reaching
- * across a line the rest of the code keeps, and quietly cost every shadow in
- * the preview, since the stored tree has never carried them.
- */
-function shadowOf(style: Record<string, unknown>): CSSProperties {
-  const shadow = style.boxShadow;
-  return typeof shadow === "string" && shadow && shadow !== "none" ? { boxShadow: shadow } : {};
-}
-
 function Node({ layer }: { layer: Layer }) {
-  const style = (layer.style ?? {}) as Record<string, any>;
-  const box: CSSProperties = {
-    position: "absolute",
-    left: px(layer.x),
-    top: px(layer.y),
-    width: px(layer.width),
-    height: px(layer.height)
-  };
+  const painted = paintLayer(layer);
+  const style = painted.style as CSSProperties;
 
-  if (layer.kind === "image" && layer.dataUrl) {
-    return <img alt="" src={layer.dataUrl} style={{ ...box, objectFit: "cover" }} />;
-  }
-
-  if (layer.kind === "svg" && layer.svg) {
-    // As an image, never inline: captured SVG is markup from someone else's
-    // page and can carry a script, which an <img> will not run.
-    const encoded = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(layer.svg)))}`;
-    return <img alt="" src={encoded} style={box} />;
-  }
-
-  if (layer.kind === "text") {
-    return (
-      <div
-        style={{
-          ...box,
-          left: px(layer.layoutX ?? layer.x),
-          width: px(layer.layoutWidth ?? layer.width),
-          height: undefined,
-          color: style.color,
-          fontFamily: style.resolvedFontFamily ? `"${style.resolvedFontFamily}", sans-serif` : undefined,
-          fontSize: px(style.fontSize),
-          fontWeight: style.fontWeight,
-          lineHeight: px(style.lineHeight),
-          letterSpacing: px(style.letterSpacing),
-          textAlign: style.textAlign,
-          textTransform: style.textCase && style.textCase !== "none" ? style.textCase : undefined,
-          whiteSpace: style.whiteSpace === "nowrap" ? "nowrap" : "pre-wrap",
-          overflowWrap: "break-word"
-        }}
-      >
-        {layer.text}
-      </div>
-    );
-  }
+  if (painted.tag === "img") return <img alt="" src={painted.src} style={style} />;
 
   return (
-    <div
-      style={{
-        ...box,
-        ...borderOf(style),
-        ...shadowOf(style),
-        background: style.backgroundColor,
-        borderRadius: px(style.borderRadius),
-        opacity: style.opacity,
-        overflow: style.clipsContent ? "hidden" : undefined
-      }}
-    >
-      {(layer.children ?? []).map((child) => <Node key={child.id} layer={child} />)}
+    <div style={style}>
+      {painted.text ?? (painted.children as Layer[]).map((child) => <Node key={child.id} layer={child} />)}
     </div>
   );
 }

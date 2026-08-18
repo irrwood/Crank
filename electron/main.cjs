@@ -1,15 +1,16 @@
-const { app, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, shell } = require("electron");
-const { readFile, writeFile, access, mkdir, readdir } = require("node:fs/promises");
+const { app, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, protocol, shell } = require("electron");
+const { readFile, writeFile, access, mkdir, readdir, stat } = require("node:fs/promises");
 const { createHash, randomBytes } = require("node:crypto");
 const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
-const { exploreFromPage, listTargets, normalizeTargetUrl, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer } = require("./page-inventory.cjs");
+const { exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, recaptureInApp, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
 const { createInventoryRegistry, nameFor, targetId } = require("./inventory-registry.cjs");
+const { internalise, mimeFor, referencesIn } = require("./asset-store.cjs");
 const { carryUserData } = require("./user-data-migration.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
@@ -160,7 +161,9 @@ const handoffPageSchema = z.object({
   })).max(20),
   depth: z.number().int().nonnegative().max(20),
   thumbnail: z.object({
-    dataUrl: z.string().startsWith("data:image/").max(20_000_000),
+    // A scan just taken carries the picture; one loaded from disk carries a
+    // reference to it, resolved before anything leaves the app.
+    dataUrl: z.string().regex(/^(?:data:image\/|crank-asset:\/\/)/).max(20_000_000),
     width: z.number().finite(),
     height: z.number().finite()
   }).nullable(),
@@ -170,27 +173,20 @@ const handoffPageSchema = z.object({
     tree: z.unknown()
   }).nullable().optional(),
   figmaNodeId: z.string().regex(/^\d+:\d+$/).nullable().optional(),
-  snapshot: z.object({
-    html: z.string().max(60_000_000),
-    bytes: z.number().finite(),
-    stats: z.object({
-      stylesheets: z.number().finite(),
-      inlinedAssets: z.number().finite(),
-      rasterised: z.array(z.string().max(200)).max(500),
-      skippedAssets: z.array(z.string().max(300)).max(500),
-      svgPreserved: z.number().finite()
-    }).partial()
-  }).nullable().optional(),
   variants: z.array(z.object({
     id: z.string().max(200),
     name: z.string().max(300),
     route: z.string().max(2000),
     recipe: z.array(z.object({ kind: z.string().max(40), locator: z.string().max(2000), label: z.string().max(300) })).max(20),
     thumbnail: z.object({
-      dataUrl: z.string().startsWith("data:image/").max(20_000_000),
+      dataUrl: z.string().regex(/^(?:data:image\/|crank-asset:\/\/)/).max(20_000_000),
       width: z.number().finite(), height: z.number().finite()
     }).nullable(),
-    snapshot: z.object({ html: z.string().max(60_000_000), bytes: z.number().finite(), stats: z.record(z.unknown()) }).nullable().optional()
+    layerTree: z.object({
+      width: z.number().finite(),
+      height: z.number().finite(),
+      tree: z.unknown()
+    }).nullable().optional()
   })).max(50).optional()
 });
 
@@ -1261,8 +1257,20 @@ function registerIpc() {
   });
 
   ipcMain.handle("inventory:choose-folder", async () => {
-    const chosen = await dialog.showOpenDialog({ properties: ["openDirectory"], title: "Choose a project folder" });
-    return chosen.canceled ? null : chosen.filePaths[0] ?? null;
+    // Files as well as folders, because macOS shows an installed app as a file:
+    // with directories only, a .app cannot be picked at all — the one thing a
+    // person with a build rather than a project has to offer.
+    const chosen = await dialog.showOpenDialog({
+      properties: ["openDirectory", "openFile"],
+      title: "Choose a project folder or an app"
+    });
+    const picked = chosen.canceled ? null : chosen.filePaths[0] ?? null;
+    if (!picked) return null;
+    // Anything else picked as a file is not a project, and saying so here beats
+    // registering it and failing during the scan.
+    if (looksLikeAppBundle(picked)) return picked;
+    const chosenIsFolder = await stat(picked).then((entry) => entry.isDirectory()).catch(() => false);
+    return chosenIsFolder ? picked : null;
   });
 
   ipcMain.handle("inventory:scan-folder", async (event, root, workspaceRoot) => {
@@ -1372,9 +1380,19 @@ function registerIpc() {
         if (!event.sender.isDestroyed()) event.sender.send("inventory:progress", { name: state.name, route: state.route, depth: state.depth, id });
       }
     });
+    // An installed app has no address and no dev server: it is opened, walked,
+    // and closed again, the same way the scan that found the page did it.
     const outcome = where.kind === "url"
       ? await job(where.target)
-      : await withProjectServer(where.target, { onStatus: (status) => send(status.detail, status.phase) }, job);
+      : looksLikeAppBundle(where.target)
+        ? await exploreInApp(where.target, safePage, {
+          pages: known,
+          onStatus: (status) => send(status.detail, status.phase),
+          onProgress: (state) => {
+            if (!event.sender.isDestroyed()) event.sender.send("inventory:progress", { name: state.name, route: state.route, depth: state.depth, id });
+          }
+        })
+        : await withProjectServer(where.target, { onStatus: (status) => send(status.detail, status.phase) }, job);
     if (!outcome.ok) return outcome;
 
     // Anything dropped before stays dropped, even when found down a new path.
@@ -1425,7 +1443,9 @@ function registerIpc() {
     send(`Capturing ${safePage.name} again`);
     const outcome = where.kind === "url"
       ? await recapturePage(where.target, safePage)
-      : await withProjectServer(where.target, { onStatus: (status) => send(status.detail) }, (url) => recapturePage(url, safePage));
+      : looksLikeAppBundle(where.target)
+        ? await recaptureInApp(where.target, safePage, { onStatus: (status) => send(status.detail) })
+        : await withProjectServer(where.target, { onStatus: (status) => send(status.detail) }, (url) => recapturePage(url, safePage));
     if (!outcome.ok) return outcome;
 
     // The stored inventory is what a reopened project shows, so the fresh page
@@ -1446,7 +1466,9 @@ function registerIpc() {
     const link = parseFigmaDesignUrl(z.string().min(1).max(2000).parse(figmaUrl));
     if (!link) return { ok: false, message: "That is not a Figma design URL." };
 
-    const parsed = handoffInventorySchema.parse(inventory);
+    // Pictures are stored once by content and referred to, which the plugin
+    // knows nothing about — so they go back inline for the trip to Figma.
+    const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
     // One identity for the project, whatever served it this time: the folder or
     // the address the user gave, which is also what the sidebar remembers it
     // by. A folder served on a fresh port every scan would otherwise be a new
@@ -1506,7 +1528,8 @@ function registerIpc() {
 
   ipcMain.handle("inventory:export", async (_event, inventory, title) => {
     const safeTitle = z.string().min(1).max(120).optional().parse(title) ?? "Design handoff";
-    const parsed = handoffInventorySchema.parse(inventory);
+    // An exported page is opened elsewhere, so it carries its pictures with it.
+    const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
     const suggested = `${safeTitle.replace(/[^\w\u4e00-\u9fa5-]+/g, "-").replace(/^-+|-+$/g, "") || "handoff"}.html`;
     const target = await dialog.showSaveDialog({
       title: "Save handoff page",
@@ -1514,7 +1537,7 @@ function registerIpc() {
       filters: [{ name: "HTML", extensions: ["html"] }]
     });
     if (target.canceled || !target.filePath) return { saved: false };
-    await writeFile(target.filePath, renderHandoffPage(parsed, { title: safeTitle }), "utf8");
+    await writeFile(target.filePath, await renderHandoffPage(parsed, { title: safeTitle }), "utf8");
     return { saved: true, filePath: target.filePath };
   });
 
@@ -2236,8 +2259,24 @@ function createWindow() {
   }
 }
 
+// Pictures live on disk under the hash of their bytes; the window asks for
+// them by reference. Declared before the app is ready, because a scheme cannot
+// be made to behave like http after the first window exists.
+protocol.registerSchemesAsPrivileged([
+  { privileges: { standard: true, secure: true, supportFetchAPI: true }, scheme: "crank-asset" }
+]);
+
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
+  protocol.handle("crank-asset", async (request) => {
+    const bytes = await inventoryRegistry().assets.read(request.url).catch(() => null);
+    return bytes
+      ? new Response(bytes, { headers: { "Cache-Control": "max-age=31536000", "Content-Type": mimeFor(request.url) } })
+      : new Response("", { status: 404 });
+  });
+  inventoryRegistry().sweepAssets()
+    .then(({ removed }) => { if (removed > 0) console.log(`Removed ${removed} stored images nothing points at.`); })
+    .catch(() => null);
   // The product was renamed, and Electron derives this directory from the
   // product name — so without this every scanned project would appear to have
   // vanished on first launch.

@@ -305,21 +305,14 @@ export type SemanticChange = {
   kind: "spacing" | "shape" | "size" | "color";
 };
 
-export type HtmlSnapshot = {
-  html: string;
-  bytes: number;
-  stats: {
-    stylesheets: number;
-    inlinedAssets: number;
-    /** Only what genuinely holds pixels: canvas bitmaps, video frames. */
-    rasterised: string[];
-    skippedAssets: string[];
-    svgPreserved: number;
-  };
-};
-
-/** The layer tree the Figma plugin builds from, keyed for stable re-matching. */
-export type FigmaTree = { width: number; height: number; tree: unknown };
+/**
+ * The layer tree everything is drawn from, keyed for stable re-matching.
+ *
+ * `error` is set when the page returned no tree — said out loud rather than
+ * showing an empty frame, because that is the difference between a page with
+ * nothing on it and a capture that failed.
+ */
+export type FigmaTree = { width: number; height: number; tree: unknown; error?: string };
 
 export type PageVariant = {
   id: string;
@@ -328,7 +321,7 @@ export type PageVariant = {
   route: string;
   recipe: Array<{ kind: string; locator: string; label: string }>;
   thumbnail: { dataUrl: string; width: number; height: number } | null;
-  snapshot: HtmlSnapshot | null;
+  layerTree: FigmaTree | null;
 };
 
 export type DiscoveredPage = {
@@ -341,10 +334,12 @@ export type DiscoveredPage = {
   /** Clicks to replay after loading `route`. Empty when directly addressable. */
   recipe: Array<{ kind: string; locator: string; label: string }>;
   depth: number;
+  /**
+   * A picture of the page: quick to draw a grid of, and what is shown while a
+   * page is far enough away that layers would be wasted on it.
+   */
   thumbnail: { dataUrl: string; width: number; height: number } | null;
-  /** The rendered markup: sharp at any zoom, text selectable, SVG intact. */
-  snapshot: HtmlSnapshot | null;
-  /** Layers ready for Figma, captured on the same visit as the markup. */
+  /** Layers: what is drawn up close, and what is exported to Figma. */
   layerTree: FigmaTree | null;
   /** The same page re-skinned — theme or language — not separate pages. */
   variants: PageVariant[];
