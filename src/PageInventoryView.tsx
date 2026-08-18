@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, Download, Figma, FolderGit2, Globe2, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
 import { FigmaSyncDialog } from "./FigmaSyncDialog";
+import { PageLayers } from "./PageLayers";
 import type { AutomaticMappingStatus, DiscoveredPage, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 
 /**
@@ -121,15 +122,17 @@ function PageMenu({ at, busy, onPick, onClose }: {
 }
 
 /**
- * The captured markup, drawn at the width it was captured at and scaled to fit.
+ * One page, drawn from its layers by this app rather than embedded as a
+ * document of its own.
  *
- * A thumbnail is 420px wide, which is enough for a grid and mud once a page has
- * the whole window to itself. The markup is the same capture at full fidelity —
- * sharp at any size, and the text is real text.
+ * A thumbnail is 420px wide and turns to mud at full width. Embedding the
+ * captured markup fixed that but meant a whole foreign document per page — and
+ * it showed the browser's rendering, not the layers about to reach Figma, so
+ * anything the capture missed still looked perfect here. Drawing the layer tree
+ * shows the deliverable, and the same renderer serves every project.
  *
- * Mounted only once it is near the viewport. Each snapshot carries its own
- * inlined images and runs to a couple of megabytes, so thirty of them at once
- * would cost tens of megabytes of live documents to scroll past.
+ * Mounted only once near the viewport: this view has thirty pages in one
+ * scroll, and the thumbnail stands in until then.
  */
 function PageDocument({ page }: { page: DiscoveredPage }) {
   const holder = useRef<HTMLDivElement>(null);
@@ -155,14 +158,10 @@ function PageDocument({ page }: { page: DiscoveredPage }) {
   const height = (page.figmaTree?.height || 790) * scale;
   return (
     <div className="page-document" ref={holder} style={{ height: height > 0 ? height : undefined }}>
-      {visible && page.snapshot?.html ? (
-        <iframe
-          sandbox=""
-          srcDoc={page.snapshot.html}
-          style={{ width: captureWidth, height: page.figmaTree?.height || 790, transform: `scale(${scale})` }}
-          tabIndex={-1}
-          title={page.name}
-        />
+      {visible && page.figmaTree?.tree ? (
+        <div className="page-layers-frame" style={{ transform: `scale(${scale})` }}>
+          <PageLayers height={page.figmaTree.height} tree={page.figmaTree.tree} width={captureWidth} />
+        </div>
       ) : page.thumbnail ? (
         <img alt="" src={page.thumbnail.dataUrl} />
       ) : (

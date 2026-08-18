@@ -3655,15 +3655,9 @@ button.screen-figma-link {
    column. Scaling the document rather than stretching a bitmap is what keeps
    the text crisp — and it is real text, at the size the page actually used. */
 .page-document { position: relative; width: 100%; overflow: hidden; }
-.page-document iframe {
-  position: absolute;
-  inset: 0;
-  border: 0;
-  transform-origin: 0 0;
-  /* Nothing in the list is meant to be interacted with; clicking opens the
-     page, and the pointer must reach the card rather than the document. */
-  pointer-events: none;
-}
+.page-layers-frame { position: absolute; top: 0; left: 0; transform-origin: 0 0; pointer-events: none; }
+.page-layers { position: relative; overflow: hidden; background: #fff; }
+.page-layers img { display: block; }
 .page-document img { width: 100%; height: auto; display: block; }
 .inventory-grid.is-single .inventory-meta h3 { font-size: 15px; }
 .inventory-grid.is-single .inventory-address { font-size: 12px; }
