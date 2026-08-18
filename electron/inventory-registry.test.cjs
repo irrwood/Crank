@@ -157,3 +157,15 @@ test("a dropped page stays dropped, and is forgotten with its project", async ()
     assert.deepEqual(await registry.dropped(id), [], "a forgotten project keeps no list");
   });
 });
+
+test("an app reached through its debugging port is named by what it serves", () => {
+  // The port is how it was reached this time, not what it is. The same app
+  // started again on another port is the same project; a different app on the
+  // same port is not.
+  assert.equal(nameFor("url", "attached:http://127.0.0.1:5173"), "127.0.0.1:5173 · attached");
+  assert.notEqual(
+    targetId("url", "attached:http://127.0.0.1:5173"),
+    targetId("url", "http://127.0.0.1:5173"),
+    "and it is not the same scan as reaching that address without the app behind it"
+  );
+});

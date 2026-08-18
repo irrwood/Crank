@@ -19,9 +19,15 @@ function targetId(kind, target) {
 
 function nameFor(kind, target) {
   if (kind === "folder") return path.basename(target.replace(/[/\\]+$/, "")) || target;
+  // An app reached through its debugging port is named after what it serves,
+  // and marked, because a plain scan of the same address is a different scan:
+  // that one gets the interface without the data behind it.
+  const attached = String(target).startsWith("attached:");
+  const address = attached ? String(target).slice("attached:".length) : target;
   try {
-    const url = new URL(target);
-    return url.host + (url.pathname === "/" ? "" : url.pathname);
+    const url = new URL(address);
+    const shown = url.host + (url.pathname === "/" ? "" : url.pathname);
+    return attached ? `${shown} · attached` : shown;
   } catch {
     return target;
   }

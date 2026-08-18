@@ -1534,7 +1534,28 @@ function registerIpc() {
    */
   ipcMain.handle("inventory:scan-attached", async (event, port) => {
     const safePort = z.number().int().min(1).max(65535).parse(port);
-    const target = `debug:${safePort}`;
+    // The port is how the app was reached this time, not what it is: tomorrow
+    // 9222 may be something else entirely, and the same app started again is
+    // the same project. So the window is asked what it is showing, and the
+    // address it serves names it — distinct from a plain scan of that address,
+    // which reaches the same app without the data behind it.
+    let windows = [];
+    try {
+      windows = await listTargets(safePort);
+    } catch {}
+    if (windows.length === 0) {
+      return {
+        ok: false,
+        message: `Nothing is listening for a debugger on port ${safePort}. Start the app with --remote-debugging-port=${safePort}, then try again.`
+      };
+    }
+    let origin;
+    try {
+      origin = new URL(windows[0].url).origin;
+    } catch {
+      return { ok: false, message: `That window is showing ${windows[0].url || "nothing"}, which cannot be scanned.` };
+    }
+    const target = `attached:${origin}`;
     const id = targetId("url", target);
     const send = (channel, value) => {
       if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
@@ -1542,6 +1563,7 @@ function registerIpc() {
     await inventoryRegistry().remember("url", target);
     send("inventory:started", { kind: "url", target });
     const scanned = await scanAttached(safePort, {
+      targetId: windows[0].id,
       onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
