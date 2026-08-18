@@ -8,71 +8,56 @@ changes with it.
 
 ## Tagline
 
-> Every screen of your running app, as editable Figma layers.
-
-Alternatives, same idea, different emphasis:
-
-> Point it at the app you are already running. Get every screen in Figma.
-
-> Your app walks itself into Figma.
+> Scan every screen of your running app into editable Figma layers.
 
 ---
 
 ## Description
 
-**Crank is the desktop app. This plugin is the half that runs inside Figma —
-it does nothing on its own.**
+**Crank is a desktop app. This plugin is its other half, and does nothing on
+its own.**
 
-Crank starts your project, opens every screen it can reach, and sends them here
-as real Figma layers: frames, text, vectors and images you can select and edit,
-not screenshots.
+Crank starts your project, walks every screen it can reach, and sends them here
+as real Figma layers — frames, text, vectors and images you can select and
+edit, not screenshots.
 
-**It finds the screens itself.** You give it a folder or an address, not a list
-of URLs. Routes, tabs and overlays each come back as a page, and it records how
-it reached each one — including the screens that take a click to get to. A theme
-or language switch is treated as the same page wearing a different look.
+**It finds the screens for you.** Give it a folder or an address, not a list of
+URLs. Routes, tabs and overlays each come back as a page, and Crank records how
+it reached them, including the ones that take a click. A theme or language
+switch is kept as the same page wearing a different look, not counted twice.
 
-**It runs the real thing.** Your project is started and rendered in Chromium, so
-what arrives is what the browser actually laid out — the real typefaces, the
-real spacing, the real wrapping. When a font cannot be loaded, Crank says which
-one rather than quietly substituting it.
+**It renders the real thing.** Your project is started and drawn in Chromium,
+so what arrives is what the browser actually laid out: the real typefaces, the
+real spacing, the real line breaks. If a font cannot be loaded, Crank names it
+instead of quietly swapping it.
 
 **It can use the app you already have open.** Screens that only exist behind a
-login, or that draw their content from a running process, can be captured from
-the app as it is rather than from an empty copy of its interface.
+login, or whose content comes from a running process, can be captured from that
+app as it is rather than from an empty copy of its interface.
 
-**A second run updates the same frames.** Each page remembers which frame it
-became, so scanning again edits those frames instead of drawing a new set beside
-them. Rename a heading or restyle a component and the page keeps its identity.
+**Scanning again updates the same frames.** Every page remembers which frame it
+became, so a second run edits those frames instead of drawing a new set beside
+them. Rename a heading or restyle a component and the page keeps its place.
 
-**It stays on your computer.** The plugin talks to `localhost` and nothing else.
-Your code is never uploaded; the layers you see are what you chose to send.
+**Nothing leaves your computer.** The plugin talks to `localhost` and nothing
+else. Your source is never uploaded, and the only things that reach Figma are
+the layers you chose to send.
 
 ### What you need
 
 - The Crank desktop app, running on the same computer.
-- A project it can start — npm and pnpm projects run their own dev script,
-  Electron projects serve their renderer, and Python or Ruby projects use the
-  command their Dockerfile, Procfile or README already declares. A folder of
-  static HTML needs nothing at all.
+- A project it can start. npm and pnpm projects run their own dev script,
+  Electron projects serve their renderer without opening a window, and Python
+  or Ruby projects use the command their Dockerfile, Procfile or README already
+  declares. A folder of static HTML needs nothing at all.
 
 ### What it does not do
 
-- It does not write to your Figma file beyond the frames it creates and updates.
-- It does not read your source to guess a layout. It renders the project and
-  measures the result.
-- Some CSS does not survive the trip yet — gradients, backdrop blur and
-  generated content among them. What arrives is what was measured, and what was
-  substituted is named.
-
----
-
-## Notes for whoever submits this
-
-- The desktop app's interface is currently in Chinese. If the listing is in
-  English, say so, or someone will install both and be surprised.
-- Category and tags are chosen in the form, not here.
-- `icon-128.png` is in this folder. The 1920×960 cover still has to be made.
+- It does not touch your Figma file beyond the frames it creates and updates.
+- It does not read your source to guess a layout. It runs the project and
+  measures what the browser produced.
+- Some CSS does not survive the trip yet, gradients and backdrop blur among
+  them. What arrives is what was measured, and anything substituted is named.
 
 ---
 
