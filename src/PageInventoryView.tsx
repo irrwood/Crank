@@ -784,8 +784,11 @@ export default function PageInventoryView() {
     <main className="inventory-page">
       {choices && !activeJob && (
         <section className="inventory-choices">
-          <strong>This folder holds several runnable projects</strong>
-          <p>Its dev script starts them in parallel, so scanning the folder itself would pick one at random. Choose the one you mean.</p>
+          <strong>这是一个工作区，里面有 {choices.length} 个能单独跑起来的项目</strong>
+          <p>
+            工作区本身没有界面可扫——它的 dev 脚本是把活分给下面的包。这些项目已经加进左边的列表，
+            选一个现在就扫。
+          </p>
           <ul>
             {choices.map((item) => (
               <li key={item.root}>

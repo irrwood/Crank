@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { normalizeTargetUrl, parseSitemapPaths } = require("./page-inventory.cjs");
+const os = require("node:os");
+const path = require("node:path");
+const { mkdtemp, mkdir, writeFile, rm } = require("node:fs/promises");
+const { declaresWorkspace, normalizeTargetUrl, parseSitemapPaths, scanFolder } = require("./page-inventory.cjs");
 
 test("accepts the addresses people actually type", () => {
   assert.deepEqual(normalizeTargetUrl("localhost:8000"), { ok: true, origin: "http://localhost:8000", startPath: "/" });
@@ -35,4 +38,52 @@ test("keeps a query string a query string", () => {
   assert.equal(resolved.pathname, "/");
   assert.equal(resolved.search, "?view=settings");
   assert.equal(normalizeTargetUrl("http://localhost:5173/?view=settings").startPath, "/?view=settings");
+});
+
+test("a folder that declares its packages is a workspace, whatever its dev script does", async () => {
+  // A monorepo root usually has a dev script, but it orchestrates rather than
+  // serves: `pnpm --parallel --filter a --filter b dev` starts two applications
+  // and no single address, so treating the root as runnable started that
+  // command and then scanned nothing. The project already answers the right
+  // question by declaring its packages.
+  const root = await mkdtemp(path.join(os.tmpdir(), "crank-workspace-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      name: "monorepo", scripts: { dev: "pnpm --parallel --filter a --filter b dev" }
+    }));
+    assert.equal(await declaresWorkspace(root), false, "a dev script alone says nothing");
+
+    await writeFile(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
+    assert.equal(await declaresWorkspace(root), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("npm and yarn declare it in the manifest instead", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "crank-workspace-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "x", workspaces: ["apps/*"] }));
+    assert.equal(await declaresWorkspace(root), true);
+
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "x", workspaces: { packages: ["apps/*"] } }));
+    assert.equal(await declaresWorkspace(root), true, "the object form counts too");
+
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "x", workspaces: [] }));
+    assert.equal(await declaresWorkspace(root), false, "an empty declaration declares nothing");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a folder that merely contains projects is still scanned itself", async () => {
+  // A portfolio with a couple of demos in it declares no packages, so dropping
+  // it still means "scan this", with the demos registered alongside.
+  const root = await mkdtemp(path.join(os.tmpdir(), "crank-site-"));
+  try {
+    await writeFile(path.join(root, "index.html"), "<h1>Portfolio</h1>");
+    assert.equal(await declaresWorkspace(root), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

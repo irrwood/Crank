@@ -1293,6 +1293,14 @@ function registerIpc() {
     const inventory = scanned.ok
       ? { ...scanned, source: { kind: "folder", target: safeRoot }, pages: await keepWanted(id, scanned.pages) }
       : scanned;
+    // A workspace has nothing of its own to show, but its packages do, and the
+    // sidebar should hold them the moment the folder is dropped rather than
+    // only for as long as a picker is on screen.
+    if (!inventory.ok && inventory.reason === "workspace") {
+      for (const item of inventory.packages ?? []) {
+        await inventoryRegistry().remember("folder", item.root, { parent: safeRoot });
+      }
+    }
     if (inventory.ok) {
       await inventoryRegistry().saveInventory("folder", safeRoot, inventory, { parent });
       // A folder that also holds projects gets them registered underneath it,

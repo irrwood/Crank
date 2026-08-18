@@ -432,6 +432,29 @@ async function findStaticSite(root, { maxPages = 200, maxDepth = 4 } = {}) {
  * be scanned — the choice would be arbitrary and usually wrong. Offer the
  * runnable packages instead of guessing.
  */
+/**
+ * Whether the folder says of itself that it is a workspace.
+ *
+ * A monorepo root usually has a dev script, but it orchestrates rather than
+ * serves: `pnpm --parallel --filter a --filter b dev` starts two applications
+ * and no single address, so treating the root as runnable started that command
+ * and then scanned nothing. Asking whether a dev script exists is the wrong
+ * question; the project already answers the right one by declaring its
+ * packages.
+ */
+async function declaresWorkspace(root) {
+  for (const file of ["pnpm-workspace.yaml", "pnpm-workspace.yml", "lerna.json"]) {
+    if (await readFile(path.join(root, file), "utf8").then(() => true).catch(() => false)) return true;
+  }
+  try {
+    const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+    const declared = manifest.workspaces;
+    return Array.isArray(declared) ? declared.length > 0 : Array.isArray(declared?.packages) && declared.packages.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function findWorkspacePackages(root) {
   let roots = [];
   try {
@@ -470,13 +493,17 @@ async function withProjectServer(root, { onStatus, allowWorkspaceRoot = false, .
   // alongside the result rather than instead of it. The picker only takes over
   // when the folder itself has nothing to serve.
   if (packages.length > 0) {
+    // A folder that declares its packages is not an application, whatever its
+    // own dev script does. One that merely happens to contain projects — a
+    // portfolio with a couple of demos in it — still gets scanned itself.
     const runnable = await resolveDevCommand(root);
-    const servesItself = runnable.ok || Boolean(await findStaticSite(root, { maxPages: 1 }));
+    const servesItself = !(await declaresWorkspace(root))
+      && (runnable.ok || Boolean(await findStaticSite(root, { maxPages: 1 })));
     if (!servesItself) {
       return {
         ok: false,
         reason: "workspace",
-        message: "This folder holds several runnable projects. Pick the one to scan.",
+        message: "This folder is a workspace: it declares packages and its dev script hands work to them rather than serving an interface. Its packages are listed instead.",
         packages
       };
     }
@@ -574,4 +601,4 @@ async function scanFolder(root, options = {}) {
   }));
 }
 
-module.exports = { exploreFromPage, listTargets, normalizeTargetUrl, parseSitemapPaths, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer };
+module.exports = { declaresWorkspace, exploreFromPage, listTargets, normalizeTargetUrl, parseSitemapPaths, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer };
