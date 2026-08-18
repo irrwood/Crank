@@ -3584,6 +3584,11 @@ button.screen-figma-link {
 
 .target-empty { margin: 6px 10px; font-size: 12px; opacity: 0.45; }
 
+/* An app's own icon fills the tile it is given; the placeholder keeps its
+   padding, so a scanned project reads differently from one that is not yet. */
+.project-icon.has-own { padding: 0; background: none; overflow: hidden; }
+.project-icon.has-own img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
 /* Dropping a folder onto the project list. Marked on the whole rail rather than
    an inner box, so the target is the thing being aimed at. */
 .sidebar.is-drop-target { background: rgba(59, 108, 246, 0.09); }

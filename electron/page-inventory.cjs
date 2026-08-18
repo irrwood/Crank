@@ -352,10 +352,14 @@ async function runScan(session, origin, startPath, {
     });
 
     const pages = await captureStates(session, states, { withThumbnails, withHtml, withFigmaTree }, onStatus);
+    // Taken once for the project, not per page: it is the same icon on all of
+    // them, and it is what tells one project from another in the list.
+    const icon = await session.captureIcon?.().catch(() => null) ?? null;
 
     return {
       ok: true,
       origin,
+      icon,
       pages,
       skipped,
       filtered,

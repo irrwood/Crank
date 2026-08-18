@@ -169,3 +169,19 @@ test("an app reached through its debugging port is named by what it serves", () 
     "and it is not the same scan as reaching that address without the app behind it"
   );
 });
+
+test("a project keeps the icon its own pages declare", async () => {
+  await withRegistry(async (registry) => {
+    // Every row otherwise wears the same placeholder, which says only "this is
+    // a project". Kept on the entry rather than only inside the inventory, so
+    // the list can draw it without loading a scan of tens of megabytes.
+    const icon = "data:image/png;base64,iVBORw0KGgo=";
+    await registry.saveInventory("folder", "/repos/site", { ok: true, pages: [{ id: "a" }], icon });
+    const [entry] = await registry.list();
+    assert.equal(entry.icon, icon);
+
+    // A later scan that finds none keeps the one already known.
+    await registry.saveInventory("folder", "/repos/site", { ok: true, pages: [{ id: "a" }], icon: null });
+    assert.equal((await registry.list())[0].icon, icon);
+  });
+});

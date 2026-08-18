@@ -167,6 +167,53 @@ function createBrowsingSession(origin, driver) {
       return read();
     },
 
+    /**
+     * The application's own icon, as the page declares it.
+     *
+     * Every project otherwise wears the same placeholder in the list, which
+     * says only "this is a project" — and the thing that tells them apart is
+     * already sitting in the page being scanned. Drawn to a canvas so an .ico,
+     * an .svg and a .png all come back the same way.
+     */
+    async captureIcon() {
+      try {
+        return await evaluate(`(async () => {
+          const links = [...document.querySelectorAll('link[rel~="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]')];
+          // Largest declared size first: a 16px favicon looks like mud at 26.
+          const sized = (link) => Math.max(0, ...String(link.sizes?.value || link.getAttribute("sizes") || "")
+            .split(/\s+/).map((part) => parseInt(part, 10)).filter(Number.isFinite));
+          const candidates = links.sort((a, b) => sized(b) - sized(a)).map((link) => link.href);
+          candidates.push(new URL("/favicon.ico", location.href).href);
+
+          for (const href of candidates) {
+            const drawn = await new Promise((resolve) => {
+              const image = new Image();
+              image.crossOrigin = "anonymous";
+              const done = (value) => resolve(value);
+              image.onload = () => {
+                try {
+                  const canvas = document.createElement("canvas");
+                  canvas.width = 64;
+                  canvas.height = 64;
+                  const context = canvas.getContext("2d");
+                  if (!context) return done(null);
+                  context.drawImage(image, 0, 0, 64, 64);
+                  done(canvas.toDataURL("image/png"));
+                } catch { done(null); }
+              };
+              image.onerror = () => done(null);
+              setTimeout(() => done(null), 2500);
+              image.src = href;
+            });
+            if (drawn && drawn.length > 200) return drawn;
+          }
+          return null;
+        })()`);
+      } catch {
+        return null;
+      }
+    },
+
     async captureHtml() {
       try {
         const limits = {

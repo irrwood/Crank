@@ -11,7 +11,7 @@ const { readFile, writeFile, mkdir, rm } = require("node:fs/promises");
  * rescanning is a deliberate act rather than the price of looking.
  */
 
-const targetSchemaKeys = ["id", "kind", "target", "name", "addedAt", "lastScannedAt", "pageCount", "parent"];
+const targetSchemaKeys = ["id", "kind", "target", "name", "addedAt", "lastScannedAt", "pageCount", "parent", "icon"];
 
 function targetId(kind, target) {
   return createHash("sha256").update(`${kind}:${target}`).digest("hex").slice(0, 16);
@@ -102,7 +102,7 @@ function createInventoryRegistry(directory) {
     list: read,
     grouped: async () => groupTargets(await read()),
 
-    async remember(kind, target, { pageCount = null, scannedAt = null, parent = null } = {}) {
+    async remember(kind, target, { pageCount = null, scannedAt = null, parent = null, icon = null } = {}) {
       const targets = await read();
       const id = targetId(kind, target);
       const existing = targets.find((entry) => entry.id === id);
@@ -111,6 +111,7 @@ function createInventoryRegistry(directory) {
         existing.lastScannedAt = scannedAt ?? existing.lastScannedAt;
         existing.pageCount = pageCount ?? existing.pageCount;
         existing.parent = parent ?? existing.parent;
+        existing.icon = icon ?? existing.icon;
       } else {
         targets.push({
           id, kind, target,
@@ -118,7 +119,8 @@ function createInventoryRegistry(directory) {
           addedAt: now,
           lastScannedAt: scannedAt,
           pageCount,
-          parent
+          parent,
+          icon
         });
       }
       await write(targets);
@@ -166,7 +168,10 @@ function createInventoryRegistry(directory) {
       await this.remember(kind, target, {
         pageCount: inventory?.pages?.length ?? null,
         scannedAt: new Date().toISOString(),
-        parent
+        parent,
+        // Kept on the entry, not only inside the inventory, so the list can
+        // draw it without loading a scan that runs to tens of megabytes.
+        icon: inventory?.icon ?? null
       });
       return id;
     },

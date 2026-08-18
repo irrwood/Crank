@@ -357,6 +357,8 @@ export type ForeignProject = {
 };
 
 export type InventoryTarget = {
+  /** The app's own icon, captured from the page that declares it. */
+  icon?: string | null;
   id: string;
   kind: "folder" | "url";
   target: string;

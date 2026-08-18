@@ -196,8 +196,14 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
       title={target.target}
       type="button"
     >
-      <span className={`project-icon is-${target.kind === "folder" ? "web" : "desktop"}`}>
-        {busy ? <LoaderCircle className="spin" size={14} /> : target.kind === "folder" ? <FolderGit2 size={14} /> : <Globe2 size={14} />}
+      <span className={`project-icon is-${target.kind === "folder" ? "web" : "desktop"}${target.icon && !busy ? " has-own" : ""}`}>
+        {busy
+          ? <LoaderCircle className="spin" size={14} />
+          : target.icon
+            // The app's own icon, taken from the page it declares it on. A row
+            // wearing the placeholder is one that has not been scanned yet.
+            ? <img alt="" src={target.icon} />
+            : target.kind === "folder" ? <FolderGit2 size={14} /> : <Globe2 size={14} />}
       </span>
       <span className="project-copy">
         <strong>{target.name}</strong>
