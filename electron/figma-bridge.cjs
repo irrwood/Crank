@@ -47,6 +47,16 @@ const domNodeSchema = z.lazy(() => z.discriminatedUnion("kind", [
       borderLeftWidth: z.number().finite().min(0).max(100),
       borderRadius: z.number().finite().min(0).max(5000),
       opacity: z.number().finite().min(0).max(1),
+      // Parsed on the way out, so the plugin assigns rather than parses.
+      shadows: z.array(z.object({
+        type: z.enum(["DROP_SHADOW", "INNER_SHADOW"]),
+        color: z.object({ r: z.number(), g: z.number(), b: z.number(), a: z.number() }),
+        offset: z.object({ x: z.number().finite(), y: z.number().finite() }),
+        radius: z.number().finite().min(0).max(1000),
+        spread: z.number().finite().min(0).max(1000),
+        visible: z.boolean(),
+        blendMode: z.literal("NORMAL")
+      })).max(8).optional(),
       clipsContent: z.boolean()
     }),
     // A real dashboard has containers with thousands of rows. Refusing them
@@ -70,6 +80,7 @@ const domNodeSchema = z.lazy(() => z.discriminatedUnion("kind", [
       unavailableFonts: z.array(z.string().min(1).max(160)).max(12).optional(),
       fontStyle: z.enum(["normal", "italic", "oblique"]).optional(),
       fontStretch: z.string().min(1).max(80).optional(),
+      textCase: z.enum(["none", "uppercase", "lowercase", "capitalize"]).optional(),
       whiteSpace: z.string().min(1).max(80).optional(),
       wordBreak: z.string().min(1).max(80).optional(),
       overflowWrap: z.string().min(1).max(80).optional(),

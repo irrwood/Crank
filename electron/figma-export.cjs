@@ -1,4 +1,5 @@
 const { createHash } = require("node:crypto");
+const { parseBoxShadow } = require("./box-shadow.cjs");
 
 /**
  * Turns a page inventory into the job the Figma bridge already understands.
@@ -25,6 +26,24 @@ const MAX_SIDE = 40_000;
  */
 function projectIdFor(identity) {
   return createHash("sha256").update(String(identity ?? "")).digest("hex").slice(0, 24);
+}
+
+/**
+ * Turns the CSS the page reported into the effects Figma draws.
+ *
+ * Done here rather than in the page, which cannot require anything, and rather
+ * than in the plugin, which would then carry a CSS parser it could not be
+ * tested against.
+ */
+function withParsedShadows(node) {
+  if (!node || typeof node !== "object") return node;
+  const { boxShadow, ...style } = node.style ?? {};
+  const shadows = parseBoxShadow(boxShadow);
+  return {
+    ...node,
+    ...(node.style ? { style: shadows.length > 0 ? { ...style, shadows } : style } : {}),
+    ...(node.children ? { children: node.children.map(withParsedShadows) } : {})
+  };
 }
 
 function safeScreenId(id, fallbackIndex) {
@@ -82,7 +101,7 @@ function buildFigmaJob(inventory, { identity, projectName, figmaFileName, operat
     renderMode: "editable-dom",
     width: clampSide(page.figmaTree.width),
     height: clampSide(page.figmaTree.height),
-    domTree: page.figmaTree.tree
+    domTree: withParsedShadows(page.figmaTree.tree)
   }));
 
   return {
@@ -100,4 +119,4 @@ function buildFigmaJob(inventory, { identity, projectName, figmaFileName, operat
   };
 }
 
-module.exports = { MAX_SCREENS, buildFigmaJob, clampSide, projectIdFor, safeScreenId, unavailableFonts };
+module.exports = { MAX_SCREENS, buildFigmaJob, clampSide, projectIdFor, safeScreenId, unavailableFonts, withParsedShadows };

@@ -61,6 +61,10 @@ function serializeRenderedApplication() {
       pixels(style.borderBottomLeftRadius)
     ),
     opacity: Number.parseFloat(style.opacity || "1"),
+    // Shadows are everywhere in a real interface and were dropped entirely, so
+    // every card arrived flat. Carried as the browser's own normalised form —
+    // colour first, then offsets — for the plugin to turn into effects.
+    boxShadow: style.boxShadow && style.boxShadow !== "none" ? String(style.boxShadow).slice(0, 400) : null,
     clipsContent: ["hidden", "clip", "scroll", "auto"].includes(style.overflow)
       || ["hidden", "clip"].includes(style.overflowX)
       || ["hidden", "clip"].includes(style.overflowY)
@@ -84,6 +88,12 @@ function serializeRenderedApplication() {
         .filter(Boolean),
       fontStyle: style.fontStyle === "italic" ? "italic" : style.fontStyle.startsWith("oblique") ? "oblique" : "normal",
       fontStretch: style.fontStretch || "100%",
+      // The screen says HELLO where the markup says hello. Carried as the
+      // instruction rather than folded into the text, so the source string
+      // stays what the source says — which is what a pull has to edit.
+      textCase: ["uppercase", "lowercase", "capitalize"].includes(style.textTransform)
+        ? style.textTransform
+        : "none",
       whiteSpace: style.whiteSpace || "normal",
       wordBreak: style.wordBreak || "normal",
       overflowWrap: style.overflowWrap || "normal",

@@ -966,7 +966,8 @@ test("Figma bridge rebuilds rendered DOM as editable Figma layers", async () => 
       id: "editable-screen", name: "Connections", sourceType: "screen", currentNodeId: null,
       renderMode: "editable-dom", width: 1220, height: 790,
       domTree: {
-        kind: "element", id: "root", selector: ".app-frame", name: "Application", x: 0, y: 0, width: 1220, height: 790, style: elementStyle,
+        kind: "element", id: "root", selector: ".app-frame", name: "Application", x: 0, y: 0, width: 1220, height: 790,
+        style: { ...elementStyle, shadows: [{ type: "DROP_SHADOW", color: { r: 0, g: 0, b: 0, a: 0.08 }, offset: { x: 0, y: 2 }, radius: 5, spread: 0, visible: true, blendMode: "NORMAL" }] },
         children: [
           {
             kind: "text", id: "root/text:0", selector: ".title", name: "Title", text: "Application pages",
@@ -976,6 +977,7 @@ test("Figma bridge rebuilds rendered DOM as editable Figma layers", async () => 
             style: {
               color: "rgb(32, 33, 31)", fontSize: 22, fontWeight: 700, lineHeight: 28, letterSpacing: 0, textAlign: "left",
               fontFamilies: ["Inter", "sans-serif"], resolvedFontFamily: "Inter", fontStyle: "normal", fontStretch: "100%",
+              textCase: "uppercase",
               whiteSpace: "nowrap", wordBreak: "normal", overflowWrap: "normal", direction: "ltr", writingMode: "horizontal-tb"
             }
           },
@@ -1026,6 +1028,13 @@ test("Figma bridge rebuilds rendered DOM as editable Figma layers", async () => 
   assert.ok(importedTitle);
   assert.deepEqual(importedTitle.fontName, { family: "Inter", style: "Bold" });
   assert.equal(importedTitle.textAutoResize, "WIDTH_AND_HEIGHT");
+  // The page renders this uppercase from markup that is not. Set as a property,
+  // so the layer still carries the words the source uses.
+  assert.equal(importedTitle.textCase, "UPPER");
+  assert.equal(importedTitle.characters, "Application pages", "and the source string is untouched");
+  const shadowed = screen.findAll((node) => node.name === "Application")[0] ?? screen.children[0];
+  assert.equal(shadowed.effects?.[0]?.type, "DROP_SHADOW", "a card is not flat");
+  assert.equal(shadowed.effects?.[0]?.radius, 5);
   const titleBounds = screen.findAll((node) => node.getSharedPluginData("ui_sync", "text_container") === "1")[0];
   assert.deepEqual({ x: titleBounds.x, y: titleBounds.y, width: titleBounds.width, height: titleBounds.height }, { x: 246, y: 120, width: 180, height: 28 });
   const importedBody = screen.findAll((node) => node.type === "TEXT").find((node) => node.characters.startsWith("A paragraph"));

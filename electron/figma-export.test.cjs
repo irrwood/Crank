@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { MAX_SCREENS, buildFigmaJob, clampSide, projectIdFor, safeScreenId } = require("./figma-export.cjs");
+const { MAX_SCREENS, buildFigmaJob, clampSide, projectIdFor, safeScreenId, withParsedShadows } = require("./figma-export.cjs");
 
 const tree = { kind: "element", name: "Root", width: 1200, height: 800, children: [] };
 const page = (name, extra = {}) => ({
@@ -95,4 +95,24 @@ test("stays within the bridge's screen limit and says what was left out", () => 
   const built = buildFigmaJob({ origin: "http://x", pages });
   assert.equal(built.job.screens.length, MAX_SCREENS);
   assert.equal(built.dropped.length, 3);
+});
+
+test("shadows are parsed on the way out, so the plugin has nothing to decide", () => {
+  const tree = {
+    kind: "element", id: "root", name: "Card", width: 200, height: 100,
+    style: { backgroundColor: "rgb(255,255,255)", borderRadius: 8, opacity: 1, clipsContent: false,
+      boxShadow: "rgba(0, 0, 0, 0.08) 0px 2px 10px 0px" },
+    children: [{
+      kind: "element", id: "root/0", name: "Flat", width: 20, height: 20,
+      style: { backgroundColor: "rgb(0,0,0)", borderRadius: 0, opacity: 1, clipsContent: false, boxShadow: "none" },
+      children: []
+    }]
+  };
+  const out = withParsedShadows(tree);
+  assert.equal(out.style.shadows.length, 1);
+  assert.equal(out.style.shadows[0].type, "DROP_SHADOW");
+  assert.equal(out.style.shadows[0].radius, 5);
+  assert.ok(!("boxShadow" in out.style), "the CSS string does not travel");
+  assert.ok(!("shadows" in out.children[0].style), "an element without one carries nothing");
+  assert.equal(out.children[0].style.backgroundColor, "rgb(0,0,0)", "the rest of the style is untouched");
 });

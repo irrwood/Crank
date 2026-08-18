@@ -1335,6 +1335,9 @@ async function renderDomNode(ir, fonts) {
     text.lineHeight = { unit: "PIXELS", value: ir.style.lineHeight };
     text.letterSpacing = { unit: "PIXELS", value: ir.style.letterSpacing };
     text.textAlignHorizontal = ir.style.textAlign === "justify" ? "JUSTIFIED" : ir.style.textAlign.toUpperCase();
+    // The page renders HELLO from markup that says hello. Set as a property so
+    // the layer still carries the words the source uses.
+    text.textCase = { uppercase: "UPPER", lowercase: "LOWER", capitalize: "TITLE" }[ir.style.textCase] || "ORIGINAL";
     text.fills = cssPaint(ir.style.color);
     return measuredTextContainer(ir, text);
   }
@@ -1359,6 +1362,9 @@ async function renderDomNode(ir, fonts) {
   container.cornerRadius = Math.min(ir.style.borderRadius, Math.min(ir.width, ir.height) / 2);
   container.opacity = ir.style.opacity;
   container.clipsContent = ir.style.clipsContent;
+  // Already parsed into the shape Figma wants, so there is nothing to decide
+  // here. Without them every card and menu arrived flat.
+  if (ir.style.shadows?.length) container.effects = ir.style.shadows;
   const borders = [
     [ir.style.borderTopWidth, ir.style.borderTopColor],
     [ir.style.borderRightWidth, ir.style.borderRightColor],
