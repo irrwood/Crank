@@ -27,6 +27,10 @@ running and has something to send. Whichever way it is published, the
 description has to say that first, or someone will install it and see a plugin
 that appears to hang.
 
+`icon-128.png` in this folder is the icon to upload — the same artwork as the
+desktop app, but filling the frame rather than sitting inside the transparent
+margin macOS expects, because Figma draws its own frame around it.
+
 Before submitting, check that:
 
 - `manifest.json` carries the current `name` and its existing `id`;
