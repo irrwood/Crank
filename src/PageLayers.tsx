@@ -11,6 +11,11 @@ import type { CSSProperties } from "react";
  * someone finds out before opening Figma rather than after.
  *
  * One template, any project. What differs between projects is the data.
+ *
+ * The tree it draws is not Figma's shape — it is the browser's: CSS colour
+ * strings, CSS property names, DOM kinds. Figma's own shapes are made when a
+ * job is built and stay on that side. Anything here that reaches for one is a
+ * bug, not a shortcut.
  */
 
 type Layer = {
@@ -44,19 +49,16 @@ function borderOf(style: Record<string, unknown>): CSSProperties {
   return found ? { border: `${found[0]}px solid ${found[1]}` } : {};
 }
 
+/**
+ * The capture keeps the browser's own shadow string, and this draws to CSS, so
+ * it passes straight through. Figma's effect objects are made at the export
+ * boundary and belong to that side of it — reaching for them here was reaching
+ * across a line the rest of the code keeps, and quietly cost every shadow in
+ * the preview, since the stored tree has never carried them.
+ */
 function shadowOf(style: Record<string, unknown>): CSSProperties {
-  const shadows = style.shadows as Array<Record<string, any>> | undefined;
-  if (!shadows?.length) return {};
-  return {
-    boxShadow: shadows
-      .map((shadow) => {
-        const { r, g, b, a } = shadow.color ?? {};
-        const colour = `rgba(${Math.round((r ?? 0) * 255)}, ${Math.round((g ?? 0) * 255)}, ${Math.round((b ?? 0) * 255)}, ${a ?? 1})`;
-        const inset = shadow.type === "INNER_SHADOW" ? "inset " : "";
-        return `${inset}${shadow.offset?.x ?? 0}px ${shadow.offset?.y ?? 0}px ${(shadow.radius ?? 0) * 2}px ${shadow.spread ?? 0}px ${colour}`;
-      })
-      .join(", ")
-  };
+  const shadow = style.boxShadow;
+  return typeof shadow === "string" && shadow && shadow !== "none" ? { boxShadow: shadow } : {};
 }
 
 function Node({ layer }: { layer: Layer }) {
