@@ -73,6 +73,8 @@ Scans, the project list and the Figma connection all stay **on your machine** (`
 
 Capture only ever reads what the page has already drawn. Requests that would write are cancelled, third-party scripts and data calls are cancelled, and controls that read as destructive — delete, sign out, pay — are skipped. **It does not change your project.**
 
+Those are checkable claims rather than assurances: the files that enforce them are published in **[`privacy/`](privacy/)**, along with a script that compares them byte for byte with the copy inside the app you downloaded.
+
 ---
 
 ## Current limits

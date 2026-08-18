@@ -1,0 +1,20 @@
+{
+  "name": "Crank",
+  "id": "1671468393066911617",
+  "api": "1.0.0",
+  "editorType": [
+    "figma"
+  ],
+  "main": "code.js",
+  "ui": "ui.html",
+  "documentAccess": "dynamic-page",
+  "permissions": [
+    "teamlibrary"
+  ],
+  "networkAccess": {
+    "allowedDomains": [
+      "http://localhost:38457"
+    ],
+    "reasoning": "Crank runs on the same computer. This plugin receives the pages Crank captured, builds them as layers here, and sends back the Figma file name, the IDs of the frames it created, and the text, size, colour and font of those layers \u2014 which is how a later run updates the same frames instead of duplicating them, and how it can tell what changed in Figma. It reaches this local address only, and nothing goes to the internet."
+  }
+}
