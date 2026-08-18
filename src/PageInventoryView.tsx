@@ -120,10 +120,63 @@ function PageMenu({ at, busy, onPick, onClose }: {
   );
 }
 
-function PageCard({ page, index, busy, onOpen, onMenu }: {
+/**
+ * The captured markup, drawn at the width it was captured at and scaled to fit.
+ *
+ * A thumbnail is 420px wide, which is enough for a grid and mud once a page has
+ * the whole window to itself. The markup is the same capture at full fidelity —
+ * sharp at any size, and the text is real text.
+ *
+ * Mounted only once it is near the viewport. Each snapshot carries its own
+ * inlined images and runs to a couple of megabytes, so thirty of them at once
+ * would cost tens of megabytes of live documents to scroll past.
+ */
+function PageDocument({ page }: { page: DiscoveredPage }) {
+  const holder = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [scale, setScale] = useState(1);
+  const captureWidth = page.figmaTree?.width || 1220;
+
+  useEffect(() => {
+    const element = holder.current;
+    if (!element) return;
+    const watcher = new IntersectionObserver(
+      (entries) => { if (entries.some((entry) => entry.isIntersecting)) setVisible(true); },
+      { rootMargin: "600px 0px" }
+    );
+    watcher.observe(element);
+    const sizer = new ResizeObserver(([entry]) => {
+      if (entry) setScale(entry.contentRect.width / captureWidth);
+    });
+    sizer.observe(element);
+    return () => { watcher.disconnect(); sizer.disconnect(); };
+  }, [captureWidth]);
+
+  const height = (page.figmaTree?.height || 790) * scale;
+  return (
+    <div className="page-document" ref={holder} style={{ height: height > 0 ? height : undefined }}>
+      {visible && page.snapshot?.html ? (
+        <iframe
+          sandbox=""
+          srcDoc={page.snapshot.html}
+          style={{ width: captureWidth, height: page.figmaTree?.height || 790, transform: `scale(${scale})` }}
+          tabIndex={-1}
+          title={page.name}
+        />
+      ) : page.thumbnail ? (
+        <img alt="" src={page.thumbnail.dataUrl} />
+      ) : (
+        <span className="inventory-shot-empty">没有预览</span>
+      )}
+    </div>
+  );
+}
+
+function PageCard({ page, index, busy, single, onOpen, onMenu }: {
   page: DiscoveredPage;
   index: number;
   busy: boolean;
+  single?: boolean;
   onOpen: (page: DiscoveredPage) => void;
   onMenu: (page: DiscoveredPage, at: { x: number; y: number }) => void;
 }) {
@@ -143,9 +196,11 @@ function PageCard({ page, index, busy, onOpen, onMenu }: {
     >
       <button className="inventory-shot" onClick={() => onOpen(page)} type="button">
         {busy && <span className="inventory-shot-busy"><LoaderCircle className="spin" size={18} /></span>}
-        {current.thumbnail
-          ? <img alt="" src={current.thumbnail.dataUrl} />
-          : <span className="inventory-shot-empty">没有预览</span>}
+        {single
+          ? <PageDocument page={page} />
+          : current.thumbnail
+            ? <img alt="" src={current.thumbnail.dataUrl} />
+            : <span className="inventory-shot-empty">没有预览</span>}
       </button>
       <div className="inventory-meta">
         <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
@@ -1164,6 +1219,7 @@ export default function PageInventoryView() {
                   onMenu={(target, at) => setMenu({ page: target, at })}
                   onOpen={setFocused}
                   page={page}
+                  single={view === "single"}
                 />
               ))}
             </div>
