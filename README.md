@@ -46,13 +46,24 @@ Take the result as a self-contained HTML handoff page, or push the layers straig
 
 ---
 
-## Sending to Figma
+## The Figma plugin
 
-The other half is a Figma plugin. The **Figma plugin** row at the bottom of the sidebar walks through it:
+Crank draws nothing in Figma by itself. The other half is a plugin, and it is not on the Figma Community yet — it ships inside the app and is imported by hand. This is a one-time setup.
 
-1. Get a pairing code
-2. Import the plugin into Figma (the panel reveals the file in Finder)
-3. Type the code once — this Mac is remembered from then on
+**You need the Figma desktop app.** Figma in a browser cannot import a local plugin.
+
+1. **Find the plugin.** In Crank, click **Figma plugin** at the bottom of the sidebar, then **Show plugin in Finder**. A `manifest.json` is revealed — it lives inside the app bundle, which is why the button exists.
+2. **Import it.** In Figma: menu **Plugins → Development → Import plugin from manifest…**. In the dialog that opens, drag the revealed `manifest.json` onto it (or press ⌘⇧G and paste the path).
+3. **Pair once.** Open the Figma file you want the pages in, run **Plugins → Development → Crank**, then back in Crank click **Get a pairing code** and type the six digits into the plugin. This Mac is remembered from then on — no code next time.
+
+### Sending pages
+
+1. Scan a project in Crank.
+2. Paste the URL of the Figma design file you want them in (`https://www.figma.com/design/…`).
+3. Open that same file in Figma and run the Crank plugin — it only writes to the file you named. If a different file is open, the plugin says which one it expected.
+4. Press send. Frames are created the first time and updated on every run after, rather than drawn again beside the old ones.
+
+If the plugin says something that does not match what Crank shows, re-import the manifest — Figma caches plugin code, and an old copy of the plugin talking to a new copy of Crank is the usual cause.
 
 ---
 

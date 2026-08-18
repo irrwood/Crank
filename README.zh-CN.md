@@ -44,13 +44,24 @@ xattr -dr com.apple.quarantine /Applications/Crank.app
 
 ---
 
-## 送进 Figma
+## Figma 插件
 
-Figma 那半边是一个插件。应用左下角「Figma 插件」里有完整步骤：
+Crank 自己不会往 Figma 里画任何东西，另一半是一个插件。它**还没上 Figma 社区**，是跟着应用一起发的，需要手动导入一次——只用装这一次。
 
-1. 拿一个配对码
-2. 在 Figma 里导入插件（面板里有「在访达中显示插件」）
-3. 把码输进去——这台 Mac 就记住了，之后不用再输
+**必须用 Figma 桌面版。** 浏览器里的 Figma 没法导入本地插件。
+
+1. **找到插件。** 在 Crank 里点左下角 **Figma 插件** → **在访达中显示插件**，会定位到一个 `manifest.json`。它在应用包内部，所以才需要这个按钮带你过去。
+2. **导入。** Figma 菜单：**Plugins → Development → Import plugin from manifest…**，在弹出的选择框里把刚才那个 `manifest.json` **拖进去**（或者按 ⌘⇧G 粘贴路径）。
+3. **配对一次。** 打开你想接收页面的那个 Figma 文件，运行 **Plugins → Development → Crank**，回到 Crank 点**拿一个配对码**，把六位数输进插件。这台 Mac 就记住了，以后不用再输。
+
+### 送页面过去
+
+1. 在 Crank 里扫完一个项目。
+2. 粘贴你想接收的那个 Figma 设计文件地址（`https://www.figma.com/design/…`）。
+3. 在 Figma 里打开**同一个**文件并运行 Crank 插件——它只往你指名的那个文件里写。开错文件时，插件会告诉你它等的是哪一个。
+4. 点送出。第一次会新建画框，之后每次更新的都是同一批，而不是在旁边再画一份。
+
+如果插件说的话跟 Crank 显示的对不上，重新导入一次 manifest——Figma 会缓存插件代码，旧插件配新 Crank 是最常见的原因。
 
 ---
 
