@@ -81,9 +81,20 @@ Crank 自己不会往 Figma 里画任何东西，另一半是一个插件。它*
 - 目标是 web 和 Electron 应用；纯原生 macOS 应用（没有网页运行时的）扫不了，Crank 会直说
 - 大项目扫一遍要几分钟
 - 界面语言跟随系统，中英文都还在打磨
-- 源码暂未公开
+- Swift 那部分（SwiftUI 扫描器和可嵌入的 SDK）暂未公开，所以旧的 SwiftUI 导入路径没法从这个仓库构建
 
 ---
+
+## 自己构建
+
+```sh
+npm install
+npm test        # 332 个测试，不联网、不开窗口
+npm run dev     # 从源码跑起来
+npm run package # 在 release/ 里打出一个 .app
+```
+
+界面也可以脱离 Electron 单独跑在浏览器里，带一份演示数据。应用对页面做的一切都在 `electron/` 里；[`privacy/`](privacy/) 指明了其中哪几个文件决定"什么会离开你的机器"，它的 `verify.sh` 能把它们和你下载的版本对比。
 
 ## 反馈
 

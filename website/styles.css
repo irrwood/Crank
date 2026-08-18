@@ -1,0 +1,282 @@
+/* Crank 官网 — 风格参考 rakazo.com：off-white 底、墨色文字、单一蓝色强调、
+   大圆角卡片、柔和的阴影。 */
+
+:root {
+  --page: #fdfdfd;
+  --surface: #ffffff;
+  --ink: #242424;
+  --body: #3d3d3d;
+  --muted: #848484;
+  --line: #efefef;
+  --blue: #2563eb;
+  --blue-soft: #eff6ff;
+  --blue-line: #d6e8fc;
+  --radius-card: 20px;
+  --radius-frame: 26px;
+  --shadow-soft: 0 2px 16px rgba(0, 0, 0, 0.03);
+  --shadow-demo: 0 30px 80px -30px rgba(0, 0, 0, 0.35);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ---------- header ---------- */
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 24px 28px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.brand-mark {
+  display: block;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  transition: color 150ms ease;
+}
+
+.github-link:hover {
+  color: var(--ink);
+}
+
+.github-link .external {
+  opacity: 0.6;
+}
+
+.language-switch {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: #f1f1f0;
+}
+
+.language-switch button {
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.language-switch button:hover {
+  color: var(--ink);
+}
+
+.language-switch button.is-on {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ---------- hero ---------- */
+
+.hero {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 72px 28px 40px;
+  text-align: center;
+}
+
+.hero h1 {
+  margin: 0 0 22px;
+  font-size: 52px;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+
+.hero-sub {
+  margin: 0 auto 34px;
+  max-width: 620px;
+  color: var(--body);
+  font-size: 18px;
+}
+
+.button {
+  display: inline-block;
+  padding: 13px 30px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  transition: box-shadow 150ms ease, background 150ms ease;
+}
+
+.button--primary {
+  background: var(--blue);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2);
+}
+
+.button--primary:hover {
+  box-shadow: 0 10px 28px rgba(37, 99, 235, 0.28);
+}
+
+.hero-meta {
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---------- big screenshot ---------- */
+
+.hero-shot {
+  max-width: 1280px;
+  margin: 8px auto 0;
+  padding: 0 28px;
+}
+
+.hero-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-frame);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-demo);
+  background: var(--surface);
+}
+
+/* ---------- supports ---------- */
+
+.supports {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 96px 28px 40px;
+}
+
+.supports h2 {
+  margin: 0 0 26px;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+.supports-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.support-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-soft);
+  padding: 26px 26px 24px;
+}
+
+.support-card h3 {
+  margin: 0 0 10px;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.support-card p {
+  margin: 0 0 18px;
+  color: var(--body);
+  font-size: 14px;
+}
+
+.support-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.support-tags code {
+  padding: 3px 9px;
+  border: 1px solid var(--blue-line);
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* ---------- footer ---------- */
+
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1040px;
+  margin: 64px auto 0;
+  padding: 22px 28px 40px;
+  border-top: 1px solid var(--line);
+  color: var(--body);
+  font-size: 13px;
+}
+
+.footer-muted {
+  color: var(--muted);
+}
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 760px) {
+  .hero {
+    padding-top: 48px;
+  }
+
+  .hero h1 {
+    font-size: 36px;
+  }
+
+  .supports-grid {
+    grid-template-columns: 1fr;
+  }
+}

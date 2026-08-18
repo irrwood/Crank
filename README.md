@@ -83,9 +83,20 @@ Those are checkable claims rather than assurances: the files that enforce them a
 - Aimed at web and Electron applications; a native macOS app with no web runtime inside cannot be scanned, and Crank says so rather than trying
 - A large project takes minutes to scan
 - The interface follows the system language; both English and Chinese are still being polished
-- The source is not published yet
+- The Swift parts — the SwiftUI scanner and its embeddable SDK — are not published yet, so the legacy SwiftUI import path cannot be built from this repository
 
 ---
+
+## Building it yourself
+
+```sh
+npm install
+npm test        # 332 tests, no network, no Electron window
+npm run dev     # the app, from source
+npm run package # a .app in release/
+```
+
+The interface can also run on its own, in a browser, with demo data — `npm run dev` and open the Vite address without Electron. Everything the app does to a page lives in `electron/`; [`privacy/`](privacy/) points at the files that decide what leaves your machine, and its `verify.sh` compares them with a build you downloaded.
 
 ## Feedback
 

@@ -1,0 +1,39 @@
+{
+  "name": "crank-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first visual sync client for React and Figma.",
+  "productName": "Crank",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && UI_SYNC_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "typecheck": "tsc --noEmit",
+    "typecheck:plugin": "tsc --allowJs --checkJs --noEmit --strict false --skipLibCheck --target ES2022 --lib ES2022,DOM --types @figma/plugin-typings figma-plugin/code.js",
+    "test": "node --test electron/*.test.cjs",
+    "build": "npm run typecheck && npm run typecheck:plugin && vite build",
+    "start": "npm run build && electron .",
+    "package": "vite build && node scripts/package.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "pngjs": "^7.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "@figma/plugin-typings": "^1.133.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^43.4.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.2"
+  }
+}

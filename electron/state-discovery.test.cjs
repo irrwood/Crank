@@ -1,0 +1,659 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+  changeMagnitude,
+  chooseStateName,
+  discoverStates,
+  humanizeStateName,
+  identityOf,
+  isVolatileText,
+  isAppearanceLabel,
+  isDestructiveLabel,
+  isFrameworkInternalPath,
+  isHtmlContentType,
+  isSameDocument,
+  planNextStep,
+  rankCandidates,
+  signatureOf
+} = require("./state-discovery.cjs");
+
+/**
+ * A fake app: a state machine of screens, each with controls. Lets the
+ * traversal logic be verified against a known answer without Electron.
+ */
+function fakeSession(screens, { startRoute = "/" } = {}) {
+  let current = startRoute;
+  const visits = [];
+  const snapshotOf = (key) => {
+    const screen = screens[key];
+    if (!screen) return null;
+    return {
+      contentType: screen.contentType ?? "text/html",
+      title: screen.title ?? key,
+      heading: screen.title ?? key,
+      url: screen.url ?? key,
+      // Real fingerprints always carry element size; give bare test entries a
+      // page-sized one so they read as real changes rather than tooltips.
+      fingerprint: (screen.fingerprint ?? [key]).map(
+        (entry) => (entry.includes("|") ? entry : `div|${entry}||120x90`)
+      ),
+      // Distinct screens get distinct skeletons unless a test says otherwise,
+      // so only deliberate re-skins are grouped.
+      skeleton: screen.skeleton ?? screen.fingerprint ?? [key],
+      candidates: (screen.controls ?? []).map((control) => ({
+        locator: control.locator,
+        label: control.label,
+        role: control.role ?? "button",
+        href: control.href ?? null,
+        inNav: Boolean(control.inNav),
+        hasExpanded: false
+      }))
+    };
+  };
+  return {
+    visits,
+    goto(route) {
+      current = route;
+      visits.push({ kind: "goto", route });
+      return Promise.resolve(snapshotOf(route));
+    },
+    click(locator) {
+      visits.push({ kind: "click", locator, from: current });
+      const screen = screens[current];
+      const control = (screen?.controls ?? []).find((entry) => entry.locator === locator);
+      if (!control || !control.to) return Promise.resolve(null);
+      current = control.to;
+      return Promise.resolve(snapshotOf(current));
+    }
+  };
+}
+
+test("flags destructive labels in several languages", () => {
+  assert.equal(isDestructiveLabel("Delete project"), true);
+  assert.equal(isDestructiveLabel("删除看板"), true);
+  assert.equal(isDestructiveLabel("Sign out"), true);
+  assert.equal(isDestructiveLabel("Settings"), false);
+  assert.equal(isDestructiveLabel(""), false);
+  assert.equal(isDestructiveLabel(null), false);
+});
+
+test("tries navigation controls before arbitrary buttons", () => {
+  const ranked = rankCandidates([
+    { locator: "a", label: "Random", role: "button" },
+    { locator: "b", label: "Details", role: "link" },
+    { locator: "c", label: "Overview", role: "tab" },
+    { locator: "d", label: "Sidebar item", role: "", inNav: true }
+  ]).map((candidate) => candidate.locator);
+  assert.deepEqual(ranked, ["c", "d", "b", "a"]);
+});
+
+test("signature ignores object identity but tracks structure", () => {
+  assert.equal(signatureOf(["a", "b"]), signatureOf(["a", "b"]));
+  assert.notEqual(signatureOf(["a", "b"]), signatureOf(["a", "c"]));
+});
+
+test("explores breadth-first and stops at max depth", () => {
+  const frontier = [
+    { recipe: [], pending: [{ locator: "x" }] },
+    { recipe: [{}, {}], pending: [{ locator: "tooDeep" }] }
+  ];
+  const first = planNextStep(frontier, { maxDepth: 2 });
+  assert.equal(first.action.locator, "x");
+  // The shallow item is exhausted and the deep one is at the limit.
+  assert.equal(planNextStep(frontier, { maxDepth: 2 }), null);
+});
+
+test("finds tab and modal states behind one URL", async () => {
+  const session = fakeSession({
+    "/": {
+      title: "Board",
+      fingerprint: ["board-default"],
+      controls: [
+        { locator: "#tab-list", label: "List", role: "tab", to: "list" },
+        { locator: "#tab-cal", label: "Calendar", role: "tab", to: "calendar" },
+        { locator: "#open-modal", label: "New item", to: "modal" },
+        { locator: "#danger", label: "Delete board", to: "gone" }
+      ]
+    },
+    list: { title: "Board", url: "/", fingerprint: ["board-list"], controls: [] },
+    calendar: { title: "Board", url: "/", fingerprint: ["board-calendar"], controls: [] },
+    modal: { title: "Board", url: "/", fingerprint: ["board-modal"], controls: [] },
+    gone: { title: "Deleted", url: "/", fingerprint: ["gone"], controls: [] }
+  });
+
+  const { states, skipped } = await discoverStates(session, { routes: ["/"], maxDepth: 2 });
+  const names = states.map((state) => state.name);
+
+  assert.equal(states.length, 4, `expected 4 states, got ${JSON.stringify(names)}`);
+  assert.ok(names.some((name) => name.includes("List")));
+  assert.ok(names.some((name) => name.includes("Calendar")));
+  assert.ok(names.some((name) => name.includes("New item")));
+  assert.equal(skipped.length, 1);
+  assert.match(skipped[0].label, /Delete board/);
+  assert.ok(
+    session.visits.every((visit) => visit.locator !== "#danger"),
+    "a destructive control must never be clicked"
+  );
+});
+
+test("gives every state a replay recipe that starts from a fresh load", async () => {
+  const session = fakeSession({
+    "/": { url: "/", fingerprint: ["home"], controls: [{ locator: "#a", label: "Settings", to: "settings" }] },
+    settings: { url: "/", fingerprint: ["settings"], controls: [{ locator: "#b", label: "Advanced", to: "advanced" }] },
+    advanced: { url: "/", fingerprint: ["advanced"], controls: [] }
+  });
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 3 });
+
+  const advanced = states.find((state) => state.depth === 2);
+  assert.ok(advanced, "should reach a depth-2 state");
+  assert.deepEqual(advanced.recipe.map((step) => step.locator), ["#a", "#b"]);
+  assert.equal(advanced.route, "/");
+});
+
+test("does not record the same visual state twice", async () => {
+  const session = fakeSession({
+    "/": {
+      fingerprint: ["same"],
+      url: "/",
+      controls: [
+        { locator: "#one", label: "One", to: "dup" },
+        { locator: "#two", label: "Two", to: "dup" }
+      ]
+    },
+    dup: { url: "/", fingerprint: ["duplicate"], controls: [] }
+  });
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 2 });
+  assert.equal(states.length, 2, "identical fingerprints must collapse into one state");
+});
+
+test("honours the state budget", async () => {
+  const controls = Array.from({ length: 20 }, (_, index) => ({
+    locator: `#c${index}`, label: `Item ${index}`, to: `s${index}`
+  }));
+  const screens = { "/": { url: "/", fingerprint: ["root"], controls } };
+  for (let index = 0; index < 20; index += 1) {
+    screens[`s${index}`] = { url: "/", fingerprint: [`state-${index}`], controls: [] };
+  }
+  const { states } = await discoverStates(fakeSession(screens), { routes: ["/"], maxStates: 5 });
+  assert.equal(states.length, 5);
+});
+
+test("treats framework internals as tooling, not application writes", () => {
+  // Blocking these does not protect data and breaks the app: cutting off
+  // vinext's stack-trace endpoint drove its overlay to ~11k retries in 3s.
+  assert.equal(isFrameworkInternalPath("/__vinext_original-stack-trace"), true);
+  assert.equal(isFrameworkInternalPath("/@vite/client"), true);
+  assert.equal(isFrameworkInternalPath("/_next/static/chunk.js"), true);
+  assert.equal(isFrameworkInternalPath("/api/notes"), false);
+  assert.equal(isFrameworkInternalPath("/graphql"), false);
+  assert.equal(isFrameworkInternalPath(""), false);
+});
+
+test("reduces a link-reached state to a direct address", async () => {
+  // Found by clicking, but /about stands on its own. The recipe collapses so
+  // the page can be recaptured later without replaying how it was first found.
+  const screens = {
+    "/": { url: "/", fingerprint: ["home"], controls: [{ locator: "#nav", label: "About", role: "link", to: "/about" }] },
+    "/about": { url: "/about", fingerprint: ["about"], controls: [] }
+  };
+  const { states } = await discoverStates(fakeSession(screens), { routes: ["/"], maxDepth: 2 });
+  const about = states.find((state) => state.name.includes("about") || state.route === "/about");
+  assert.ok(about, `no /about state in ${JSON.stringify(states.map((s) => s.route))}`);
+  assert.deepEqual(about.recipe, [], "a directly addressable page needs no click recipe");
+  assert.equal(about.route, "/about");
+});
+
+test("rejects names that rename themselves tomorrow", () => {
+  // The real trigger: this app's <h1> is "Today, Sunday, 16 August".
+  assert.equal(isVolatileText("Today, Sunday, 16 August"), true);
+  assert.equal(isVolatileText("今天 星期日"), true);
+  assert.equal(isVolatileText("2026-08-16"), true);
+  assert.equal(isVolatileText("10:30"), true);
+  assert.equal(isVolatileText("3 分钟前"), true);
+  assert.equal(isVolatileText(""), true);
+  assert.equal(isVolatileText("全部记录"), false);
+  assert.equal(isVolatileText("Settings"), false);
+  assert.equal(isVolatileText("Raw Data"), false);
+});
+
+test("names a state from the control that opened it, not a drifting heading", () => {
+  assert.equal(
+    chooseStateName({
+      recipe: [{ label: "全部记录" }],
+      route: "/",
+      heading: "Today, Sunday, 16 August",
+      title: "Research Memory"
+    }),
+    "全部记录 · Research Memory"
+  );
+  // With no stable signal anywhere, the address still identifies the page.
+  assert.equal(
+    chooseStateName({ recipe: [], route: "/?view=settings", heading: "Today, Sunday, 16 August", title: "9:41" }),
+    "Settings"
+  );
+  assert.equal(chooseStateName({ recipe: [], route: "/" }), "Home");
+  assert.equal(chooseStateName({ recipe: [], route: "/holdings/detail" }), "Holdings Detail");
+});
+
+test("a hash route names its page, not the document every page shares", () => {
+  // An installed app loads one file and routes inside it, so naming a page
+  // after the document calls every one of them Index. The route the app
+  // actually navigated is the part after the "#".
+  assert.equal(chooseStateName({ recipe: [], route: "index.html#/settings" }), "Settings");
+  assert.equal(chooseStateName({ recipe: [], route: "index.html#/inbox/archive" }), "Inbox Archive");
+  // The document an installed app opens at is its front door, the same page
+  // "/" is for a site: naming it after the file it happens to live in says
+  // nothing about it.
+  assert.equal(chooseStateName({ recipe: [], route: "index.html" }), "Home");
+  // A plain anchor is a position on a page, not a route, and still names nothing.
+  assert.equal(chooseStateName({ recipe: [], route: "/pricing#details" }), "Pricing");
+});
+
+test("an identifier in the address is not a name", () => {
+  // A real app opened its window at "?chat=u1amzv4kql", and the page came back
+  // called "U1amzv4kql · Overview" — a name that is different on every scan,
+  // which is exactly what a page's identity cannot be.
+  // What is left is the page it actually is: the app's home, and its heading.
+  assert.equal(chooseStateName({ recipe: [], route: "/?chat=u1amzv4kql", heading: "Overview" }), "Home · Overview");
+  assert.equal(chooseStateName({ recipe: [], route: "/?id=8f2a9c31", title: "Ledger" }), "Home · Ledger");
+  // A readable one still names its page, which is why the query is read at all.
+  assert.equal(chooseStateName({ recipe: [], route: "/?view=settings" }), "Settings");
+});
+
+test("does not repeat an identical name part", () => {
+  assert.equal(humanizeStateName(["新任务", "新任务"]), "新任务");
+});
+
+test("measures change by the largest moved region", () => {
+  const viewport = { width: 1000, height: 800 };
+  const base = ["div|app||125x100"];
+  // A dropdown: 160x120 css px out of 800k.
+  const dropdown = [...base, "ul|menu||20x15"];
+  assert.ok(changeMagnitude(base, dropdown, viewport) < 0.12, "a dropdown is not a page");
+  // A modal covering most of the viewport.
+  const modal = [...base, "div|modal||100x75"];
+  assert.ok(changeMagnitude(base, modal, viewport) > 0.12, "a modal is a page");
+  assert.equal(changeMagnitude(base, base, viewport), 0);
+});
+
+test("keeps small-change states out of the inventory but reports them", async () => {
+  const session = fakeSession({
+    "/": {
+      url: "/",
+      fingerprint: ["main|app||125x100"],
+      controls: [
+        { locator: "#tip", label: "Show tooltip", to: "tooltip" },
+        { locator: "#tab", label: "Reports", role: "tab", to: "reports" }
+      ]
+    },
+    tooltip: { url: "/", fingerprint: ["main|app||125x100", "span|tip||8x4"], controls: [] },
+    reports: { url: "/", fingerprint: ["main|app||125x100", "section|reports||120x90"], controls: [] }
+  });
+  const { states, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  const names = states.map((state) => state.name);
+  assert.equal(states.length, 2, `expected Home + Reports, got ${JSON.stringify(names)}`);
+  assert.ok(names.some((name) => name.includes("Reports")));
+  assert.equal(filtered.length, 1);
+  assert.match(filtered[0].label, /tooltip/i);
+  // Reported with the way back to it, because the threshold is a judgement and
+  // what it leaves out has to be recoverable rather than merely listed.
+  assert.equal(filtered[0].route, "/");
+  assert.deepEqual(filtered[0].recipe, [{ kind: "click", locator: "#tip", label: "Show tooltip" }]);
+});
+
+test("a page asked for by name is kept however little it changed", async () => {
+  const app = {
+    "/": {
+      url: "/",
+      fingerprint: ["main|app||125x100"],
+      controls: [{ locator: "#tip", label: "Show tooltip", to: "tooltip" }]
+    },
+    tooltip: { url: "/", fingerprint: ["main|app||125x100", "span|tip||8x4"], controls: [] }
+  };
+  const asked = identityOf("/", [{ kind: "click", locator: "#tip", label: "Show tooltip" }]);
+
+  const kept = await discoverStates(fakeSession(app), { routes: ["/"], maxDepth: 1, keepAnyway: new Set([asked]) });
+  assert.equal(kept.states.length, 2, "the page the user asked for is in the inventory");
+  assert.equal(kept.filtered.length, 0, "and is not also reported as left out");
+  // The same identity the crawl gives it, so the exception matches the page a
+  // later scan produces rather than a lookalike of it.
+  assert.ok(kept.states.some((state) => state.id === asked));
+
+  // Someone else's exception must not let this one through.
+  const other = await discoverStates(fakeSession(app), { routes: ["/"], maxDepth: 1, keepAnyway: new Set(["page-somethingelse"]) });
+  assert.equal(other.states.length, 1);
+  assert.equal(other.filtered.length, 1);
+});
+
+test("a different address is a page even when it looks almost identical", async () => {
+  // Sibling pages from one template differ by a heading. Judging them by how
+  // much moved would filter out the entire nav bar of a templated site.
+  const nav = { locator: "#about", label: "About", role: "link", to: "/about" };
+  const session = fakeSession({
+    "/": { url: "/", fingerprint: ["main|page||125x100", "h1|title|Home|30x4"], controls: [nav] },
+    "/about": { url: "/about", fingerprint: ["main|page||125x100", "h1|title|About|30x4"], controls: [] }
+  });
+  const { states, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(filtered.length, 0, `nothing should be filtered, got ${JSON.stringify(filtered)}`);
+  assert.ok(
+    states.some((state) => state.route === "/about"),
+    `/about missing from ${JSON.stringify(states.map((s) => s.route))}`
+  );
+});
+
+test("groups a re-skinned page as one page with variants", async () => {
+  // A theme or language switch rewrites text and colours across the whole app
+  // while leaving the structure alone. Listing those as separate pages doubles
+  // the inventory: a real scan produced English and Chinese copies of every page.
+  const shared = ["main@0", "h1@1"];
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home-en"], skeleton: shared,
+      controls: [
+        { locator: "#zh", label: "中文", to: "home-zh" },
+        { locator: "#dark", label: "Dark", to: "home-dark" }
+      ]
+    },
+    "home-zh": { url: "/", fingerprint: ["home-zh"], skeleton: shared, controls: [] },
+    "home-dark": { url: "/", fingerprint: ["home-dark"], skeleton: shared, controls: [] }
+  });
+
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(states.length, 1, `expected one page, got ${JSON.stringify(states.map((s) => s.name))}`);
+  assert.deepEqual(states[0].variants.map((variant) => variant.name), ["中文", "Dark"]);
+  // Each variant keeps its own way back, so it can be captured again.
+  assert.deepEqual(states[0].variants.map((variant) => variant.recipe[0].locator), ["#zh", "#dark"]);
+});
+
+test("keeps genuinely different pages apart", async () => {
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#reports", label: "Reports", role: "tab", to: "reports" }]
+    },
+    reports: { url: "/", fingerprint: ["reports"], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(states.length, 2, "different structure must stay a separate page");
+  assert.equal(states[0].variants.length, 0);
+});
+
+test("does not merge two addresses that happen to share a structure", async () => {
+  // Sibling pages of one template have identical tag structure. They are
+  // separate pages, so the address has to take part in the grouping.
+  const shared = ["main@0", "h1@1"];
+  const session = fakeSession({
+    "/": { url: "/", fingerprint: ["home"], skeleton: shared,
+      controls: [{ locator: "#about", label: "About", role: "link", to: "/about" }] },
+    "/about": { url: "/about", fingerprint: ["about"], skeleton: shared, controls: [] }
+  });
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(states.length, 2, "same structure at a different address is a different page");
+  assert.equal(states[0].variants.length, 0);
+});
+
+test("does not re-walk an address it already has", async () => {
+  // The brand link sits on every page and points home. Following it from each
+  // page re-walks a known page and wastes most of the crawl.
+  const home = { locator: "#brand", label: "Catfolio", role: "link", href: "/", to: "/" };
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#import", label: "Import", role: "link", href: "/import", to: "/import" }]
+    },
+    "/import": {
+      url: "/import", fingerprint: ["import"], skeleton: ["main@0", "form@1"],
+      controls: [home]
+    }
+  });
+  const { states } = await discoverStates(session, { routes: ["/"], maxDepth: 2 });
+  assert.deepEqual(states.map((state) => state.route).sort(), ["/", "/import"]);
+  assert.ok(
+    session.visits.every((visit) => visit.locator !== "#brand"),
+    "a link to a page already in the inventory must not be clicked"
+  );
+});
+
+test("an endpoint that answers with JSON is not a page", async () => {
+  assert.equal(isHtmlContentType("text/html; charset=utf-8"), true);
+  assert.equal(isHtmlContentType("application/xhtml+xml"), true);
+  assert.equal(isHtmlContentType("application/json"), false);
+  assert.equal(isHtmlContentType("text/xml"), false);
+  // Unknown type must not silently drop a real page.
+  assert.equal(isHtmlContentType(""), true);
+
+  const session = fakeSession({
+    "/": {
+      url: "/", contentType: "text/html", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#api", label: "Holdings JSON", role: "link", href: "/api/holdings", to: "/api/holdings" }]
+    },
+    "/api/holdings": {
+      url: "/api/holdings", contentType: "application/json",
+      fingerprint: ["pre-json"], skeleton: ["pre@0"], controls: []
+    }
+  });
+  const { states, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.deepEqual(states.map((state) => state.route), ["/"]);
+  assert.match(filtered.map((item) => item.reason).join(" "), /application\/json/);
+});
+
+test("clears what a page remembered, but only when something could have stuck", async () => {
+  // Clearing storage is what stops one language click colouring every later
+  // page, but a crawl makes hundreds of replays and clearing is expensive, so
+  // only the clicks that can persist a preference should pay for it.
+  const resets = [];
+  const screens = {
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [
+        { locator: "#zh", label: "Switch to Chinese", role: "tab", to: "zh" },
+        { locator: "#reports", label: "Reports", role: "tab", to: "reports" },
+        { locator: "#billing", label: "Billing", role: "tab", to: "billing" }
+      ]
+    },
+    zh: { url: "/", fingerprint: ["home-zh"], skeleton: ["main@0"], controls: [] },
+    reports: { url: "/", fingerprint: ["reports"], skeleton: ["main@0", "table@1"], controls: [] },
+    billing: { url: "/", fingerprint: ["billing"], skeleton: ["main@0", "form@1"], controls: [] }
+  };
+  const base = fakeSession(screens);
+  const session = { ...base, reset: async () => { resets.push(base.visits.length); } };
+  await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+
+  // Three clicks, one of which could persist: exactly one clear, not three.
+  assert.equal(resets.length, 1, `expected one reset, got ${resets.length}`);
+  const languageClickAt = base.visits.findIndex((visit) => visit.locator === "#zh");
+  assert.ok(languageClickAt >= 0, "the language control must have been clicked");
+  assert.ok(resets[0] > languageClickAt, "and the clear must follow it, not precede an ordinary click");
+});
+
+test("an appearance switch does not get to name a page", () => {
+  // "Light Mode · Comparison" hides which page it is behind how it looks.
+  assert.equal(isAppearanceLabel("Light Mode"), true);
+  assert.equal(isAppearanceLabel("Switch to Chinese"), true);
+  assert.equal(isAppearanceLabel("切换语言"), true);
+  assert.equal(isAppearanceLabel("Holdings"), false);
+  assert.equal(isAppearanceLabel("全部记录"), false);
+
+  assert.equal(
+    chooseStateName({ recipe: [{ label: "Light Mode" }], route: "/returns", heading: "Comparison", title: "Catfolio" }),
+    "Returns · Comparison"
+  );
+  // A real control still names its page.
+  assert.equal(
+    chooseStateName({ recipe: [{ label: "Holdings" }], route: "/", heading: "Portfolio", title: "Catfolio" }),
+    "Holdings · Portfolio"
+  );
+});
+
+test("an anchor is the same page scrolled, not another page", () => {
+  assert.equal(isSameDocument("/pages/copper.html", "/pages/copper.html#overview"), true);
+  assert.equal(isSameDocument("/pages/copper.html#overview", "/pages/copper.html#mobile"), true);
+  assert.equal(isSameDocument("/pages/copper.html", "/pages/memo.html"), false);
+  // Hash routing really does change page.
+  assert.equal(isSameDocument("/", "/#/settings"), false);
+});
+
+test("does not record anchors of a page it already has", async () => {
+  const session = fakeSession({
+    "/doc": {
+      url: "/doc", fingerprint: ["doc"], skeleton: ["main@0"],
+      controls: [
+        { locator: "#a", label: "Overview", role: "link", to: "anchor-a" },
+        { locator: "#b", label: "Mobile", role: "link", to: "anchor-b" }
+      ]
+    },
+    "anchor-a": { url: "/doc#overview", fingerprint: ["doc-a"], skeleton: ["main@0"], controls: [] },
+    "anchor-b": { url: "/doc#mobile", fingerprint: ["doc-b"], skeleton: ["main@0"], controls: [] }
+  });
+  const { states, filtered } = await discoverStates(session, { routes: ["/doc"], maxDepth: 1 });
+  assert.equal(states.length, 1, `one document, got ${JSON.stringify(states.map((s) => s.route))}`);
+  assert.equal(filtered.length, 2);
+  assert.match(filtered[0].reason, /anchor/);
+});
+
+test("a page keeps its identity when its content changes", async () => {
+  // The frame a page was pushed to, and the baseline recorded against it, are
+  // both keyed by this id. Deriving it from the page's own content meant that
+  // editing a heading orphaned both: the next push drew the page again beside
+  // itself, and a pull had nothing to compare against.
+  const before = fakeSession({
+    "/": { url: "/", fingerprint: ["home", "Welcome"], skeleton: ["main@0", "h1@1"],
+      controls: [{ locator: "#pricing", label: "Pricing", role: "link", to: "/pricing" }] },
+    "/pricing": { url: "/pricing", fingerprint: ["pricing", "$19"], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+  const after = fakeSession({
+    "/": { url: "/", fingerprint: ["home", "Welcome back"], skeleton: ["main@0", "h1@1"],
+      controls: [{ locator: "#pricing", label: "Pricing", role: "link", to: "/pricing" }] },
+    "/pricing": { url: "/pricing", fingerprint: ["pricing", "$24"], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+
+  const first = await discoverStates(before, { routes: ["/"], maxDepth: 1 });
+  const second = await discoverStates(after, { routes: ["/"], maxDepth: 1 });
+  assert.deepEqual(
+    second.states.map((state) => state.id),
+    first.states.map((state) => state.id),
+    "a price change and a reworded heading are not new pages"
+  );
+  assert.notEqual(first.states[0].id, first.states[1].id, "two addresses are still two pages");
+  assert.notEqual(first.states[0].signature, second.states[0].signature, "the content still changed, and is still observed");
+});
+
+test("a state reached by clicking is identified by the way back, not by what it says", async () => {
+  const build = (badgeText) => fakeSession({
+    "/": { url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#reports", label: "Reports", role: "tab", to: "reports" }] },
+    reports: { url: "/", fingerprint: ["reports", badgeText], skeleton: ["main@0", "table@1"], controls: [] }
+  });
+  const first = await discoverStates(build("3 new"), { routes: ["/"], maxDepth: 1 });
+  const second = await discoverStates(build("11 new"), { routes: ["/"], maxDepth: 1 });
+  assert.equal(first.states[1].recipe[0].locator, "#reports");
+  assert.equal(first.states[1].id, second.states[1].id, "same address, same click — the same page");
+});
+
+test("identity separates two states that share an address by how they are reached", () => {
+  assert.notEqual(
+    identityOf("/", []),
+    identityOf("/", [{ kind: "click", locator: "#settings", label: "Settings" }])
+  );
+  assert.equal(identityOf("/a", []), identityOf("/a", []));
+});
+
+test("a control that did nothing is reported as such, not as too small a change", async () => {
+  // An Electron renderer served on its own has no preload, so every control is
+  // wired to an API that is not there. The crawl truthfully finds one page; the
+  // reason it found only one is the part worth saying.
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["empty-state"], skeleton: ["main@0"],
+      controls: [
+        { locator: "#choose", label: "选择文件夹…", to: "/" },
+        { locator: "#record", label: "自己点一遍", to: "/" }
+      ]
+    }
+  });
+  const { states, inert, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(states.length, 1, "there is genuinely one page");
+  assert.deepEqual(inert.map((entry) => entry.label), ["选择文件夹…", "自己点一遍"]);
+  assert.equal(filtered.length, 0, "nothing was left out for being small — nothing happened at all");
+});
+
+test("a control that opened something small is still a judgement about size", async () => {
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["page"], skeleton: ["main@0"],
+      controls: [{ locator: "#tip", label: "Help", to: "tip" }]
+    },
+    tip: { url: "/", fingerprint: ["page", "div|tooltip||40x20"], skeleton: ["main@0"], controls: [] }
+  });
+  const { inert, filtered } = await discoverStates(session, { routes: ["/"], maxDepth: 1 });
+  assert.equal(inert.length, 0, "the page did change");
+  assert.equal(filtered[0].reason, "changed too little to be a page");
+});
+
+test("continues from one page without re-walking the ones already held", async () => {
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#reports", label: "Reports", role: "link", href: "/reports", to: "/reports" }]
+    },
+    "/reports": {
+      url: "/reports", fingerprint: ["reports"], skeleton: ["table@0"],
+      controls: [
+        { locator: "#archive", label: "Archive", role: "tab", to: "archive" },
+        { locator: "#home", label: "Home", role: "link", href: "/", to: "/" }
+      ]
+    },
+    archive: { url: "/reports", fingerprint: ["archive"], skeleton: ["table@0", "aside@1"], controls: [] }
+  });
+
+  // The first scan stopped at depth 1 and never opened the Archive tab.
+  const { states } = await discoverStates(session, {
+    from: { route: "/reports", recipe: [] },
+    seenAddresses: ["/", "/reports"],
+    maxDepth: 1
+  });
+
+  const names = states.map((state) => state.name);
+  assert.ok(names.some((name) => name.includes("Archive")), `expected Archive, got ${JSON.stringify(names)}`);
+  assert.ok(names.some((name) => name.includes("Reports")), "the page continued from comes back too, for the caller to drop");
+  assert.ok(!session.visits.some((visit) => visit.kind === "goto" && visit.route === "/"),
+    "the home page is already held and must not be walked again");
+});
+
+test("says so when the page it was asked to continue from cannot be reached", async () => {
+  const session = fakeSession({ "/": { url: "/", fingerprint: ["home"], controls: [] } });
+  const { reached, states } = await discoverStates(session, {
+    from: { route: "/gone", recipe: [] },
+    maxDepth: 1
+  });
+  assert.equal(reached, false);
+  assert.equal(states.length, 0);
+});
+
+test("hands back the page it began at, so it is never mistaken for a discovery", async () => {
+  // An inventory saved before identity became route-and-recipe stores a page id
+  // this walk would never compute again. Recognising the starting page by
+  // comparing ids therefore failed, and continuing from a page added a second
+  // copy of that very page — which then got dropped, taking the real page's
+  // identity with it.
+  const session = fakeSession({
+    "/": {
+      url: "/", fingerprint: ["home"], skeleton: ["main@0"],
+      controls: [{ locator: "#settings", label: "Settings", role: "tab", to: "settings" }]
+    },
+    settings: { url: "/", fingerprint: ["settings"], skeleton: ["form@0"], controls: [] }
+  });
+
+  const { states, start } = await discoverStates(session, {
+    from: { route: "/", recipe: [] },
+    maxDepth: 1
+  });
+
+  assert.ok(start, "the starting state is named");
+  assert.equal(states[0], start, "and it is the first one recorded");
+  const staleId = "state-697d148ae8b0893668f6449a";
+  const found = states.filter((state) => state !== start && state.id !== staleId);
+  assert.equal(found.length, 1, "only the genuinely new state survives");
+  assert.ok(found[0].name.includes("Settings"));
+  assert.notEqual(start.id, staleId, "the recomputed id does not match the stored one — which was the trap");
+});
