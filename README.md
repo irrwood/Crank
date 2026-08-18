@@ -1,25 +1,27 @@
 # Crank
 
-**把正在运行的应用，扫成一份可编辑的 Figma 图层。**
+**Scan a running application into editable Figma layers.**
 
-不是截图——是真的文字、矢量、图片和布局，选中就能改。第二次扫描会更新同一批画框，而不是在旁边再画一份。
+Not screenshots — real text, vectors, images and layout you can select and edit. Scan the same project again and it updates the frames it made last time instead of drawing another set beside them.
 
-*Crank walks a running application, finds every screen it can reach, and hands you those screens as editable Figma layers — not screenshots. It runs the real interface in Chromium and reads what the browser actually laid out.*
+Crank does not rebuild your interface. It runs the real one in Chromium and reads what the browser actually laid out, so what arrives is what the page renders.
+
+[中文说明 →](README.zh-CN.md)
 
 ---
 
-## 下载
+## Download
 
 **[Crank 0.1.0 · macOS (Apple Silicon)](https://github.com/irrwood/Crank/releases/latest)** · 126MB
 
-早期测试版。Intel Mac 暂时没有。
+Early build for testing. No Intel build yet.
 
-### 第一次打开
+### Opening it the first time
 
-这个版本**没有签名和公证**，macOS 会拦下来，提示"已损坏，无法打开"——文件是好的，是 Gatekeeper。两种方式之一：
+This build is **not signed or notarized**, so macOS blocks it and says the app is damaged. The file is fine — that message is Gatekeeper. Either:
 
-- 右键点 `Crank.app` → 打开 → 再点一次「打开」
-- 或者终端里跑一次：
+- Right-click `Crank.app` → Open → Open again, or
+- run this once:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Crank.app
@@ -27,53 +29,53 @@ xattr -dr com.apple.quarantine /Applications/Crank.app
 
 ---
 
-## 怎么用
+## Using it
 
-**把项目文件夹拖进窗口。** Crank 会读项目自己的启动方式跑起来——npm 和 pnpm 项目用它自己的 dev 脚本，Electron 只起界面不弹窗口，Python、Ruby 这类读 Dockerfile、Procfile 或 README 里已经写好的命令。它不会自己编一条启动命令：跑歪了的项目产出的是一份误导人的扫描，不如老实报错。
+**Drop a project folder on the window.** Crank starts the project the way the project already declares: npm and pnpm projects run their own dev script, Electron projects serve the renderer without opening a window, Python and Ruby projects use the command their Dockerfile, Procfile or README already gives. It never invents a start command — a half-working start produces a confusing scan rather than an honest failure.
 
-然后它走遍每一个能到达的页面。路由、标签页、弹层各算一页；深色模式和切换语言不是新页面，会并进同一页的不同外观。每一页都记着"从头开始怎么再回到这里"，所以要点几下才到的页面不是只能撞见一次。
+Then it walks every page it can reach. Routes, tabs and overlays each count as a page. A theme or language switch is not a new page; it is the same page wearing a different look, and is grouped with it. Every page records the exact steps to reach it again from a fresh load, so a page that takes a click is not a page that can only be found once.
 
-拿到结果后，导出一份自带图片的 HTML 交接页，或者把图层直接送进 Figma。
+Take the result as a self-contained HTML handoff page, or push the layers straight into a Figma file.
 
-### 没有文件夹可拖的时候
+### When there is no folder to give
 
-- **拖一个装好的 `.app`** — 拿到构建版、没有源码的人（多数设计师）就是这种情况。Crank 会带调试端口打开它、扫完再替你关掉。目前支持基于 Electron 的桌面应用
-- **扫一个地址** — 项目已经跑起来了就填地址。发现过程只说 HTTP，所以项目用什么写的无所谓
-- **连上你正在用的那个应用** — 单独启动界面往往只有空壳，真正有数据的页面在你手上那个进程里。带调试端口启动它，Crank 连过去扫那一份
-- **你点一遍，它记录** — 要登录、要填表单才到得了的页面，手动走一次就行
-
----
-
-## 送进 Figma
-
-Figma 那半边是一个插件。应用左下角「Figma 插件」里有完整步骤：
-
-1. 拿一个配对码
-2. 在 Figma 里导入插件（面板里有「在访达中显示插件」）
-3. 把码输进去——这台 Mac 就记住了，之后不用再输
+- **Drop a built `.app`.** Someone handed a build has no project to run — Crank opens the bundle with a debugging port, scans it, and closes it again. Electron-based desktop apps today.
+- **Scan an address.** If the app is already running, give it the URL. Discovery only ever talks HTTP, so what the project is written in does not come into it.
+- **Attach to the app you are using.** Serving an interface on its own usually gets an empty shell; the screens worth handing to a designer are the ones with real data in them, and those live in the copy you are actually running. Start it with a debugging port and Crank reads that window.
+- **Click through it once and let Crank record.** For pages behind a login or a form.
 
 ---
 
-## 你的数据
+## Sending to Figma
 
-扫描结果、项目清单、Figma 连接**全部留在本机**（`~/Library/Application Support/Crank/`），不上传任何地方。
+The other half is a Figma plugin. The **Figma plugin** row at the bottom of the sidebar walks through it:
 
-捕获时只读页面已经画出来的东西：会写入的请求一律拦掉，第三方脚本和数据调用也拦掉，读起来像"删除""退出登录""支付"的按钮不点。**它不会改你的项目。**
-
----
-
-## 现在的限制
-
-- 只有 Apple Silicon 版本
-- 目标是 web 和 Electron 应用；纯原生 macOS 应用（没有网页运行时的）扫不了，Crank 会直说
-- 大项目扫一遍要几分钟
-- 界面语言跟随系统，中英文都还在打磨
-- 源码暂未公开
+1. Get a pairing code
+2. Import the plugin into Figma (the panel reveals the file in Finder)
+3. Type the code once — this Mac is remembered from then on
 
 ---
 
-## 反馈
+## Your data
 
-用出问题、扫出来不对、或者哪一页没抓到——[开个 issue](https://github.com/irrwood/Crank/issues)，把报错原文贴上。应用里的报错会尽量说清是哪一页、哪一步出的问题，那句话对定位很有用。
+Scans, the project list and the Figma connection all stay **on your machine** (`~/Library/Application Support/Crank/`). Nothing is uploaded anywhere.
+
+Capture only ever reads what the page has already drawn. Requests that would write are cancelled, third-party scripts and data calls are cancelled, and controls that read as destructive — delete, sign out, pay — are skipped. **It does not change your project.**
+
+---
+
+## Current limits
+
+- Apple Silicon only
+- Aimed at web and Electron applications; a native macOS app with no web runtime inside cannot be scanned, and Crank says so rather than trying
+- A large project takes minutes to scan
+- The interface follows the system language; both English and Chinese are still being polished
+- The source is not published yet
+
+---
+
+## Feedback
+
+Something broke, something came back wrong, or a page was missed — [open an issue](https://github.com/irrwood/Crank/issues) and paste the error text. Crank tries to name which page and which step failed, and that sentence is the useful part.
 
 Apache-2.0
