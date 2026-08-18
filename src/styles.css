@@ -3288,6 +3288,23 @@ button.screen-figma-link {
 .inventory-filtered small { opacity: 0.45; }
 .inventory-note { margin: 12px 0 0; opacity: 0.6; }
 
+/* The project's folder, in the header line. Reads as part of the sentence
+   until it is hovered, because it is information first and a control second. */
+.connection-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 5px;
+  margin-left: -5px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.connection-path:hover { background: rgba(128, 128, 128, 0.16); }
+
 /* Why one page came back. Loud enough not to be mistaken for a footnote, since
    without it "1 page" reads as a one-page app. */
 .inventory-stalled {
@@ -3482,7 +3499,9 @@ button.screen-figma-link {
   min-height: 0;
   padding: 0;
   gap: 0;
-  background: #e8e8e5;
+  /* White, so the pages are the only thing on it that carries a surface. The
+     sidebar keeps its tint and the border between them does the separating. */
+  background: var(--surface);
 }
 
 /* The header keeps the older interface's proportions and stays put while the
@@ -3564,6 +3583,19 @@ button.screen-figma-link {
 }
 
 .target-empty { margin: 6px 10px; font-size: 12px; opacity: 0.45; }
+
+/* Dropping a folder onto the project list. Marked on the whole rail rather than
+   an inner box, so the target is the thing being aimed at. */
+.sidebar.is-drop-target { background: rgba(59, 108, 246, 0.09); }
+.sidebar.is-drop-target::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 1.5px dashed rgba(59, 108, 246, 0.55);
+  border-radius: 10px;
+  pointer-events: none;
+}
+.target-drop { margin: 6px 10px; font-size: 12px; font-weight: 560; color: #3b6cf6; }
 
 .project-item.is-nested { padding-left: 22px; }
 

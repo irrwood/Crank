@@ -231,16 +231,30 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
   );
 }
 
-function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd }: {
+function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd, onDropFolder }: {
   entries: Entry[]; activeId: string | null; busyIds: string[];
   onOpen: (target: InventoryTarget) => void;
   onRescan: (target: InventoryTarget) => void;
   onForget: (target: InventoryTarget) => void;
   onAdd: () => void;
+  onDropFolder: (event: React.DragEvent) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // The list of projects is the obvious place to add one to, and unlike the
+  // empty state it is on screen whatever else is: once a scan had a result
+  // there was nowhere left to drop a folder at all.
+  const [over, setOver] = useState(false);
   return (
-    <aside className="sidebar">
+    <aside
+      className={`sidebar${over ? " is-drop-target" : ""}`}
+      onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOver(false); }}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        setOver(true);
+      }}
+      onDrop={(event) => { setOver(false); onDropFolder(event); }}
+    >
       {/* The window is hiddenInset with the traffic lights at (18,18), so the
           sidebar has to start below them — the same spacer the older
           interface uses. */}
@@ -258,7 +272,8 @@ function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd
       </div>
 
       <div className="project-list">
-        {entries.length === 0 && <p className="target-empty">还没有扫描过任何项目</p>}
+        {over && <p className="target-drop">松手即可加入并开始扫描</p>}
+        {entries.length === 0 && !over && <p className="target-empty">还没有扫描过任何项目</p>}
         {entries.map((entry) => (isGroup(entry) ? (
           <div key={entry.id}>
             <button
@@ -738,7 +753,7 @@ export default function PageInventoryView() {
     const file = event.dataTransfer.files[0];
     const dropped = file && window.uiSync?.getDroppedPath?.(file);
     if (dropped) void scanFolder(dropped);
-    else notify("error", "Drop a project folder.");
+    else notify("error", "请拖入一个项目文件夹。");
   };
 
   const chooseFolder = async () => {
@@ -764,6 +779,13 @@ export default function PageInventoryView() {
   // One page found, and every control on it did nothing. A scan that says only
   // "1 page" reads as a one-page app; it is worth saying which of the two it is.
   const stalled = Boolean(result?.ok && pages.length === 1 && (result.inert?.length ?? 0) > 0);
+  // Where the project lives, when it is a folder. A scanned address stays an
+  // address — that one is the user's own server and is still up.
+  const scannedFolder = result?.ok
+    ? result.source?.kind === "folder"
+      ? result.source.target
+      : source?.startsWith("/") ? source : null
+    : null;
   // The inert controls are spelled out in that panel already, so they are not
   // also offered behind "left out".
   const leftOut = result?.ok
@@ -777,6 +799,7 @@ export default function PageInventoryView() {
         busyIds={Object.keys(jobs)}
         entries={entries}
         onAdd={() => { setResult(null); setActiveId(null); setChoices(null); setForeign(null); }}
+        onDropFolder={onDrop}
         onForget={(target) => void forget(target)}
         onOpen={(target) => void openSaved(target)}
         onRescan={rescan}
@@ -953,8 +976,23 @@ export default function PageInventoryView() {
             <div className="project-header-copy">
               <h1>{source?.split("/").filter(Boolean).pop() ?? result.origin}</h1>
               <div className="connection-line">
-                <Globe2 size={13} />
-                <span>{result.origin}</span>
+                {/* Not the origin it was served on: a folder is served on a
+                    throwaway port that is already closed by the time this is on
+                    screen, so showing it named something that no longer exists.
+                    A folder shows where it lives and opens there. */}
+                {scannedFolder ? (
+                  <button
+                    className="connection-path"
+                    onClick={() => void window.uiSync?.revealFile?.(scannedFolder)}
+                    title="在访达中显示"
+                    type="button"
+                  >
+                    <FolderGit2 size={13} />
+                    <span>{scannedFolder}</span>
+                  </button>
+                ) : (
+                  <><Globe2 size={13} /><span>{result.origin}</span></>
+                )}
                 <span className="header-sep">·</span>
                 <span>{pages.length} 个页面</span>
                 {result.sources.sitemap > 0 && <span className="header-sep">· {result.sources.sitemap} 个来自 sitemap</span>}
