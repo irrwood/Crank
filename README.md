@@ -6,7 +6,7 @@ Not screenshots — real text, vectors, images and layout you can select and edi
 
 Crank does not rebuild your interface. It runs the real one in Chromium and reads what the browser actually laid out, so what arrives is what the page renders.
 
-[中文说明 →](README.zh-CN.md)
+**[crank website →](https://irrwood.github.io/Crank/)** · [中文说明 →](README.zh-CN.md)
 
 ---
 

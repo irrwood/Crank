@@ -4,7 +4,7 @@
 
 不是截图——是真的文字、矢量、图片和布局，选中就能改。第二次扫描会更新同一批画框，而不是在旁边再画一份。
 
-[English →](README.md)
+**[官网 →](https://irrwood.github.io/Crank/)** · [English →](README.md)
 
 ---
 
