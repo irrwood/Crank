@@ -185,3 +185,21 @@ test("a project keeps the icon its own pages declare", async () => {
     assert.equal((await registry.list())[0].icon, icon);
   });
 });
+
+test("a scan saved before the rename still has its layers", async () => {
+  await withRegistry(async (registry, directory) => {
+    // The field said figmaTree, which named one output rather than what it is.
+    // Without this, renaming would make every stored scan look as though it had
+    // captured nothing.
+    const id = targetId("folder", "/repos/old");
+    await mkdir(path.join(directory, "inventories"), { recursive: true });
+    await writeFile(path.join(directory, "inventories", `${id}.json`), JSON.stringify({
+      ok: true,
+      pages: [{ id: "page-a", figmaTree: { width: 1220, height: 800, tree: { kind: "element" } } }]
+    }));
+
+    const loaded = await registry.loadInventory(id);
+    assert.equal(loaded.pages[0].layerTree.width, 1220);
+    assert.ok(!("figmaTree" in loaded.pages[0]), "and it is not carried under both names");
+  });
+});

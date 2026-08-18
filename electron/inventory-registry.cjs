@@ -75,6 +75,22 @@ function groupTargets(targets) {
     ...loose.sort((a, b) => a.name.localeCompare(b.name))];
 }
 
+/**
+ * Reads a scan saved under an earlier name for the same thing.
+ *
+ * The captured layer tree was called figmaTree, which said it belonged to one
+ * output when it is the browser's own shape and the only representation the
+ * app draws from. Renaming it would otherwise have made every scan already on
+ * disk look as though it had captured no layers at all.
+ */
+function carryOldNames(inventory) {
+  if (!inventory?.pages) return inventory;
+  const rename = (page) => (page && "figmaTree" in page && !("layerTree" in page)
+    ? (({ figmaTree, ...rest }) => ({ ...rest, layerTree: figmaTree }))(page)
+    : page);
+  return { ...inventory, pages: inventory.pages.map(rename) };
+}
+
 function createInventoryRegistry(directory) {
   const listPath = path.join(directory, "inventory-targets.json");
   const cachePath = (id) => path.join(directory, "inventories", `${id}.json`);
@@ -250,7 +266,7 @@ function createInventoryRegistry(directory) {
 
     async loadInventory(id) {
       try {
-        return JSON.parse(await readFile(cachePath(id), "utf8"));
+        return carryOldNames(JSON.parse(await readFile(cachePath(id), "utf8")));
       } catch {
         return null;
       }

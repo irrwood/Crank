@@ -138,7 +138,7 @@ function PageDocument({ page }: { page: DiscoveredPage }) {
   const holder = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [scale, setScale] = useState(1);
-  const captureWidth = page.figmaTree?.width || 1220;
+  const captureWidth = page.layerTree?.width || 1220;
 
   useEffect(() => {
     const element = holder.current;
@@ -155,12 +155,12 @@ function PageDocument({ page }: { page: DiscoveredPage }) {
     return () => { watcher.disconnect(); sizer.disconnect(); };
   }, [captureWidth]);
 
-  const height = (page.figmaTree?.height || 790) * scale;
+  const height = (page.layerTree?.height || 790) * scale;
   return (
     <div className="page-document" ref={holder} style={{ height: height > 0 ? height : undefined }}>
-      {visible && page.figmaTree?.tree ? (
+      {visible && page.layerTree?.tree ? (
         <div className="page-layers-frame" style={{ transform: `scale(${scale})` }}>
-          <PageLayers height={page.figmaTree.height} tree={page.figmaTree.tree} width={captureWidth} />
+          <PageLayers height={page.layerTree.height} tree={page.layerTree.tree} width={captureWidth} />
         </div>
       ) : page.thumbnail ? (
         <img alt="" src={page.thumbnail.dataUrl} />

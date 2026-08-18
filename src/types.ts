@@ -345,7 +345,7 @@ export type DiscoveredPage = {
   /** The rendered markup: sharp at any zoom, text selectable, SVG intact. */
   snapshot: HtmlSnapshot | null;
   /** Layers ready for Figma, captured on the same visit as the markup. */
-  figmaTree: FigmaTree | null;
+  layerTree: FigmaTree | null;
   /** The same page re-skinned — theme or language — not separate pages. */
   variants: PageVariant[];
 };

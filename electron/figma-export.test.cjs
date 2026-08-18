@@ -5,7 +5,7 @@ const { MAX_SCREENS, buildFigmaJob, clampSide, projectIdFor, safeScreenId, withP
 const tree = { kind: "element", name: "Root", width: 1200, height: 800, children: [] };
 const page = (name, extra = {}) => ({
   id: `state-${name.toLowerCase()}`, name, route: "/", recipe: [], depth: 0, variants: [],
-  figmaTree: { width: 1200, height: 800, tree }, ...extra
+  layerTree: { width: 1200, height: 800, tree }, ...extra
 });
 
 test("builds a job the bridge accepts", () => {
@@ -77,14 +77,14 @@ test("cleans ids the bridge would reject", () => {
 test("reports pages with no layers instead of sending blank frames", () => {
   const built = buildFigmaJob({
     origin: "http://x",
-    pages: [page("Home"), { id: "state-b", name: "Broken", figmaTree: null }]
+    pages: [page("Home"), { id: "state-b", name: "Broken", layerTree: null }]
   });
   assert.equal(built.job.screens.length, 1);
   assert.deepEqual(built.missing, ["Broken"]);
 });
 
 test("refuses a scan with nothing to send", () => {
-  const built = buildFigmaJob({ origin: "http://x", pages: [{ id: "a", name: "Empty", figmaTree: null }] });
+  const built = buildFigmaJob({ origin: "http://x", pages: [{ id: "a", name: "Empty", layerTree: null }] });
   assert.equal(built.ok, false);
   assert.match(built.message, /no page/i);
   assert.deepEqual(built.missing, ["Empty"]);

@@ -273,6 +273,39 @@ function createBrowsingSession(origin, driver) {
       }
     },
 
+    /**
+     * A picture of the page, encoded where the encoder is.
+     *
+     * Electron's nativeImage writes PNG and JPEG; the page has WebP, and for a
+     * screenshot the difference is not marginal — at 1220 wide, WebP costs what
+     * the old 420-wide PNG cost, so the raster gains three times the resolution
+     * for the same bytes. Which is what makes it usable for anything but a
+     * thumbnail.
+     */
+    async captureRaster({ width = 1220, quality = 0.82 } = {}) {
+      const image = await screenshot().catch(() => null);
+      if (!image || image.isEmpty()) return null;
+      const size = image.getSize();
+      const scaled = width && size.width > width
+        ? image.resize({ width, height: Math.max(1, Math.round(size.height * (width / size.width))) })
+        : image;
+      const png = scaled.toDataURL();
+      const webp = await evaluate(`(async () => {
+        const image = new Image();
+        await new Promise((resolve) => { image.onload = resolve; image.onerror = resolve; image.src = ${JSON.stringify(png)}; });
+        if (!image.naturalWidth) return null;
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        canvas.getContext("2d")?.drawImage(image, 0, 0);
+        const encoded = canvas.toDataURL("image/webp", ${quality});
+        return encoded.startsWith("data:image/webp") ? encoded : null;
+      })()`).catch(() => null);
+      const chosen = webp ?? png;
+      const drawn = scaled.getSize();
+      return { dataUrl: chosen, width: drawn.width, height: drawn.height };
+    },
+
     close() {
       dispose();
     }

@@ -99,12 +99,17 @@ async function readSitemap(origin) {
   return [];
 }
 
-async function captureThumbnail(session, width = 420) {
+async function captureThumbnail(session, width = 1220) {
+  // Wide enough to survive being looked at, and WebP so that costs nothing:
+  // measured on a real page, 1220 wide encodes to what the old 420-wide PNG
+  // did. Falls back to the PNG when the page has no WebP encoder to lend.
+  const raster = await session.captureRaster?.({ width });
+  if (raster) return raster;
   const image = await session.capture();
   if (!image || image.isEmpty()) return null;
   const size = image.getSize();
   const scaled = image.resize({ width, height: Math.max(1, Math.round(size.height * (width / size.width))) });
-  return { dataUrl: scaled.toDataURL(), width: size.width, height: size.height };
+  return { dataUrl: scaled.toDataURL(), width: scaled.getSize().width, height: scaled.getSize().height };
 }
 
 /**
@@ -132,7 +137,7 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
     ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
     : null;
   const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
-  return { thumbnail, snapshot, figmaTree: figma?.tree ? figma : null, reached: true };
+  return { thumbnail, snapshot, layerTree: figma?.tree ? figma : null, reached: true };
 }
 
 /**

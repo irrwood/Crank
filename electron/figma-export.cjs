@@ -71,7 +71,7 @@ function unavailableFonts(inventory) {
     for (const family of node?.style?.unavailableFonts ?? []) found.add(family);
     for (const child of node?.children ?? []) visit(child);
   };
-  for (const page of inventory?.pages ?? []) visit(page?.figmaTree?.tree);
+  for (const page of inventory?.pages ?? []) visit(page?.layerTree?.tree);
   return [...found].sort();
 }
 
@@ -81,9 +81,9 @@ function unavailableFonts(inventory) {
  * successful export of a blank screen.
  */
 function buildFigmaJob(inventory, { identity, projectName, figmaFileName, operation = "push" } = {}) {
-  const pages = (inventory?.pages ?? []).filter((page) => page?.figmaTree?.tree);
+  const pages = (inventory?.pages ?? []).filter((page) => page?.layerTree?.tree);
   const missing = (inventory?.pages ?? [])
-    .filter((page) => !page?.figmaTree?.tree)
+    .filter((page) => !page?.layerTree?.tree)
     .map((page) => page?.name ?? "(unnamed)");
 
   if (pages.length === 0) {
@@ -99,9 +99,9 @@ function buildFigmaJob(inventory, { identity, projectName, figmaFileName, operat
     sourceType: "screen",
     currentNodeId: page.figmaNodeId ?? null,
     renderMode: "editable-dom",
-    width: clampSide(page.figmaTree.width),
-    height: clampSide(page.figmaTree.height),
-    domTree: withParsedShadows(page.figmaTree.tree)
+    width: clampSide(page.layerTree.width),
+    height: clampSide(page.layerTree.height),
+    domTree: withParsedShadows(page.layerTree.tree)
   }));
 
   return {

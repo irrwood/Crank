@@ -164,7 +164,7 @@ const handoffPageSchema = z.object({
     width: z.number().finite(),
     height: z.number().finite()
   }).nullable(),
-  figmaTree: z.object({
+  layerTree: z.object({
     width: z.number().finite(),
     height: z.number().finite(),
     tree: z.unknown()
