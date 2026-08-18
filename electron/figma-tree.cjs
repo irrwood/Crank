@@ -8,8 +8,7 @@
  * injected into the page with toString(), so it must stay self-contained.
  */
 function serializeRenderedApplication() {
-  const root = document.querySelector("[data-ui-sync-root], .app-frame, #root, #app") || document.body;
-  if (!root) throw new Error("The application root is not available");
+  if (!document.body) throw new Error("The application root is not available");
 
   const rounded = (value) => Math.round(value * 100) / 100;
   const pixels = (value) => {
@@ -267,6 +266,22 @@ function serializeRenderedApplication() {
     return className ? `.${className}` : inherited;
   };
 
+  /**
+   * The nodes an element actually draws, following the flattened tree: an open
+   * shadow root in place of the host's own children, and a slot's assigned
+   * nodes in place of the slot.
+   */
+  function renderedChildren(element) {
+    if (element.shadowRoot) return [...element.shadowRoot.childNodes];
+    if (element.tagName === "SLOT" && typeof element.assignedNodes === "function") {
+      const assigned = element.assignedNodes({ flatten: true });
+      // Nothing was slotted in, so the slot's own children are the fallback
+      // content — which is what is on screen.
+      return assigned.length > 0 ? assigned : [...element.childNodes];
+    }
+    return [...element.childNodes];
+  }
+
   function serializeElement(element, parentRect, identity, inheritedSelector = null) {
     if (!(element instanceof Element)) return null;
     const rect = element.getBoundingClientRect();
@@ -295,7 +310,15 @@ function serializeRenderedApplication() {
     const children = [];
     let elementIndex = 0;
     let textIndex = 0;
-    for (const child of element.childNodes) {
+    // What the browser actually draws, which is not always what the element
+    // contains. A component with an open shadow root renders that root instead
+    // of its own children, and the children it does have are drawn wherever its
+    // slots put them — so walking childNodes alone walks straight past the
+    // entire interface of an app built from web components.
+    //
+    // A closed root cannot be reached by anyone, by design; such a host is
+    // captured as whatever it draws on its own, which is usually nothing.
+    for (const child of renderedChildren(element)) {
       if (child.nodeType === Node.TEXT_NODE) {
         const sourceText = String(child.textContent || "").replace(/\r\n?/g, "\n");
         const text = normalizedText(sourceText, style.whiteSpace);
@@ -355,11 +378,49 @@ function serializeRenderedApplication() {
     };
   }
 
-  const rootRect = root.getBoundingClientRect();
+  /**
+   * Which element the app draws into, decided by what it drew.
+   *
+   * Every one of these names is a convention and not a promise — `.app-frame`
+   * is this application's own class, `#root` and `#app` are React and Vue
+   * habits — and picking the first that merely *matches* put the whole capture
+   * on a guess. A real app scanned this way came back with a screenshot and no
+   * layers at all: the named element it found was not the one on screen, and a
+   * root that draws nothing serialises to nothing, silently.
+   *
+   * So the names are an order to try, not an answer, and each candidate is
+   * kept only if it actually produced layers. The document itself is last,
+   * because it always draws something and would otherwise win every time.
+   */
+  const candidates = [
+    ...document.querySelectorAll("[data-ui-sync-root], .app-frame, #root, #app"),
+    document.body,
+    document.documentElement
+  ].filter(Boolean);
+
+  let attempted = null;
+  for (const candidate of candidates) {
+    const rect = candidate.getBoundingClientRect();
+    const tree = serializeElement(candidate, rect, "root");
+    if (tree?.children?.length > 0) {
+      return { width: rounded(rect.width), height: rounded(rect.height), tree };
+    }
+    attempted = attempted ?? { candidate, rect, tree };
+  }
+
+  // Something was found, but it holds nothing: better than refusing, and the
+  // emptiness is the caller's to report.
+  if (attempted?.tree) {
+    return { width: rounded(attempted.rect.width), height: rounded(attempted.rect.height), tree: attempted.tree };
+  }
+
+  const bodyRect = document.body.getBoundingClientRect();
   return {
-    width: rounded(rootRect.width),
-    height: rounded(rootRect.height),
-    tree: serializeElement(root, rootRect, "root")
+    width: rounded(bodyRect.width),
+    height: rounded(bodyRect.height),
+    // Named, because "no layers" on its own sent someone looking in the wrong
+    // place for an afternoon.
+    error: `Nothing on this page could be captured as layers: ${candidates.length} candidate root${candidates.length === 1 ? "" : "s"} were tried and each drew nothing (the body measured ${Math.round(bodyRect.width)}×${Math.round(bodyRect.height)}).`
   };
 }
 

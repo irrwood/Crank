@@ -406,13 +406,78 @@ function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd
   );
 }
 
-function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => void }) {
+/**
+ * One page, as close to the real thing as this machine can get.
+ *
+ * First choice is the project's own page: it is still on disk, so it can be
+ * served and opened, and then the fonts, the ::before, the hover and the
+ * animation are simply right rather than approximated. Everything stored about
+ * a page is an approximation of some size, and this is the moment those
+ * differences show.
+ *
+ * The capture is what is left when that is impossible — the folder moved, the
+ * address is down, or the project is an installed app.
+ */
+function PageOverlay({ page, targetId, onClose }: {
+  page: DiscoveredPage;
+  targetId: string | null;
+  onClose: () => void;
+}) {
   const looks = [
-    { id: page.id, layerTree: page.layerTree, name: "默认", thumbnail: page.thumbnail },
+    { id: page.id, layerTree: page.layerTree, name: "默认", snapshot: page.snapshot, thumbnail: page.thumbnail },
     ...(page.variants ?? [])
   ];
   const [shown, setShown] = useState(0);
   const current = looks[Math.min(shown, looks.length - 1)];
+  const stage = useRef<HTMLDivElement>(null);
+  const [live, setLive] = useState<{ state: "opening" | "open" | "unavailable"; missed?: string[]; why?: string }>(
+    { state: "opening" }
+  );
+  // Only the page as it was found can be opened live. A re-skinned look is a
+  // click away from it, and clicking is exactly what the recipe already does —
+  // but the second look has no recipe of its own, so it stays a capture.
+  const liveWanted = shown === 0 && targetId !== null;
+
+  useEffect(() => {
+    if (!liveWanted) {
+      setLive({ state: "unavailable", why: "这个换肤版本只有抓取的记录。" });
+      return;
+    }
+    const bridge = window.uiSync;
+    if (!bridge) return;
+    let dropped = false;
+    const measure = () => {
+      const box = stage.current?.getBoundingClientRect();
+      return box ? { x: box.left, y: box.top, width: box.width, height: box.height } : null;
+    };
+
+    setLive({ state: "opening" });
+    void (async () => {
+      const bounds = measure();
+      if (!bounds) return;
+      const opened = await bridge.openPagePreview(targetId, { recipe: page.recipe, route: page.route }, bounds)
+        .catch((cause: unknown) => ({ message: cause instanceof Error ? cause.message : "打不开", ok: false as const }));
+      if (dropped) return;
+      setLive(opened.ok
+        ? { missed: "missed" in opened ? opened.missed ?? [] : [], state: "open" }
+        : { state: "unavailable", why: opened.message });
+    })();
+
+    // The preview is a native view laid over the window, so it does not move
+    // with the page on its own — it has to be told where the hole is.
+    const follow = () => { const bounds = measure(); if (bounds) void bridge.setPagePreviewBounds(bounds); };
+    const watcher = new ResizeObserver(follow);
+    if (stage.current) watcher.observe(stage.current);
+    window.addEventListener("resize", follow);
+    window.addEventListener("scroll", follow, true);
+    return () => {
+      dropped = true;
+      watcher.disconnect();
+      window.removeEventListener("resize", follow);
+      window.removeEventListener("scroll", follow, true);
+      void bridge.closePagePreview();
+    };
+  }, [liveWanted, page.id, page.route, page.recipe, targetId]);
 
   return (
     <div className="inventory-overlay" onClick={onClose} role="presentation">
@@ -436,12 +501,13 @@ function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => v
           )}
           <button onClick={onClose} type="button">关闭</button>
         </figcaption>
-        {/* The page itself, not a drawing of it. A card draws the layers, which
-            have the boxes, the type and the colours but not the gradient or the
-            ::before — and opening one page to look closely at it is exactly when
-            that difference shows. The layers are the fallback, for a page whose
-            markup could not be captured. */}
-        {current.snapshot?.html
+        {live.state !== "unavailable" ? (
+          // Left empty on purpose: the real page is a native view sitting over
+          // this hole, so anything drawn here would be behind it.
+          <div className="inventory-frame is-live" ref={stage}>
+            {live.state === "opening" && <p className="inventory-shot-empty">正在起服务，打开真的页面…</p>}
+          </div>
+        ) : current.snapshot?.html
           ? (
             <iframe
               className="inventory-frame"
@@ -461,13 +527,24 @@ function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => v
               />
             </div>
           )}
-        {(current.snapshot?.stats?.rasterised?.length ?? 0) > 0 && (
+        {/* Which of the three is on screen, said rather than left to be guessed:
+            they differ, and knowing which one you are looking at is the whole
+            point of having more than one. */}
+        {live.state === "open" && (live.missed?.length ?? 0) > 0 && (
+          <p className="inventory-frame-note">真实页面，但这一步点不到了：{live.missed?.join("、")}。看到的是它上一层。</p>
+        )}
+        {live.state === "unavailable" && (
+          <p className="inventory-frame-note">
+            {live.why ?? "打不开原项目。"}显示的是{current.snapshot?.html ? "扫描时抓下来的页面" : "图层"}。
+          </p>
+        )}
+        {(current.snapshot?.stats?.rasterised?.length ?? 0) > 0 && live.state === "unavailable" && (
           <p className="inventory-frame-note">
             有 {current.snapshot?.stats.rasterised.length} 块只能按像素抓下来：
             {current.snapshot?.stats.rasterised.join("、")}。其余都是真的网页。
           </p>
         )}
-        {current.layerTree?.error && (
+        {current.layerTree?.error && live.state === "unavailable" && !current.snapshot?.html && (
           <p className="inventory-frame-note">图层没读出来：{current.layerTree.error}</p>
         )}
       </figure>
@@ -1298,7 +1375,7 @@ export default function PageInventoryView() {
         />
       )}
 
-      {focused && <PageOverlay onClose={() => setFocused(null)} page={focused} />}
+      {focused && <PageOverlay onClose={() => setFocused(null)} page={focused} targetId={activeId} />}
 
       {figmaSession && (
         <FigmaSyncDialog

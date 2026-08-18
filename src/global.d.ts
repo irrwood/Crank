@@ -36,12 +36,19 @@ declare global {
       sendInventoryToFigma: (
         inventory: { origin?: string; source?: { kind: "folder" | "url"; target: string }; pages: DiscoveredPage[] },
         figmaUrl: string
-      ) => Promise<{ ok: boolean; message?: string; pairingCode?: string; expiresAt?: string; screenCount?: number; requiresPairing?: boolean; fileName?: string; fileKey?: string; missing?: string[]; dropped?: string[]; substitutedFonts?: string[] }>;
+      ) => Promise<{ ok: boolean; message?: string; pairingCode?: string; expiresAt?: string; screenCount?: number; requiresPairing?: boolean; fileName?: string; fileKey?: string; missing?: string[]; missingReasons?: string[]; dropped?: string[]; substitutedFonts?: string[] }>;
       getFigmaExportStatus: (pairingCode: string) => Promise<AutomaticMappingStatus>;
       onRecorded: (callback: (page: DiscoveredPage) => void) => () => void;
       chooseFolder: () => Promise<string | null>;
       listInventoryTargets: () => Promise<Array<InventoryTarget | InventoryGroup>>;
       openInventory: (id: string) => Promise<PageInventory | null>;
+      openPagePreview: (
+        id: string,
+        page: { route: string; recipe: Array<{ locator: string; label: string }> },
+        bounds: { x: number; y: number; width: number; height: number }
+      ) => Promise<{ ok: boolean; message?: string; missed?: string[]; url?: string }>;
+      setPagePreviewBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>;
+      closePagePreview: () => Promise<boolean>;
       forgetInventoryTarget: (id: string) => Promise<Array<InventoryTarget | InventoryGroup>>;
       onScanStatus: (callback: (value: ScanStatus) => void) => () => void;
       onScanLifecycle: (callback: (value: ScanLifecycle) => void) => () => void;

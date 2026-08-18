@@ -7,6 +7,7 @@ const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
 const { exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, recaptureInApp, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer } = require("./page-inventory.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
+const { holdServer } = require("./held-server.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
 const { createInventoryRegistry, nameFor, targetId } = require("./inventory-registry.cjs");
@@ -1177,6 +1178,60 @@ function createPreviewView(window, origin) {
   return { view, blockedHosts };
 }
 
+/**
+ * The project's own page, shown instead of a capture of it.
+ *
+ * Everything stored about a page is an approximation of some size — the layer
+ * tree has the boxes and the type but not the gradient, and even the captured
+ * markup is missing whatever the capture could not reach. The project is still
+ * on this machine, so for reading one page closely the honest thing is to serve
+ * it and open the real page. Fonts, ::before, hover and animation are then
+ * simply correct, because nothing is standing in for them.
+ *
+ * The capture is what remains for when this cannot be done: a folder that has
+ * moved, an address that is no longer up, an app rather than a project, or a
+ * handoff file opened on someone else's machine.
+ */
+let inventoryPreview = null;
+
+function closeInventoryPreview() {
+  if (!inventoryPreview) return;
+  const { release, view, window } = inventoryPreview;
+  inventoryPreview = null;
+  try {
+    if (!window.isDestroyed()) window.contentView.removeChildView(view);
+    if (!view.webContents.isDestroyed()) view.webContents.close();
+  } catch {}
+  release?.();
+}
+
+/**
+ * Replays the clicks that a page is reached by.
+ *
+ * Most pages are an address, but a fifth of them are somewhere behind a click —
+ * a tab, a filter, a menu. The recipe is what the crawl recorded to get there,
+ * so replaying it is what makes "open this page" mean the page and not the one
+ * it happens to live on.
+ */
+async function replayRecipe(contents, recipe) {
+  const missed = [];
+  for (const step of recipe) {
+    const clicked = await contents.executeJavaScript(`(() => {
+      const element = document.querySelector(${JSON.stringify(step.locator)});
+      if (!element) return false;
+      element.scrollIntoView({ block: "center" });
+      element.click();
+      return true;
+    })()`, true).catch(() => false);
+    if (!clicked) {
+      missed.push(step.label || step.locator);
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 420));
+  }
+  return missed;
+}
+
 function registerIpc() {
   ipcMain.handle("projects:list", () => listProjects());
 
@@ -1538,6 +1593,79 @@ function registerIpc() {
   ipcMain.handle("inventory:figma-status", async (_event, pairingCode) => {
     if (!figmaBridge) throw new Error("The local Figma bridge is not running");
     return figmaBridge.getStatus(pairingCodeSchema.parse(pairingCode));
+  });
+
+  ipcMain.handle("inventory:preview-open", async (event, id, page, bounds) => {
+    const safeId = z.string().regex(/^[a-f0-9]{16}$/).parse(id);
+    const safeBounds = previewBoundsSchema.parse(bounds);
+    const safePage = z.object({
+      route: z.string().max(2000),
+      recipe: z.array(z.object({ locator: z.string().max(2000), label: z.string().max(300) })).max(20)
+    }).parse(page);
+
+    const entry = (await inventoryRegistry().list()).find((item) => item.id === safeId);
+    if (!entry) return { ok: false, message: "这个项目已经不在列表里了。" };
+    // An installed app is not something to serve: the pages came out of a
+    // Chromium that was launched, not a folder that can be handed to a server.
+    if (entry.kind === "folder" && entry.target.toLowerCase().endsWith(".app")) {
+      return { ok: false, message: "这是一个装好的 app，不是可以起服务的项目。" };
+    }
+    if (entry.kind === "folder" && !(await access(entry.target).then(() => true).catch(() => false))) {
+      return { ok: false, message: "这个文件夹不在原来的位置了。" };
+    }
+
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return { ok: false, message: "没有可以放预览的窗口。" };
+    closeInventoryPreview();
+
+    let origin;
+    let release = null;
+    try {
+      if (entry.kind === "url") {
+        origin = new URL(normalizeTargetUrl(entry.target)).origin;
+      } else {
+        const held = holdServer(entry.target, { run: withProjectServer });
+        release = held.release;
+        origin = await held.ready;
+      }
+    } catch (cause) {
+      release?.();
+      return { ok: false, message: cause instanceof Error ? cause.message : "这个项目起不来。" };
+    }
+
+    const { view, blockedHosts } = createPreviewView(window, origin);
+    window.contentView.addChildView(view);
+    view.setBounds({
+      x: Math.round(safeBounds.x), y: Math.round(safeBounds.y),
+      width: Math.round(safeBounds.width), height: Math.round(safeBounds.height)
+    });
+    inventoryPreview = { blockedHosts, id: safeId, origin, release, view, window };
+
+    let target;
+    try {
+      target = new URL(safePage.route || "/", origin).toString();
+      await view.webContents.loadURL(target);
+    } catch (cause) {
+      closeInventoryPreview();
+      return { ok: false, message: `打不开 ${target ?? entry.target}：${cause instanceof Error ? cause.message : "未知错误"}` };
+    }
+    const missed = safePage.recipe.length > 0 ? await replayRecipe(view.webContents, safePage.recipe) : [];
+    return { ok: true, missed, url: target };
+  });
+
+  ipcMain.handle("inventory:preview-bounds", (_event, bounds) => {
+    if (!inventoryPreview) return false;
+    const safeBounds = previewBoundsSchema.parse(bounds);
+    inventoryPreview.view.setBounds({
+      x: Math.round(safeBounds.x), y: Math.round(safeBounds.y),
+      width: Math.round(safeBounds.width), height: Math.round(safeBounds.height)
+    });
+    return true;
+  });
+
+  ipcMain.handle("inventory:preview-close", () => {
+    closeInventoryPreview();
+    return true;
   });
 
   ipcMain.handle("inventory:export", async (_event, inventory, title) => {

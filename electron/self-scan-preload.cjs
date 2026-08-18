@@ -43,6 +43,9 @@ contextBridge.exposeInMainWorld("uiSync", {
   getProjectPreviews: forward("projects:previews"),
   listInventoryTargets: forward("inventory:targets"),
   openInventory: forward("inventory:open"),
+  openPagePreview: inert({ ok: false, message: "Crank 正在扫描自己，这份副本不能开预览。" }),
+  setPagePreviewBounds: inert(false),
+  closePagePreview: inert(true),
 
   // Everything that would act. Shaped so a click is a no-op rather than an
   // error the interface has to render as a failed state.

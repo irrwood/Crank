@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld("uiSync", {
   chooseFolder: () => ipcRenderer.invoke("inventory:choose-folder"),
   listInventoryTargets: () => ipcRenderer.invoke("inventory:targets"),
   openInventory: (id) => ipcRenderer.invoke("inventory:open", id),
+  // The project's own page, served and shown where a capture would have been.
+  openPagePreview: (id, page, bounds) => ipcRenderer.invoke("inventory:preview-open", id, page, bounds),
+  setPagePreviewBounds: (bounds) => ipcRenderer.invoke("inventory:preview-bounds", bounds),
+  closePagePreview: () => ipcRenderer.invoke("inventory:preview-close"),
   forgetInventoryTarget: (id) => ipcRenderer.invoke("inventory:forget", id),
   onScanStatus: (callback) => {
     const listener = (_event, value) => callback(value);
