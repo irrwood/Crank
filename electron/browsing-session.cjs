@@ -1,4 +1,5 @@
 const { collectUiState } = require("./state-discovery.cjs");
+const { DOWNSCALE_OVER_BYTES, DOWNSCALE_TO_WIDTH, MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
 const { serializeRenderedApplication } = require("./figma-tree.cjs");
 const { assignKeys } = require("./node-identity.cjs");
 const { isFileOrigin, routeWithin, withinOrigin } = require("./page-origin.cjs");
@@ -224,6 +225,30 @@ function createBrowsingSession(origin, driver) {
         })()`);
       } catch {
         return null;
+      }
+    },
+
+    /**
+     * The page's own markup, kept beside the layers.
+     *
+     * The layer tree is what reaches Figma and what a card in the grid draws,
+     * and it is an approximation: it has the boxes, the type and the colours,
+     * not the gradient or the ::before. Opening one page to look closely at it
+     * is exactly when that difference matters, so the real document is kept for
+     * that. Its images are stored in the same place every other picture is, so
+     * keeping it costs the markup and not a second copy of the pictures.
+     */
+    async captureHtml() {
+      try {
+        const limits = {
+          maxAssetBytes: MAX_ASSET_BYTES,
+          maxTotalAssetBytes: MAX_TOTAL_ASSET_BYTES,
+          downscaleOverBytes: DOWNSCALE_OVER_BYTES,
+          downscaleToWidth: DOWNSCALE_TO_WIDTH
+        };
+        return await evaluate(`(${captureHtmlDocument.toString()})(${JSON.stringify(limits)})`);
+      } catch (cause) {
+        return { html: null, error: cause instanceof Error ? cause.message : String(cause) };
       }
     },
 

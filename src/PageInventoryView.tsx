@@ -144,10 +144,12 @@ function PageMenu({ at, busy, onPick, onClose }: {
  * resize, text stays text — sharp at any zoom instead of a blurry picture of
  * itself.
  */
-function ScaledLayers({ layerTree, lazy = false, fallback }: {
+function ScaledLayers({ layerTree, lazy = false, selectable = false, fallback }: {
   layerTree: FigmaTree | null | undefined;
   /** Wait until the drawing is nearly on screen. A grid of them is expensive. */
   lazy?: boolean;
+  /** Let the text be selected — for a page opened on its own, not for a card. */
+  selectable?: boolean;
   fallback: ReactNode;
 }) {
   const holder = useRef<HTMLDivElement>(null);
@@ -175,7 +177,11 @@ function ScaledLayers({ layerTree, lazy = false, fallback }: {
   // holder is told the drawn height or it keeps the unscaled one.
   const height = (layerTree?.height || 790) * scale;
   return (
-    <div className="page-document" ref={holder} style={{ height: height > 0 ? height : undefined }}>
+    <div
+      className={`page-document${selectable ? " is-selectable" : ""}`}
+      ref={holder}
+      style={{ height: height > 0 ? height : undefined }}
+    >
       {near && layerTree?.tree ? (
         <div className="page-layers-frame" style={{ transform: `scale(${scale})` }}>
           <PageLayers height={layerTree.height} tree={layerTree.tree} width={captureWidth} />
@@ -430,14 +436,37 @@ function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => v
           )}
           <button onClick={onClose} type="button">关闭</button>
         </figcaption>
-        <div className="inventory-frame">
-          <ScaledLayers
-            fallback={current.thumbnail
-              ? <img alt="" src={current.thumbnail.dataUrl} />
-              : <p className="inventory-shot-empty">这个页面没有抓到任何东西。</p>}
-            layerTree={current.layerTree}
-          />
-        </div>
+        {/* The page itself, not a drawing of it. A card draws the layers, which
+            have the boxes, the type and the colours but not the gradient or the
+            ::before — and opening one page to look closely at it is exactly when
+            that difference shows. The layers are the fallback, for a page whose
+            markup could not be captured. */}
+        {current.snapshot?.html
+          ? (
+            <iframe
+              className="inventory-frame"
+              sandbox=""
+              srcDoc={current.snapshot.html}
+              title={page.name}
+            />
+          )
+          : (
+            <div className="inventory-frame">
+              <ScaledLayers
+                fallback={current.thumbnail
+                  ? <img alt="" src={current.thumbnail.dataUrl} />
+                  : <p className="inventory-shot-empty">这个页面没有抓到任何东西。</p>}
+                layerTree={current.layerTree}
+                selectable
+              />
+            </div>
+          )}
+        {(current.snapshot?.stats?.rasterised?.length ?? 0) > 0 && (
+          <p className="inventory-frame-note">
+            有 {current.snapshot?.stats.rasterised.length} 块只能按像素抓下来：
+            {current.snapshot?.stats.rasterised.join("、")}。其余都是真的网页。
+          </p>
+        )}
         {current.layerTree?.error && (
           <p className="inventory-frame-note">图层没读出来：{current.layerTree.error}</p>
         )}

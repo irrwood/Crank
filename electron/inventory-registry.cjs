@@ -92,14 +92,10 @@ function groupTargets(targets) {
  */
 function carryOldNames(inventory) {
   if (!inventory?.pages) return inventory;
-  // The captured markup is gone: both the preview and the exported handoff file
-  // draw the layer tree now, and the markup was the largest thing in a scan by
-  // far. Dropped on read rather than kept and ignored, or the weight stays
-  // forever in every scan taken before this.
   const carry = (look) => {
     if (!look) return look;
-    const { figmaTree, snapshot, ...rest } = look;
-    return "figmaTree" in look && !("layerTree" in look) ? { ...rest, layerTree: figmaTree } : rest;
+    const { figmaTree, ...rest } = look;
+    return "figmaTree" in look && !("layerTree" in look) ? { ...rest, layerTree: figmaTree } : look;
   };
   // A re-skinned page — dark, or another language — carries a whole capture of
   // its own, so it has the same weight to shed.
@@ -302,10 +298,9 @@ function createInventoryRegistry(directory) {
         return null;
       }
       // Scans taken before pictures were stored separately carry them inline,
-      // many times over, and older ones carry the page's markup as well.
-      // Opening one is the moment all of that is in hand, so it is also the
-      // moment to write the smaller form back — once, not on every open.
-      if (!text.includes("data:image/") && !text.includes('"snapshot"')) return inventory;
+      // many times over. Opening one is the moment its images are in hand, so
+      // it is also the moment to lift them out — once, not on every open.
+      if (!text.includes("data:image/")) return inventory;
       const lifted = await externalise(inventory, assets);
       await writeFile(cachePath(id), JSON.stringify(lifted)).catch(() => null);
       return lifted;

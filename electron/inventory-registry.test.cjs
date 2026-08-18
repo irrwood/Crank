@@ -263,7 +263,7 @@ test("a swept store keeps what the remembered projects still use", async () => {
   });
 });
 
-test("an older scan loses its markup, not its pages", async () => {
+test("an older scan keeps its markup, under the current names", async () => {
   await withRegistry(async (registry, directory) => {
     const id = targetId("folder", "/Users/me/before");
     await mkdir(path.join(directory, "inventories"), { recursive: true });
@@ -286,13 +286,18 @@ test("an older scan loses its markup, not its pages", async () => {
     }));
 
     const loaded = await registry.loadInventory(id);
-    assert.equal("snapshot" in loaded.pages[0], false, "the markup is gone");
-    assert.equal("snapshot" in loaded.pages[0].variants[0], false, "including a re-skinned page's own copy of it");
-    assert.equal(loaded.pages[0].variants[0].layerTree.tree.id, "dark-root");
+    assert.equal(loaded.pages[0].name, "Home");
+    assert.equal(loaded.pages[0].layerTree.tree.id, "root", "the layers, under their current name");
+    assert.equal(loaded.pages[0].variants[0].layerTree.tree.id, "dark-root", "a re-skinned page's too");
+    // The markup stays: it is the one view of a page that is not an
+    // approximation, and its pictures cost nothing extra now that they are
+    // stored by content alongside everyone else's.
+    assert.match(loaded.pages[0].snapshot.html, /^<html><img src="crank-asset:\/\//);
+    assert.equal(loaded.pages[0].variants[0].snapshot.html, "<html>dark</html>");
     assert.equal(loaded.pages[0].name, "Home", "and everything else is not");
     assert.equal(loaded.pages[0].layerTree.tree.id, "root", "including the layers, under their current name");
 
     const rewritten = await readFile(path.join(directory, "inventories", `${id}.json`), "utf8");
-    assert.equal(rewritten.includes("snapshot"), false, "written back, so the weight is not carried again");
+    assert.equal(rewritten.includes("base64"), false, "with the pictures lifted out of the markup, and written back");
   });
 });

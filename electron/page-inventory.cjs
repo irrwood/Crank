@@ -124,26 +124,30 @@ async function captureThumbnail(session, width = 1220) {
  * every time is what makes a page reproducible at all: an earlier click may
  * have switched the language or theme, and that would otherwise be baked in.
  */
-async function capturePage(session, { route, recipe = [] }, { withThumbnails = true, withFigmaTree = true } = {}) {
-  if (!withThumbnails) return { thumbnail: null, reached: true };
+async function capturePage(session, { route, recipe = [] }, { withThumbnails = true, withHtml = true, withFigmaTree = true } = {}) {
+  if (!withThumbnails) return { thumbnail: null, snapshot: null, reached: true };
   await session.reset?.();
   let reached = await session.goto(route, { patient: true });
   for (const step of recipe) {
     if (!reached) break;
     reached = await session.click(step.locator, { patient: true });
   }
-  if (!reached) return { thumbnail: null, reached: false };
-  // A thumbnail keeps the grid quick to draw at a distance; the layer tree is
-  // what carries real text, real SVG and readable colour, so both are kept.
+  if (!reached) return { thumbnail: null, snapshot: null, reached: false };
+  // Three views of one visit, each for a different distance. The thumbnail
+  // keeps a grid quick to draw. The layer tree is what a card draws and what
+  // reaches Figma. The markup is the page itself, for opening one and reading
+  // it — the only one of the three that is not an approximation.
   //
-  // The page's own markup used to be kept beside them, and was by far the
-  // largest thing in a scan — a whole foreign document per page, stylesheet,
-  // fonts and inlined images and all, 145MB of one real portfolio's 350MB. Both
-  // things that drew it now draw the layers instead, which is also what
-  // actually reaches Figma, so the copy of the original page bought nothing.
+  // Keeping all three used to mean keeping every picture three times, which is
+  // what made a thirty-page scan 350MB. It does not any more: the pictures are
+  // stored once by content, and all three point at the same ones.
   const thumbnail = await captureThumbnail(session);
+  const captured = withHtml ? await session.captureHtml() : null;
+  const snapshot = captured?.html
+    ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
+    : null;
   const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
-  return { thumbnail, layerTree: figma?.tree ? figma : null, reached: true };
+  return { thumbnail, snapshot, layerTree: figma?.tree ? figma : null, reached: true };
 }
 
 /**
@@ -454,6 +458,7 @@ async function runScan(session, origin, startPath, {
   maxDepth = 1,
   maxActionsPerState = 12,
   withThumbnails = true,
+  withHtml = true,
   withFigmaTree = true,
   onProgress,
   onStatus
@@ -475,7 +480,7 @@ async function runScan(session, origin, startPath, {
       onProgress
     });
 
-    const pages = await captureStates(session, states, { withThumbnails, withFigmaTree }, onStatus);
+    const pages = await captureStates(session, states, { withThumbnails, withHtml, withFigmaTree }, onStatus);
     // Taken once for the project, not per page: it is the same icon on all of
     // them, and it is what tells one project from another in the list.
     const icon = await session.captureIcon?.().catch(() => null) ?? null;

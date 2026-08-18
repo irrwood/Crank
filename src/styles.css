@@ -3477,7 +3477,11 @@ button.screen-figma-link {
   letter-spacing: 0.16em; font-variant-numeric: tabular-nums;
 }
 
-.inventory-frame {
+iframe.inventory-frame {
+  width: min(1240px, 92vw); height: 78vh; border: 0; border-radius: 10px;
+  background: #fff; display: block;
+}
+div.inventory-frame {
   width: min(1240px, 92vw); max-height: 78vh; border: 0; border-radius: 10px;
   background: #fff; display: block; overflow: auto;
 }
@@ -3660,7 +3664,11 @@ button.screen-figma-link {
    column. Scaling the document rather than stretching a bitmap is what keeps
    the text crisp — and it is real text, at the size the page actually used. */
 .page-document { position: relative; width: 100%; overflow: hidden; }
+/* In a grid the whole card is one button, so the drawing must not swallow the
+   click. Opened on its own it is there to be read from, and text that cannot be
+   selected is a picture with extra steps. */
 .page-layers-frame { position: absolute; top: 0; left: 0; transform-origin: 0 0; pointer-events: none; }
+.is-selectable .page-layers-frame { pointer-events: auto; user-select: text; cursor: auto; }
 .page-layers { position: relative; overflow: hidden; background: #fff; }
 .page-layers img { display: block; }
 .page-document img { width: 100%; height: auto; display: block; }

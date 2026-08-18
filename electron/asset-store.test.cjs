@@ -71,3 +71,46 @@ test("nothing live is swept away", async () => {
     assert.ok(await store.read(kept), "and the kept one still reads");
   });
 });
+
+test("a picture inlined in markup is the same picture as one in the layers", async () => {
+  await withStore(async (store) => {
+    const photo = png("a photograph");
+    const scan = {
+      pages: [{
+        // The captured document carries the picture inside itself, twice, and
+        // the layer tree carries the same bytes again.
+        snapshot: { html: `<img src="${photo}"><div style="background:url(${photo})">x</div>` },
+        layerTree: { tree: { kind: "image", dataUrl: photo } }
+      }]
+    };
+    const lifted = await externalise(scan, store);
+
+    assert.equal(JSON.stringify(lifted).includes("base64"), false, "nothing is left inline, markup included");
+    assert.equal((await readdir(store.root)).length, 1, "one picture, one file, however it was written");
+    assert.equal(lifted.pages[0].snapshot.html.match(/crank-asset:\/\/\w+\.png/g).length, 2);
+    assert.ok(lifted.pages[0].snapshot.html.includes(lifted.pages[0].layerTree.tree.dataUrl),
+      "the markup and the layers point at the same one");
+    assert.match(lifted.pages[0].snapshot.html, /^<img src="crank-asset/, "and the markup is otherwise untouched");
+
+    // An exported file runs where the store does not exist, so it goes back whole.
+    const { internalise } = require("./asset-store.cjs");
+    const restored = await internalise(lifted, store);
+    assert.equal(restored.pages[0].snapshot.html, scan.pages[0].snapshot.html, "byte for byte, both of them");
+  });
+});
+
+test("markup keeps whatever the store could not take", async () => {
+  await withStore(async (store) => {
+    const html = '<img src="data:image/png;base64,!!not base64!!"><p>kept</p>';
+    const lifted = await externalise({ snapshot: { html } }, store);
+    assert.equal(lifted.snapshot.html.includes("<p>kept</p>"), true);
+  });
+});
+
+test("a picture is kept while only the markup still mentions it", async () => {
+  await withStore(async (store) => {
+    const lifted = await externalise({ pages: [{ snapshot: { html: `<img src="${png("only in markup")}">` } }] }, store);
+    assert.deepEqual(await store.collect(referencesIn(lifted)), { removed: 0 });
+    assert.equal((await readdir(store.root)).length, 1);
+  });
+});

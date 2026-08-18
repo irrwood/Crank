@@ -172,6 +172,19 @@ const handoffPageSchema = z.object({
     height: z.number().finite(),
     tree: z.unknown()
   }).nullable().optional(),
+  // The page's own document. Held as references to stored pictures, so the
+  // length is the markup itself rather than the markup plus every image in it.
+  snapshot: z.object({
+    html: z.string().max(60_000_000),
+    bytes: z.number().finite(),
+    stats: z.object({
+      stylesheets: z.number().finite(),
+      inlinedAssets: z.number().finite(),
+      rasterised: z.array(z.string().max(200)).max(500),
+      skippedAssets: z.array(z.string().max(300)).max(500),
+      svgPreserved: z.number().finite()
+    }).partial()
+  }).nullable().optional(),
   figmaNodeId: z.string().regex(/^\d+:\d+$/).nullable().optional(),
   variants: z.array(z.object({
     id: z.string().max(200),
@@ -186,7 +199,8 @@ const handoffPageSchema = z.object({
       width: z.number().finite(),
       height: z.number().finite(),
       tree: z.unknown()
-    }).nullable().optional()
+    }).nullable().optional(),
+    snapshot: z.object({ html: z.string().max(60_000_000), bytes: z.number().finite(), stats: z.record(z.unknown()) }).nullable().optional()
   })).max(50).optional()
 });
 

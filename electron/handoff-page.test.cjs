@@ -91,7 +91,7 @@ test("shows no toggle when a page has one look", async () => {
   assert.ok(!html.includes('class="looks"'), "and no switcher row");
 });
 
-test("draws the layers rather than a picture of them", async () => {
+test("draws the layers when there is no markup to embed", async () => {
   const html = await renderHandoffPage({
     ok: true, origin: "http://x", filtered: [],
     pages: [{
@@ -117,6 +117,26 @@ test("draws the layers rather than a picture of them", async () => {
   assert.ok(!html.includes("<iframe"), "no foreign document is embedded");
   // The grid still uses the thumbnail for speed.
   assert.match(html, /base64,A/);
+});
+
+test("embeds the page itself when it was captured, and says what could not be", async () => {
+  const html = await renderHandoffPage({
+    ok: true, origin: "http://x", filtered: [],
+    pages: [{
+      id: "s", name: "Analytics", route: "/analytics", recipe: [], depth: 0, variants: [],
+      thumbnail: { dataUrl: "data:image/png;base64,A", width: 10, height: 10 },
+      layerTree: { width: 1220, height: 790, tree: { kind: "element", id: "root", x: 0, y: 0, width: 1220, height: 790 } },
+      snapshot: {
+        html: "<!doctype html><html><body><h1>Analytics</h1></body></html>",
+        bytes: 58,
+        stats: { rasterised: ["canvas 800×400"] }
+      }
+    }]
+  });
+  assert.match(html, /<iframe[^>]+srcdoc=/, "the real page wins over a drawing of it");
+  assert.match(html, /&lt;h1&gt;Analytics&lt;\/h1&gt;/, "escaped so it cannot break out");
+  assert.ok(!html.includes('class="layers"'), "and the layers are not drawn as well");
+  assert.match(html, /1 area\(s\) could only be captured as pixels: canvas 800×400/);
 });
 
 test("a page name inside the layers cannot become markup", async () => {

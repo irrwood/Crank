@@ -107,10 +107,32 @@ function createAssetStore(directory) {
   };
 }
 
+/**
+ * A data URL embedded in a longer string — inside captured markup, that is.
+ *
+ * A page's own document carries its pictures inlined, in `src`, in `srcset` and
+ * in `url(...)` inside a stylesheet, and on one real portfolio those were 127MB
+ * of the 145MB of markup. They are the same pictures the layer tree holds, so
+ * they belong in the same store rather than in a second copy.
+ */
+const EMBEDDED = /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
+
+async function replaceEmbedded(text, replace) {
+  const found = [...new Set(text.match(EMBEDDED) ?? [])];
+  if (found.length === 0) return text;
+  let out = text;
+  for (const dataUrl of found) {
+    const reference = await replace(dataUrl);
+    if (reference) out = out.split(dataUrl).join(reference);
+  }
+  return out;
+}
+
 /** Every data URL in a scan, replaced by a reference to the stored bytes. */
 async function externalise(value, store) {
   if (typeof value === "string") {
-    return value.startsWith("data:image/") ? (await store.put(value)) ?? value : value;
+    if (value.startsWith("data:image/")) return (await store.put(value)) ?? value;
+    return value.includes("data:image/") ? replaceEmbedded(value, (found) => store.put(found)) : value;
   }
   if (Array.isArray(value)) return Promise.all(value.map((item) => externalise(item, store)));
   if (value && typeof value === "object") {
@@ -127,8 +149,20 @@ async function externalise(value, store) {
  * What leaves the app has to be self-contained — the Figma plugin and an
  * exported handoff page both run somewhere this store does not exist.
  */
+const EMBEDDED_REFERENCE = /crank-asset:\/\/[a-f0-9]{40}(?:\.\w+)?/gi;
+
 async function internalise(value, store) {
-  if (typeof value === "string") return REFERENCE.test(value) ? (await store.dataUrl(value)) ?? value : value;
+  if (typeof value === "string") {
+    if (REFERENCE.test(value)) return (await store.dataUrl(value)) ?? value;
+    if (!value.includes("crank-asset://")) return value;
+    const found = [...new Set(value.match(EMBEDDED_REFERENCE) ?? [])];
+    let out = value;
+    for (const reference of found) {
+      const dataUrl = await store.dataUrl(reference);
+      if (dataUrl) out = out.split(reference).join(dataUrl);
+    }
+    return out;
+  }
   if (Array.isArray(value)) return Promise.all(value.map((item) => internalise(item, store)));
   if (value && typeof value === "object") {
     const out = {};
@@ -142,6 +176,7 @@ async function internalise(value, store) {
 function referencesIn(value, found = new Set()) {
   if (typeof value === "string") {
     if (REFERENCE.test(value)) found.add(value);
+    else for (const embedded of value.match(EMBEDDED_REFERENCE) ?? []) found.add(embedded);
     return found;
   }
   if (Array.isArray(value)) {

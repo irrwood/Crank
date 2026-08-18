@@ -90,6 +90,7 @@ figcaption a { margin-left: auto; color: var(--accent); font-size: 11.5px; text-
 .single { max-width: 1280px; margin: 0 auto; }
 .frame > img { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
 .frame { border: 1px solid var(--line); border-radius: 12px; background: #fff; overflow: hidden; }
+.frame iframe { width: 100%; height: 78vh; border: 0; background: #fff; display: block; }
 /* Drawn at the size it was captured, then scaled to whatever width the page is
    read at. A transform keeps text as text, so it stays sharp when zoomed in. */
 .layers { position: relative; transform-origin: top left; }
@@ -210,9 +211,17 @@ async function renderHandoffPage(inventory, { title = "Design handoff", generate
   // text selectable, SVG still vector. The grid keeps thumbnails so it stays
   // quick to draw.
   const singles = pages.map((page) => {
-    const looks = [{ id: page.id, layerTree: page.layerTree, name: "Default", thumbnail: page.thumbnail },
+    const looks = [{ id: page.id, layerTree: page.layerTree, name: "Default", snapshot: page.snapshot, thumbnail: page.thumbnail },
       ...(page.variants ?? [])];
     const frames = looks.map((look, index) => {
+      // The page itself when it was captured — sharp at any zoom, text
+      // selectable, SVG still vector. The layers are the fallback, and they are
+      // an approximation: the boxes, the type and the colours, not the gradient.
+      if (look.snapshot?.html) {
+        return `<iframe data-look="${index}"${index === 0 ? "" : " hidden"} loading="lazy"
+          sandbox="allow-same-origin" title="${escapeHtml(page.name)}"
+          srcdoc="${escapeHtml(look.snapshot.html)}"></iframe>`;
+      }
       const tree = look.layerTree?.tree;
       if (tree) {
         return `<div class="layers" data-look="${index}"${index === 0 ? "" : " hidden"}
@@ -229,9 +238,11 @@ async function renderHandoffPage(inventory, { title = "Design handoff", generate
           `<button type="button" data-look-pick="${index}"${index === 0 ? ' aria-pressed="true"' : ""}>${escapeHtml(look.name)}</button>`
         ).join("")}</div>`
       : "";
-    const notes = page.layerTree?.error
-      ? `<p class="note">These layers could not be read: ${escapeHtml(page.layerTree.error)}</p>`
-      : "";
+    const notes = page.snapshot?.stats?.rasterised?.length
+      ? `<p class="note">${page.snapshot.stats.rasterised.length} area(s) could only be captured as pixels: ${escapeHtml(page.snapshot.stats.rasterised.join(", "))}. Everything else is live markup.</p>`
+      : page.layerTree?.error
+        ? `<p class="note">These layers could not be read: ${escapeHtml(page.layerTree.error)}</p>`
+        : "";
     return `
     <section data-screen="${escapeHtml(page.id)}" class="single" hidden>
       <div class="meta">

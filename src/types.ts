@@ -314,6 +314,20 @@ export type SemanticChange = {
  */
 export type FigmaTree = { width: number; height: number; tree: unknown; error?: string };
 
+export type HtmlSnapshot = {
+  /** The page's own document, with its pictures held as stored references. */
+  html: string;
+  bytes: number;
+  stats: {
+    stylesheets: number;
+    inlinedAssets: number;
+    /** Only what genuinely holds pixels: canvas bitmaps, video frames. */
+    rasterised: string[];
+    skippedAssets: string[];
+    svgPreserved: number;
+  };
+};
+
 export type PageVariant = {
   id: string;
   /** Named after the control that produced it — "Dark", "中文". */
@@ -322,6 +336,7 @@ export type PageVariant = {
   recipe: Array<{ kind: string; locator: string; label: string }>;
   thumbnail: { dataUrl: string; width: number; height: number } | null;
   layerTree: FigmaTree | null;
+  snapshot: HtmlSnapshot | null;
 };
 
 export type DiscoveredPage = {
@@ -339,8 +354,10 @@ export type DiscoveredPage = {
    * page is far enough away that layers would be wasted on it.
    */
   thumbnail: { dataUrl: string; width: number; height: number } | null;
-  /** Layers: what is drawn up close, and what is exported to Figma. */
+  /** Layers: what a card draws, and what is exported to Figma. */
   layerTree: FigmaTree | null;
+  /** The page's own document — the one view of it that is not an approximation. */
+  snapshot: HtmlSnapshot | null;
   /** The same page re-skinned — theme or language — not separate pages. */
   variants: PageVariant[];
 };

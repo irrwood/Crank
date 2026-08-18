@@ -33,13 +33,34 @@ function serializeRenderedApplication() {
     const className = typeof element.className === "string" ? element.className.split(/\s+/)[0] : "";
     return `${element.tagName.toLowerCase()}${className ? ` · ${className}` : ""}`.slice(0, 100);
   };
+  /**
+   * The picture, at the size the page draws it — not the size it was shipped at.
+   *
+   * A portfolio's hero photo was kept 5,625px wide to fill a 183px box: 6.7MB,
+   * twice over, in a scan whose entire layer tree is 4MB. Across that one scan,
+   * 156 of 214 images were stored more than twice as large as they were drawn,
+   * and that was 66MB of 105MB. Nothing can show those pixels, and every one of
+   * them has to be decoded before a page can be drawn.
+   *
+   * Four times the box it occupies: enough for a retina screen and for zooming
+   * in twice beyond that, and never more than the image actually has.
+   */
+  const IMAGE_HEADROOM = 4;
+
   const imageData = (element) => {
     try {
+      const natural = Math.max(1, element.naturalWidth || element.width);
+      const drawn = element.getBoundingClientRect().width || element.width || natural;
+      const width = Math.min(natural, Math.max(64, Math.round(drawn * IMAGE_HEADROOM)));
       const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, element.naturalWidth || element.width);
-      canvas.height = Math.max(1, element.naturalHeight || element.height);
+      canvas.width = width;
+      canvas.height = Math.max(1, Math.round((element.naturalHeight || element.height || 1) * (width / natural)));
       canvas.getContext("2d")?.drawImage(element, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL("image/png");
+      const png = canvas.toDataURL("image/png");
+      // Whichever is smaller. WebP wins on photographs by a wide margin and PNG
+      // on flat icons and logos, and a real page has both.
+      const webp = canvas.toDataURL("image/webp", 0.85);
+      return webp.startsWith("data:image/webp") && webp.length < png.length ? webp : png;
     } catch {
       return null;
     }
