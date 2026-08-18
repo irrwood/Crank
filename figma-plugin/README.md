@@ -16,9 +16,15 @@ instead of drawing new ones beside them.
 ## What it can reach
 
 `localhost:38457`, and nothing else. That is the Crank app on the same machine.
-It receives page names, layer geometry and opaque stable IDs, and returns the
-Figma node IDs it created. Nothing about the file or the project leaves the
-computer.
+
+It receives the captured pages, and after building them it sends back the Figma
+file name, the IDs of the frames it created, and the text, size, colour and font
+of those layers. That return trip is not incidental: it is how a later run finds
+the same frames instead of duplicating them, and how Crank can tell what someone
+changed in Figma. It is also Figma file content leaving the file, which is why
+the manifest says so rather than describing only the IDs.
+
+Nothing goes to the internet.
 
 ## Publishing
 

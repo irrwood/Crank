@@ -15,6 +15,6 @@
     "allowedDomains": [
       "http://localhost:38457"
     ],
-    "reasoning": "Connects to the Crank desktop app running on the same computer to receive local layer jobs and return the Figma node IDs it created. No data is sent anywhere else."
+    "reasoning": "Crank runs on the same computer. This plugin receives the pages Crank captured, builds them as layers here, and sends back the Figma file name, the IDs of the frames it created, and the text, size, colour and font of those layers \u2014 which is how a later run updates the same frames instead of duplicating them, and how it can tell what changed in Figma. It reaches this local address only, and nothing goes to the internet."
   }
 }
