@@ -9,6 +9,8 @@ const DOM_KIND_KEY = "dom_kind";
 const DOM_SYNTHETIC_WRAP_KEY = "synthetic_wrap";
 const CONNECTION_STORAGE_KEY = "ui-sync-device-connection-v2";
 const ENGINE_VERSION = "2026-08-14-system-templates-v4";
+// Not renamed with the product: this name is how an existing map frame is
+// found again, and changing it would leave the old one orphaned on the canvas.
 const SYMBOL_MAP_FRAME_NAME = "UI Sync · SF Symbol Map";
 // System templates are user-selected Figma instances, never hard-coded document nodes.
 let activePairingCode = null;
@@ -53,7 +55,7 @@ function colorForToken(token, fallback = COLORS.text) {
   return TOKEN_COLORS[token] || fallback;
 }
 
-figma.showUI(__html__, { width: 360, height: 460, themeColors: true, title: "UI Sync Bridge" });
+figma.showUI(__html__, { width: 360, height: 460, themeColors: true, title: "Crank" });
 
 function normalizedName(value) {
   return String(value || "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -105,7 +107,7 @@ function append(parent, child, horizontal = "FILL") {
 function preferredFonts(available) {
   const names = available.map((font) => font.fontName);
   const regular = names.find((font) => /^SF Pro( Text| Display)?$/.test(font.family) && font.style === "Regular");
-  if (!regular) throw new Error("SF Pro is unavailable in Figma. Enable Figma Font Helper, then run UI Sync Bridge again.");
+  if (!regular) throw new Error("SF Pro is unavailable in Figma. Enable Figma Font Helper, then run Crank again.");
   const findWeight = (styles) => names.find((font) => font.family === regular.family && styles.includes(font.style)) || regular;
   const monospaced = names.find((font) => /^SF Mono$/.test(font.family) && font.style === "Regular") || regular;
   const cjkFamilies = ["PingFang SC", "Hiragino Sans GB", "Chiron Hei HK", "Noto Sans CJK SC", "Noto Sans SC"];
@@ -1224,7 +1226,7 @@ async function renderSnapshotContent(frame, screen, pairingCode, managed) {
   const bytes = new Uint8Array(await response.arrayBuffer());
   const image = figma.createImage(bytes);
   const snapshot = figma.createRectangle();
-  snapshot.name = "UI Sync · Rendered snapshot";
+  snapshot.name = "Crank · Rendered snapshot";
   snapshot.resize(screen.width, screen.height);
   snapshot.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
   snapshot.setSharedPluginData(NAMESPACE, CONTENT_ROOT_KEY, "1");
@@ -1392,7 +1394,7 @@ async function renderDomNode(ir, fonts) {
 async function renderEditableDomContent(frame, screen, getFonts, managed) {
   const fonts = await getFonts();
   const root = await renderDomNode(screen.domTree, fonts);
-  root.name = "UI Sync · Editable DOM";
+  root.name = "Crank · Editable DOM";
   root.setSharedPluginData(NAMESPACE, CONTENT_ROOT_KEY, "1");
   if (managed) managed.remove();
   frame.layoutMode = "NONE";
@@ -1629,12 +1631,12 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
 
   const root = figma.createFrame();
   root.name = screen.vectorTextMode === "pdf-glyphs"
-    ? "UI Sync · Rendered SwiftUI PDF"
+    ? "Crank · Rendered SwiftUI PDF"
     : screen.vectorTextMode === "editable-pdf"
-      ? "UI Sync · SwiftUI PDF + Editable Text"
+      ? "Crank · SwiftUI PDF + Editable Text"
       : screen.vectorTextMode === "editable-runtime"
-        ? "UI Sync · SwiftUI PDF + Captured Runtime Text"
-        : "UI Sync · Rendered Vector + Editable Text";
+        ? "Crank · SwiftUI PDF + Captured Runtime Text"
+        : "Crank · Rendered Vector + Editable Text";
   root.layoutMode = "NONE";
   root.resize(viewport.width, viewport.height);
   root.fills = [];
@@ -1811,7 +1813,7 @@ async function renderScreenContent(frame, screen, getFonts, pairingCode) {
   frame.layoutMode = "VERTICAL";
   frame.primaryAxisSizingMode = "FIXED";
   frame.counterAxisSizingMode = "FIXED";
-  const root = createLayout("UI Sync · Generated content", "VERTICAL");
+  const root = createLayout("Crank · Generated content", "VERTICAL");
   root.setSharedPluginData(NAMESPACE, CONTENT_ROOT_KEY, "1");
   root.fills = solid(COLORS.background);
   try {
@@ -2043,7 +2045,7 @@ async function runJob(payload, pairingCode, connectionToken) {
       : { operation: "push", fileName: figma.root.name, mappings, screens, substitutedFonts: built.substitutedFonts })
   });
   const result = await completion.json();
-  if (!completion.ok) throw new Error(result.error || "UI Sync could not save the mappings");
+  if (!completion.ok) throw new Error(result.error || "Crank could not save the mappings");
 
   if (connectionToken && figma.clientStorage) {
     await figma.clientStorage.setAsync(CONNECTION_STORAGE_KEY, { token: connectionToken });
@@ -2068,7 +2070,7 @@ async function connect(pairingCode) {
   figma.ui.postMessage({ type: "progress", message: "Pairing with UI Sync…" });
   const response = await fetch(`${BRIDGE_URL}/v1/jobs/${pairingCode}`);
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "UI Sync is not available");
+  if (!response.ok) throw new Error(payload.error || "Crank is not available");
   await runJob(payload, pairingCode, payload.connectionToken);
 }
 
@@ -2083,7 +2085,7 @@ async function resumeConnection() {
   const response = await fetch(`${BRIDGE_URL}/v1/connections/${connection.token}/job?fileName=${encodeURIComponent(figma.root.name)}`);
   if (response.status === 204) return;
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "UI Sync is not available");
+  if (!response.ok) throw new Error(payload.error || "Crank is not available");
   activePairingCode = payload.pairingCode;
   try {
     await runJob(payload, payload.pairingCode, null);

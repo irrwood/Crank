@@ -1,9 +1,9 @@
 {
-  "name": "ui-sync-desktop",
+  "name": "crank-desktop",
   "version": "0.1.0",
   "private": true,
   "description": "A local-first visual sync client for React and Figma.",
-  "productName": "UI Sync",
+  "productName": "Crank",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {

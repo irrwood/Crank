@@ -10,6 +10,7 @@ const { renderHandoffPage } = require("./handoff-page.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
 const { createInventoryRegistry, nameFor, targetId } = require("./inventory-registry.cjs");
+const { carryUserData } = require("./user-data-migration.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
 const { createFigmaBridge } = require("./figma-bridge.cjs");
 const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
@@ -2229,6 +2230,14 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
+  // The product was renamed, and Electron derives this directory from the
+  // product name — so without this every scanned project would appear to have
+  // vanished on first launch.
+  const carried = await carryUserData(
+    path.join(path.dirname(app.getPath("userData")), "UI Sync"),
+    app.getPath("userData")
+  );
+  if (carried.carried.length > 0) console.log("Carried forward from UI Sync:", carried.carried.join(", "));
   if (process.platform === "darwin") app.dock.setIcon(appIconPath);
   figmaBridge = createFigmaBridge({
     onComplete: async (context, result) => {

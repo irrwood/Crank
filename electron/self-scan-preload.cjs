@@ -30,7 +30,7 @@ const readable = new Set([
 const forward = (channel) => (...args) => (
   readable.has(channel)
     ? ipcRenderer.invoke(channel, ...args)
-    : Promise.reject(new Error(`${channel} is not available while UI Sync is scanning itself`))
+    : Promise.reject(new Error(`${channel} is not available while Crank is scanning itself`))
 );
 
 /** Answers in the right shape, so the interface renders rather than throwing. */
@@ -48,17 +48,17 @@ contextBridge.exposeInMainWorld("uiSync", {
   // error the interface has to render as a failed state.
   addProject: inert([]),
   inspectDroppedProjects: inert([]),
-  scanUrl: inert({ ok: false, message: "UI Sync is scanning itself; this copy cannot start a scan." }),
-  scanFolder: inert({ ok: false, message: "UI Sync is scanning itself; this copy cannot start a scan." }),
-  scanAttached: inert({ ok: false, message: "UI Sync is scanning itself; this copy cannot start a scan." }),
+  scanUrl: inert({ ok: false, message: "Crank is scanning itself; this copy cannot start a scan." }),
+  scanFolder: inert({ ok: false, message: "Crank is scanning itself; this copy cannot start a scan." }),
+  scanAttached: inert({ ok: false, message: "Crank is scanning itself; this copy cannot start a scan." }),
   listDebugWindows: inert({ ok: false, windows: [] }),
-  startRecording: inert({ ok: false, message: "Not available while UI Sync is scanning itself." }),
+  startRecording: inert({ ok: false, message: "Not available while Crank is scanning itself." }),
   captureRecording: inert({ ok: false }),
   stopRecording: inert({ ok: true, pages: [] }),
-  recapturePage: inert({ ok: false, message: "Not available while UI Sync is scanning itself." }),
-  explorePage: inert({ ok: false, message: "Not available while UI Sync is scanning itself." }),
+  recapturePage: inert({ ok: false, message: "Not available while Crank is scanning itself." }),
+  explorePage: inert({ ok: false, message: "Not available while Crank is scanning itself." }),
   dropPage: inert({ ok: true }),
-  sendInventoryToFigma: inert({ ok: false, message: "Not available while UI Sync is scanning itself." }),
+  sendInventoryToFigma: inert({ ok: false, message: "Not available while Crank is scanning itself." }),
   getFigmaExportStatus: inert({ state: "waiting" }),
   chooseFolder: inert(null),
   forgetInventoryTarget: forward("inventory:targets"),

@@ -1,6 +1,31 @@
-# UI Sync Desktop
+# Crank
 
-A local-first desktop client for reviewing semantic UI changes between a connected local project and Figma.
+Crank walks a running application, finds every screen it can reach, and hands
+you those screens as editable Figma layers — with identity stable enough that a
+second run updates the same frames instead of drawing new ones beside them.
+
+It does not rebuild your interface. It runs the real one in Chromium and reads
+what the browser laid out, so what arrives is what the page actually renders.
+
+## What it does
+
+- **Starts the project itself.** npm and pnpm projects run their own dev script;
+  Electron projects serve the renderer without opening a window; Python and Ruby
+  projects use the command their Dockerfile, Procfile or README already declares.
+- **Walks every page.** Routes, tabs and overlays each count as a page. A theme
+  or language switch is the same page wearing a different look, and is grouped
+  with it.
+- **Attaches to what is already running.** An app started with a debugging port
+  can be scanned as it is, with the data actually in it — which is the only way
+  to capture screens that live behind a login or a bridge.
+- **Hands the result over.** A self-contained HTML handoff page, or editable
+  layers pushed straight into a Figma file.
+
+## Development
+
+```bash
+npm run dev
+```
 
 ## SwiftUI visual editing MVP
 

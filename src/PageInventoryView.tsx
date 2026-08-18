@@ -32,16 +32,17 @@ type FigmaExportSession = {
 function shortfall(session: FigmaExportSession): string | null {
   const parts: string[] = [];
   if (session.missing?.length) {
-    parts.push(`${session.missing.length} ${session.missing.length === 1 ? "page has" : "pages have"} no captured layers and stay behind: ${session.missing.slice(0, 4).join(", ")}${session.missing.length > 4 ? "…" : ""}`);
+    const named = session.missing.slice(0, 4).join("、");
+    parts.push(`${session.missing.length} 个页面没有捕获到图层，不会送出：${named}${session.missing.length > 4 ? " 等" : ""}。`);
   }
   if (session.dropped?.length) {
-    parts.push(`${session.dropped.length} beyond the per-file limit were left out.`);
+    parts.push(`还有 ${session.dropped.length} 个页面超出单个文件的上限，这次没有送出。`);
   }
   if (session.substitutedFonts?.length) {
     // Not a shortfall in what arrives — every layer is sent. It changes who
     // decided where the lines fall, which is worth knowing before the result
     // is compared against the browser.
-    parts.push(`${session.substitutedFonts.join("、")} 没能在捕获时加载,这些文字的换行交给 Figma 自己排。`);
+    parts.push(`${session.substitutedFonts.join("、")} 没能在捕获时加载，这些文字的换行交给 Figma 自己排。`);
   }
   return parts.length > 0 ? parts.join(" ") : null;
 }
@@ -89,9 +90,9 @@ function PageMenu({ at, busy, onPick, onClose }: {
 
   const items: Array<{ id: PageAction; label: string; danger?: boolean }> = [
     { id: "recapture", label: "重新捕获这一页" },
-    { id: "explore", label: "从这一页再往下点一层" },
-    { id: "figma", label: "只把这一页送去 Figma" },
-    { id: "drop", label: "把这一页删掉", danger: true }
+    { id: "explore", label: "从这一页继续往下找" },
+    { id: "figma", label: "只把这一页送进 Figma" },
+    { id: "drop", label: "从清单里删掉这一页", danger: true }
   ];
 
   return (
@@ -128,7 +129,7 @@ function PageCard({ page, index, busy, onOpen, onMenu }: {
 }) {
   // Variants are the same page re-skinned — dark mode, another language — so
   // they share one card and swap the preview rather than taking a slot each.
-  const looks = [{ id: page.id, name: "Default", thumbnail: page.thumbnail }, ...(page.variants ?? [])];
+  const looks = [{ id: page.id, name: "默认", thumbnail: page.thumbnail }, ...(page.variants ?? [])];
   const [shown, setShown] = useState(0);
   const current = looks[Math.min(shown, looks.length - 1)];
 
@@ -144,7 +145,7 @@ function PageCard({ page, index, busy, onOpen, onMenu }: {
         {busy && <span className="inventory-shot-busy"><LoaderCircle className="spin" size={18} /></span>}
         {current.thumbnail
           ? <img alt="" src={current.thumbnail.dataUrl} />
-          : <span className="inventory-shot-empty">No preview</span>}
+          : <span className="inventory-shot-empty">没有预览</span>}
       </button>
       <div className="inventory-meta">
         <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
@@ -175,11 +176,11 @@ type Entry = InventoryTarget | InventoryGroup;
 const isGroup = (entry: Entry): entry is InventoryGroup => entry.kind === "group";
 
 function whenScanned(value: string | null): string {
-  if (!value) return "not scanned";
+  if (!value) return "未扫描";
   const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  return `${days}d ago`;
+  if (days <= 0) return "今天";
+  if (days === 1) return "昨天";
+  return `${days} 天前`;
 }
 
 function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }: {
@@ -202,9 +203,9 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
         <strong>{target.name}</strong>
         <small>
           {busy
-            ? "scanning…"
+            ? "扫描中…"
             : target.pageCount === null
-              ? "not scanned"
+              ? "未扫描"
               : `${target.pageCount} ${target.pageCount === 1 ? "page" : "pages"} · ${whenScanned(target.lastScannedAt)}`}
         </small>
       </span>
@@ -213,7 +214,7 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
           className="icon-button"
           onClick={(event) => { event.stopPropagation(); onRescan(target); }}
           role="button"
-          title="Rescan"
+          title="重新扫描"
         >
           <RefreshCw size={13} />
         </span>
@@ -221,7 +222,7 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
           className="icon-button"
           onClick={(event) => { event.stopPropagation(); onForget(target); }}
           role="button"
-          title="Remove"
+          title="移出列表"
         >
           <X size={13} />
         </span>
@@ -246,18 +247,18 @@ function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd
       <div className="sidebar-drag drag-region" />
       <div className="brand-row">
         <div aria-hidden="true" className="brand-mark"><img alt="" src="./app-icon.png" /></div>
-        <span>UI Sync</span>
+        <span>Crank</span>
       </div>
 
       <div className="sidebar-section-header">
-        <span>Projects</span>
-        <button aria-label="Add project" className="icon-button" onClick={onAdd} title="Add project" type="button">
+        <span>项目</span>
+        <button aria-label="添加项目" className="icon-button" onClick={onAdd} title="添加项目" type="button">
           <Plus size={15} />
         </button>
       </div>
 
       <div className="project-list">
-        {entries.length === 0 && <p className="target-empty">Nothing scanned yet.</p>}
+        {entries.length === 0 && <p className="target-empty">还没有扫描过任何项目</p>}
         {entries.map((entry) => (isGroup(entry) ? (
           <div key={entry.id}>
             <button
@@ -295,7 +296,7 @@ function Sidebar({ entries, activeId, busyIds, onOpen, onRescan, onForget, onAdd
 
 function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => void }) {
   const looks = [
-    { id: page.id, name: "Default", snapshot: page.snapshot, thumbnail: page.thumbnail },
+    { id: page.id, name: "默认", snapshot: page.snapshot, thumbnail: page.thumbnail },
     ...(page.variants ?? [])
   ];
   const [shown, setShown] = useState(0);
@@ -321,7 +322,7 @@ function PageOverlay({ page, onClose }: { page: DiscoveredPage; onClose: () => v
               ))}
             </span>
           )}
-          <button onClick={onClose} type="button">Close</button>
+          <button onClick={onClose} type="button">关闭</button>
         </figcaption>
         {current.snapshot?.html
           ? (
@@ -360,7 +361,7 @@ export default function PageInventoryView() {
   const [focused, setFocused] = useState<DiscoveredPage | null>(null);
   const [showFiltered, setShowFiltered] = useState(false);
 
-  const [title, setTitle] = useState("Design handoff");
+  const [title, setTitle] = useState("设计交接");
   const [source, setSource] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showAddress, setShowAddress] = useState(false);
@@ -473,7 +474,7 @@ export default function PageInventoryView() {
       if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
       finishScan(inventory);
     } catch (cause) {
-      notify("error", cause instanceof Error ? cause.message : "The scan failed.");
+      notify("error", cause instanceof Error ? cause.message : "扫描失败。");
     }
   };
 
@@ -487,18 +488,18 @@ export default function PageInventoryView() {
       if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
       finishScan(inventory);
     } catch (cause) {
-      notify("error", cause instanceof Error ? cause.message : "The scan failed.");
+      notify("error", cause instanceof Error ? cause.message : "扫描失败。");
     }
   };
 
   const scanAttached = async () => {
     if (!window.uiSync?.scanAttached) {
-      notify("error", "重启 UI Sync 才能用这个——窗口是新的,主进程还是启动时那份。");
+      notify("error", "重启 Crank 后可用。这个功能是这次更新加的，正在运行的这份还没有它。");
       return;
     }
     const number = Number(port);
     if (!Number.isInteger(number) || number < 1 || number > 65535) {
-      notify("error", "端口填个数字就行,比如 9222。");
+      notify("error", "调试端口填数字，例如 9222。");
       return;
     }
     beginScan(`debug:${number}`);
@@ -507,16 +508,16 @@ export default function PageInventoryView() {
       if ((inventory as { id?: string }).id) setActiveId((inventory as { id?: string }).id!);
       finishScan(inventory);
     } catch (cause) {
-      notify("error", cause instanceof Error ? cause.message : "连不上那个端口。");
+      notify("error", cause instanceof Error ? cause.message : "连不上这个端口。确认应用带 --remote-debugging-port 启动了。");
     }
   };
 
   const startRecording = async () => {
     if (!window.uiSync?.startRecording) return;
     const target = address.trim() || (result?.ok ? result.origin : "");
-    if (!target) { notify("error", "Enter the address to record from."); return; }
+    if (!target) { notify("error", "先填上要记录的地址。"); return; }
         const outcome = await window.uiSync.startRecording(target);
-    if (!outcome.ok) { notify("error", outcome.message ?? "Recording could not start."); return; }
+    if (!outcome.ok) { notify("error", outcome.message ?? "没能开始记录。"); return; }
     setRecording([]);
   };
 
@@ -546,7 +547,7 @@ export default function PageInventoryView() {
         { origin: result.origin, source: result.source, pages: only ?? result.pages },
         figmaUrl.trim()
       );
-      if (!outcome.ok || !outcome.pairingCode) { notify("error", outcome.message ?? "The export could not be prepared."); return; }
+      if (!outcome.ok || !outcome.pairingCode) { notify("error", outcome.message ?? "没能准备这次导出。"); return; }
       setFigmaStatus({ state: "waiting" });
       setFigmaSession({
         pairingCode: outcome.pairingCode,
@@ -559,7 +560,7 @@ export default function PageInventoryView() {
         dropped: outcome.dropped
       });
     } catch (cause) {
-      notify("error", cause instanceof Error ? cause.message : "The export failed.");
+      notify("error", cause instanceof Error ? cause.message : "没能送进 Figma。");
     }
   };
 
@@ -577,7 +578,7 @@ export default function PageInventoryView() {
         setFigmaStatus(status);
         if (["complete", "error", "expired"].includes(status.state)) return;
       } catch (cause) {
-        if (!cancelled) setFigmaStatus({ state: "error", message: cause instanceof Error ? cause.message : "Could not read the sync status" });
+        if (!cancelled) setFigmaStatus({ state: "error", message: cause instanceof Error ? cause.message : "读不到这次同步的状态。" });
         return;
       }
       timer = window.setTimeout(() => void check(), 1000);
@@ -599,12 +600,12 @@ export default function PageInventoryView() {
    */
   const bridge = <K extends "recapturePage" | "explorePage" | "dropPage">(method: K) => {
     if (!window.uiSync) {
-      notify("error", "这个动作要在 UI Sync 应用里才能用。");
+      notify("error", "这个动作要在 Crank 应用里才能用。");
       return null;
     }
     const call = window.uiSync[method];
     if (!call) {
-      notify("error", "重启 UI Sync 才能用这个——窗口是新的,主进程还是启动时那份。");
+      notify("error", "重启 Crank 后可用。这个功能是这次更新加的，正在运行的这份还没有它。");
       return null;
     }
     return call;
@@ -622,7 +623,7 @@ export default function PageInventoryView() {
     const where = sourceOf();
     const call = bridge("recapturePage");
     if (!call) return;
-    if (!where) { notify("error", "这一页不知道属于哪个项目,重新扫描一次就好。"); return; }
+    if (!where) { notify("error", "这一页还不知道属于哪个项目。重新扫描一次即可。"); return; }
     setBusyPage(page.id);
     try {
       const outcome = await call(where, page);
@@ -647,23 +648,23 @@ export default function PageInventoryView() {
     const where = sourceOf();
     const call = bridge("explorePage");
     if (!call) return;
-    if (!where || !result?.ok) { notify("error", "这一页不知道属于哪个项目,重新扫描一次就好。"); return; }
+    if (!where || !result?.ok) { notify("error", "这一页还不知道属于哪个项目。重新扫描一次即可。"); return; }
     setBusyPage(page.id);
     try {
       const held = result.pages.map((entry) => ({ id: entry.id, route: entry.route, url: entry.url }));
       const outcome = await call(where, page, held);
       if (!outcome.ok) {
-        notify("error", outcome.message ?? "这一页往下没走通。");
+        notify("error", outcome.message ?? "从这一页往下没走通。");
         return;
       }
       const found = outcome.pages ?? [];
       if (found.length === 0) {
-        // "Nothing found" and "nothing on this page responds" look the same
+        // "没有找到内容" and "nothing on this page responds" look the same
         // from outside, and only the second is worth acting on.
         const dead = outcome.inert?.length ?? 0;
         notify("done", dead > 0
-          ? `「${page.name}」上的 ${dead} 个控件点了都没反应,往下走不通。`
-          : `「${page.name}」后面没有再找到新页面。`);
+          ? `「${page.name}」上的 ${dead} 个控件都没有反应，这条路走不下去。`
+          : `「${page.name}」后面没有别的页面了。`);
         return;
       }
       setResult((current) => {
@@ -671,9 +672,9 @@ export default function PageInventoryView() {
         const seen = new Set(current.pages.map((entry) => entry.id));
         return { ...current, pages: [...current.pages, ...found.filter((entry) => !seen.has(entry.id))] };
       });
-      notify("done", `从「${page.name}」又找到 ${found.length} 个页面。`);
+      notify("done", `从「${page.name}」往下又找到 ${found.length} 个页面。`);
     } catch (cause) {
-      notify("error", cause instanceof Error ? cause.message : "这一页往下没走通。");
+      notify("error", cause instanceof Error ? cause.message : "从这一页往下没走通。");
     } finally {
       setBusyPage(null);
     }
@@ -684,7 +685,7 @@ export default function PageInventoryView() {
     if (!figmaUrl.trim()) {
       // Nowhere to send it yet. Open the field rather than refusing.
       setFigmaOpen(true);
-      notify("error", "先填上要送进去的 Figma 地址。");
+      notify("error", "先填上要送进去的 Figma 文件地址。");
       return;
     }
     await sendToFigma([page]);
@@ -694,13 +695,13 @@ export default function PageInventoryView() {
     const where = sourceOf();
     const call = bridge("dropPage");
     if (!call) return;
-    if (!where) { notify("error", "这一页不知道属于哪个项目,重新扫描一次就好。"); return; }
+    if (!where) { notify("error", "这一页还不知道属于哪个项目。重新扫描一次即可。"); return; }
     await call(where, page.id);
     setResult((current) => (current?.ok
       ? { ...current, pages: current.pages.filter((entry) => entry.id !== page.id) }
       : current));
     setFocused((current) => (current?.id === page.id ? null : current));
-    notify("done", `「${page.name}」已删掉,以后扫描也不会再出现。`);
+    notify("done", `已从清单里删掉「${page.name}」，以后扫描也不会再出现。`);
   };
 
   const openSaved = async (target: InventoryTarget) => {
@@ -750,9 +751,9 @@ export default function PageInventoryView() {
         try {
       const outcome = await window.uiSync.exportHandoffPage(
         { origin: result.origin, pages: result.pages, filtered: result.filtered },
-        title.trim() || "Design handoff"
+        title.trim() || "设计交接"
       );
-      if (outcome.saved && outcome.filePath) notify("done", "Handoff page saved", outcome.filePath);
+      if (outcome.saved && outcome.filePath) notify("done", "交接页已保存", outcome.filePath);
     } catch (cause) {
       notify("error", cause instanceof Error ? cause.message : "The page could not be saved.");
     }
@@ -832,32 +833,32 @@ export default function PageInventoryView() {
         >
           <div className="onboarding-drop">
             <FolderGit2 size={26} />
-            <h1>拖入你的项目文件夹</h1>
-            <p>UI Sync 会自己判断技术栈、把项目跑起来,然后走遍每一个页面。</p>
-            <button className="primary-button" onClick={() => void chooseFolder()} type="button">选择文件夹…</button>
+            <h1>把项目文件夹拖进来</h1>
+            <p>Crank 会把它跑起来，走遍每一个页面，交给你一份可编辑的图层。</p>
+            <button className="primary-button" onClick={() => void chooseFolder()} type="button">选择文件夹</button>
           </div>
 
           <ol className="onboarding-steps">
             <li>
               <strong>识别并启动</strong>
-              <span>npm / pnpm 项目读它自己的 dev 脚本;Electron 只起界面不弹窗口;Python、Ruby 这类读它 Dockerfile、Procfile 或 README 里写好的命令。</span>
+              <span>npm 和 pnpm 项目读它自己的 dev 脚本。Electron 只启动界面，不会弹出窗口。Python、Ruby 这类项目读 Dockerfile、Procfile 或 README 里已经写好的命令。</span>
             </li>
             <li>
               <strong>走遍每个页面</strong>
-              <span>路由、tab、弹层都算一个页面。深色模式和切换语言不算新页面,会并进同一页的不同外观。</span>
+              <span>路由、标签页、弹层各算一个页面。深色模式和切换语言不算新页面，会并进同一页的不同外观。</span>
             </li>
             <li>
               <strong>拿走结果</strong>
-              <span>导出一份自带图片的 HTML 交接页,或直接把图层送进 Figma。</span>
+              <span>导出一份自带图片的 HTML 交接页，或者把图层直接送进 Figma。</span>
             </li>
           </ol>
 
           <div className="onboarding-alt">
             <button className="inventory-link" onClick={() => void startRecording()} type="button">
-              需要登录或填表单才能到达的页面?自己点一遍,我来记录
+              有些页面要登录或填表单才能到达？你点一遍，我来记录
             </button>
             <button className="inventory-link" onClick={() => setShowAddress((value) => !value)} type="button">
-              {showAddress ? "收起" : "项目已经跑起来了?直接扫一个地址"}
+              {showAddress ? "收起" : "项目已经跑起来了？直接扫它的地址"}
             </button>
             {showAddress && (
               <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scan(); }}>
@@ -868,25 +869,26 @@ export default function PageInventoryView() {
                   value={address}
                 />
                 <input
-                  aria-label="Extra addresses"
+                  aria-label="额外路径"
                   onChange={(event) => setSeeds(event.target.value)}
-                  placeholder="额外路径,可选 — /?view=settings"
+                  placeholder="额外路径，可选，例如 /?view=settings"
                   value={seeds}
                 />
-                <button disabled={!address.trim()} type="submit">扫描</button>
+                <button disabled={!address.trim()} type="submit">开始扫描</button>
               </form>
             )}
             <button className="inventory-link" onClick={() => setShowAttach((value) => !value)} type="button">
-              {showAttach ? "收起" : "界面里的内容要登录、要真实数据?连上你正在跑的那个应用"}
+              {showAttach ? "收起" : "界面里空空的，数据在别处？连上你正在运行的那个应用"}
             </button>
             {showAttach && (
               <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scanAttached(); }}>
                 <p className="inventory-note">
-                  单独把界面跑起来只能拿到空壳——数据在你正在运行的那个进程里。带调试端口启动它,UI Sync 连过去扫那一个窗口,不另开应用:
+                  单独启动界面只能拿到空壳,数据在你正在运行的那个进程里。照常启动应用并加一个调试端口,
+                  Crank 会连过去扫那一个真实窗口,不另开应用。
                   <code>npx electron . --remote-debugging-port=9222</code>
                 </p>
                 <input
-                  aria-label="Debugging port"
+                  aria-label="调试端口"
                   onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
                   placeholder="9222"
                   value={port}
@@ -925,18 +927,18 @@ export default function PageInventoryView() {
 
       {recording && (
         <section className="inventory-recording">
-          <strong>Recording — use the app in the other window</strong>
+          <strong>正在记录——请在另一个窗口里操作你的应用</strong>
           <p>
-            Every page you land on is captured. Log in, fill forms, open the screens that matter;
-            nothing is blocked while recording.
+            你到达的每一个页面都会被记录下来。登录、填表单、打开你在意的那些界面都可以，
+            记录期间不拦截任何操作。
           </p>
           <div className="inventory-recorded">
             {recording.length === 0
-              ? <span>No pages captured yet.</span>
+              ? <span>还没有记录到页面</span>
               : recording.map((page) => <span key={page.id}>{page.name}</span>)}
           </div>
           <button className="inventory-export" onClick={() => void stopRecording()} type="button">
-            Finish — keep {recording.length} page{recording.length === 1 ? "" : "s"}
+            结束记录，保留 {recording.length} 个页面
           </button>
         </section>
       )}
@@ -951,27 +953,27 @@ export default function PageInventoryView() {
                 <Globe2 size={13} />
                 <span>{result.origin}</span>
                 <span className="header-sep">·</span>
-                <span>{pages.length} {pages.length === 1 ? "page" : "pages"}</span>
-                {result.sources.sitemap > 0 && <span className="header-sep">· {result.sources.sitemap} from sitemap</span>}
-                {result.sources.crawled > 0 && <span className="header-sep">· {result.sources.crawled} crawled</span>}
-                {reskins > 0 && <span className="header-sep">· {reskins} {reskins === 1 ? "re-skin" : "re-skins"} grouped</span>}
+                <span>{pages.length} 个页面</span>
+                {result.sources.sitemap > 0 && <span className="header-sep">· {result.sources.sitemap} 个来自 sitemap</span>}
+                {result.sources.crawled > 0 && <span className="header-sep">· {result.sources.crawled} 个靠点击找到</span>}
+                {reskins > 0 && <span className="header-sep">· {reskins} 个外观已并入所属页面</span>}
               </div>
             </div>
             <div className="project-header-actions">
               <button
-                aria-label="Rescan"
+                aria-label="重新扫描"
                 className="secondary-button project-refresh-button"
                 onClick={() => { if (source) source.startsWith("http") ? void scan(source) : void scanFolder(source); }}
-                title="Rescan"
+                title="重新扫描"
                 type="button"
               >
                 <RefreshCw size={14} />
               </button>
               <button className="secondary-button" onClick={() => void exportPage()} type="button">
-                <Download size={14} /> Save handoff page
+                <Download size={14} /> 保存交接页
               </button>
               <button className="secondary-button" onClick={() => setFigmaOpen((value) => !value)} type="button">
-                <Figma size={14} /> Send to Figma
+                <Figma size={14} /> 送进 Figma
               </button>
             </div>
           </header>
@@ -979,12 +981,12 @@ export default function PageInventoryView() {
           {stalled && (
             <section className="inventory-stalled">
               <p>
-                <strong>只找到这一页，因为页面上的每个控件点下去都没有任何反应。</strong>
-                {" "}扫到的这一页是真的，但这个应用的其余部分不在这里。
+                <strong>只扫到一页：界面在跑，但数据不在。</strong>
+                {" "}这一页是真的，其余部分没有出现，因为这一页上的控件点下去都没有反应。
               </p>
               <p className="inventory-note">
-                界面被单独跑了起来,而它依赖的运行时不在——Electron 项目只起渲染进程时拿不到 preload,
-                前端拿不到后端接口时也一样。数据在你正在运行的那个进程里,不在这份界面里。
+                Crank 单独启动了界面，但它依赖的进程没有跟着跑：Electron 拿不到 preload，前端拿不到后端接口。
+                项目列表、账号、数据都在你正在运行的那个进程里，所以这份界面每一屏都是空的。
               </p>
               {/* The way out has to be reachable from where the problem is
                   stated. Recording is not it: it opens a window of UI Sync's
@@ -992,16 +994,17 @@ export default function PageInventoryView() {
                   a bridge is just as empty there however much you click. */}
               <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scanAttached(); }}>
                 <p className="inventory-note">
-                  把应用照常跑起来,加一个调试端口,UI Sync 连过去扫那一个真实窗口——不另开应用,也不动你的代码:
+                  让 Crank 连上你已经开着的那个应用，扫它的真实窗口。照常启动，加一个调试端口就行。
+                  Crank 只读不写，不会另开应用，也不改你的代码。
                   <code>npx electron . --remote-debugging-port=9222</code>
                 </p>
                 <input
-                  aria-label="Debugging port"
+                  aria-label="调试端口"
                   onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
                   placeholder="9222"
                   value={port}
                 />
-                <button disabled={!port.trim()} type="submit">连上去重扫</button>
+                <button disabled={!port.trim()} type="submit">连接并重新扫描</button>
               </form>
               <ul>
                 {result.inert!.map((entry, index) => (
@@ -1014,27 +1017,27 @@ export default function PageInventoryView() {
           {figmaOpen && (
             <div className="inventory-figma-row">
               <input
-                aria-label="Figma design URL"
+                aria-label="Figma 文件地址"
                 onChange={(event) => setFigmaUrl(event.target.value)}
                 onKeyDown={(event) => { if (event.key === "Enter") void sendToFigma(); }}
-                placeholder="Paste the Figma design URL to send these pages into"
+                placeholder="粘贴要送进去的 Figma 文件地址"
                 value={figmaUrl}
               />
               <button className="secondary-button" disabled={!figmaUrl.trim()} onClick={() => void sendToFigma()} type="button">
-                Send {pages.length} pages
+                送进 {pages.length} 个页面
               </button>
             </div>
           )}
 
           <div className="inventory-toolbar">
             <span className="view-switch">
-              {([["gallery", "Gallery"], ["compact", "Compact"], ["list", "List"]] as const).map(([id, label]) => (
+              {([["gallery", "大图"], ["compact", "紧凑"], ["list", "列表"]] as const).map(([id, label]) => (
                 <button aria-pressed={view === id} key={id} onClick={() => setView(id)} type="button">{label}</button>
               ))}
             </span>
             {leftOut > 0 && (
               <button className="inventory-link" onClick={() => setShowFiltered((value) => !value)} type="button">
-                {showFiltered ? "Hide" : "Show"} {leftOut} left out
+                {showFiltered ? "收起" : "查看"}没有收进来的 {leftOut} 项
               </button>
             )}
           </div>
@@ -1043,7 +1046,7 @@ export default function PageInventoryView() {
             <section className="inventory-filtered">
               {result.filtered.length > 0 && (
                 <>
-                  <p>Left out for changing too little of the screen to be a page:</p>
+                  <p>改动太小，没有算作一个页面：</p>
                   <ul>
                     {result.filtered.map((item, index) => (
                       <li key={`${item.label}-${index}`}>
@@ -1059,7 +1062,7 @@ export default function PageInventoryView() {
                   be a page, these did not change the page at all. */}
               {!stalled && (result.inert?.length ?? 0) > 0 && (
                 <>
-                  <p>点下去没有任何反应,页面保持原样:</p>
+                  <p>点下去没有反应，页面没有变化：</p>
                   <ul>
                     {result.inert!.map((item, index) => (
                       <li key={`inert-${item.label}-${index}`}>
@@ -1072,7 +1075,7 @@ export default function PageInventoryView() {
               )}
               {result.skipped.length > 0 && (
                 <p className="inventory-note">
-                  Never clicked, the label reads as destructive: {result.skipped.map((item) => `「${item.label}」`).join(" ")}
+                  没有点击，因为这些按钮看起来会造成破坏：{result.skipped.map((item) => `「${item.label}」`).join(" ")}
                 </p>
               )}
             </section>
@@ -1093,7 +1096,7 @@ export default function PageInventoryView() {
                     <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
                     <span className="inventory-row-name">{page.name}</span>
                     {(page.variants?.length ?? 0) > 0 && (
-                      <span className="inventory-row-variants">{page.variants.length} looks</span>
+                      <span className="inventory-row-variants">{page.variants.length} 种外观</span>
                     )}
                     <code>{addressOf(page)}</code>
                     {busyPage === page.id && <LoaderCircle className="spin" size={13} />}
@@ -1158,10 +1161,10 @@ export default function PageInventoryView() {
               <span>{toast.text}</span>
               {toast.path && (
                 <button onClick={() => void window.uiSync?.revealFile?.(toast.path!)} type="button">
-                  Show in Finder
+                  在访达中显示
                 </button>
               )}
-              <button aria-label="Dismiss" className="toast-close" onClick={() => dismiss(toast.id)} type="button">
+              <button aria-label="关闭" className="toast-close" onClick={() => dismiss(toast.id)} type="button">
                 <X size={13} />
               </button>
             </div>

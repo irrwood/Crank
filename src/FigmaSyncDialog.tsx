@@ -40,24 +40,30 @@ export function FigmaSyncDialog({
     <div className="modal-backdrop" role="presentation">
       <section className="figma-link-dialog automatic-mapping-dialog" role="dialog" aria-modal="true" aria-labelledby="automatic-mapping-title">
         <div className="dialog-icon"><Sparkles size={18} /></div>
-        <button type="button" className="icon-button dialog-close" aria-label="Close" onClick={onClose}>
+        <button type="button" className="icon-button dialog-close" aria-label="关闭" onClick={onClose}>
           <X size={16} />
         </button>
         <div className="dialog-copy">
-          <span>Figma sync</span>
+          <span>FIGMA 同步</span>
           <h2 id="automatic-mapping-title">
-            {isComplete ? (isPull ? "Figma changes read" : "Sync complete") : isRunning ? (isPull ? "Reading Figma…" : "Syncing to Figma…") : hasFailed ? "Sync could not finish" : session.requiresPairing ? "Connect Figma once" : "Open UI Sync Bridge"}
+            {isComplete
+              ? isPull ? "已读取 Figma 的改动" : "已送进 Figma"
+              : isRunning
+                ? isPull ? "正在读取 Figma…" : "正在送进 Figma…"
+                : hasFailed
+                  ? "这次同步没有完成"
+                  : session.requiresPairing ? "第一次使用，先连接 Figma" : "在 Figma 里打开 Crank 插件"}
           </h2>
           <p>
             {isComplete
-              ? isPull ? "The three-way diff is ready for review. No local files have changed yet." : "Your pages and their Figma frame identities are up to date."
+              ? isPull ? "对比结果已经准备好，可以查看。本地文件还没有任何改动。" : "页面已经送到，每一页都记住了自己对应的画框。"
               : isRunning
-                ? isPull ? "Keep Figma open while UI Sync reads only the remembered editable layers." : "Keep Figma open while UI Sync updates the linked pages."
+                ? isPull ? "保持 Figma 打开。Crank 只读取它记住的那些可编辑图层。" : "保持 Figma 打开，Crank 正在更新已关联的页面。"
                 : hasFailed
-                  ? "Nothing was changed. Open the Figma plugin, then try again."
+                  ? "什么都没有改动。在 Figma 里打开 Crank 插件，然后重试。"
                   : session.requiresPairing
-                ? "Enter this code once. Every project on this Mac will use the same remembered connection."
-                : `UI Sync is ready. Open the plugin in ${fileName} to start syncing.`}
+                    ? "输入一次这个配对码即可。这台 Mac 上的所有项目之后都会记住这个连接。"
+                    : `在 ${fileName} 里打开 Crank 插件，就会开始。`}
           </p>
           {note && <p className="dialog-note">{note}</p>}
         </div>
@@ -66,26 +72,26 @@ export function FigmaSyncDialog({
           <>
             {session.requiresPairing ? (
               <div className="pairing-code-block">
-                <span>One-time code</span>
+                <span>一次性配对码</span>
                 <strong>{session.pairingCode.slice(0, 3)} {session.pairingCode.slice(3)}</strong>
-                <button type="button" className="icon-button" aria-label="Copy pairing code" title="Copy pairing code" onClick={onCopyCode}>
+                <button type="button" className="icon-button" aria-label="复制配对码" title="复制配对码" onClick={onCopyCode}>
                   <Copy size={15} />
                 </button>
               </div>
             ) : (
               <div className={`connection-prompt ${isRunning ? "is-running" : ""}`}>
                 {isRunning ? <LoaderCircle className="spin" size={18} /> : <Figma size={18} />}
-                <div><strong>{isRunning ? (isPull ? "Reading mapped layers" : "Syncing pages") : "Waiting for the Figma plugin"}</strong><span>{isRunning ? `${session.screenCount} pages are being ${isPull ? "compared" : "updated"}` : "No code needed — the device connection is remembered"}</span></div>
+                <div><strong>{isRunning ? (isPull ? "正在读取已关联的图层" : "正在送出页面") : "等待 Figma 插件"}</strong><span>{isRunning ? `${session.screenCount} 个页面${isPull ? "正在比对" : "正在更新"}` : "不需要配对码，这台设备的连接已经记住了"}</span></div>
               </div>
             )}
             <div className="connection-shortcuts">
-              <button type="button" className="primary-button" onClick={onOpenFigma}><ExternalLink size={14} /> Open Figma</button>
-              <button type="button" className="secondary-button" onClick={onShowPlugin}><Figma size={14} /> Find plugin</button>
+              <button type="button" className="primary-button" onClick={onOpenFigma}><ExternalLink size={14} /> 打开 Figma</button>
+              <button type="button" className="secondary-button" onClick={onShowPlugin}><Figma size={14} /> 找到插件</button>
             </div>
             {!session.requiresPairing && !isRunning && (
               <details className="pairing-fallback">
-                <summary>Plugin does not reconnect?</summary>
-                <div><span>Enter fallback code</span><strong>{session.pairingCode.slice(0, 3)} {session.pairingCode.slice(3)}</strong><button type="button" className="icon-button" onClick={onCopyCode} aria-label="Copy fallback code"><Copy size={14} /></button></div>
+                <summary>插件没有自动连上？</summary>
+                <div><span>手动输入配对码</span><strong>{session.pairingCode.slice(0, 3)} {session.pairingCode.slice(3)}</strong><button type="button" className="icon-button" onClick={onCopyCode} aria-label="复制配对码"><Copy size={14} /></button></div>
               </details>
             )}
           </>
@@ -94,29 +100,29 @@ export function FigmaSyncDialog({
         {isComplete && (
           <div className="automatic-result">
             <Check size={18} />
-            <div><strong>{status.renderedCount ?? 0} screens {isPull ? "read" : "rendered"}</strong><span>{isPull ? "Ready for local review" : `${status.createdCount ?? 0} frames created · ${status.reusedCount ?? 0} mappings restored`}</span></div>
+            <div><strong>{isPull ? `已读取 ${status.renderedCount ?? 0} 个页面` : `已送出 ${status.renderedCount ?? 0} 个页面`}</strong><span>{isPull ? "可以在本地查看对比结果" : `新建画框 ${status.createdCount ?? 0} 个 · 复用已有画框 ${status.reusedCount ?? 0} 个`}</span></div>
           </div>
         )}
 
         {isComplete && (status.substitutedFonts?.length ?? 0) > 0 && (
           <p className="dialog-note">
-            Figma 没有 {status.substitutedFonts!.join("、")}，这些文字用了它有的最接近的字体。
+            Figma 里没有 {status.substitutedFonts!.join("、")}，这些文字用了最接近的替代字体。
           </p>
         )}
 
         {hasFailed && (
           <div className="automatic-error">
             <AlertCircle size={17} />
-            <p><strong>{status.state === "expired" ? "Pairing code expired" : "Frames were not linked"}</strong><span>{status.message ?? "Create a new pairing code and try again."}</span></p>
+            <p><strong>{status.state === "expired" ? "配对码已过期" : "画框没有关联成功"}</strong><span>{status.message ?? "重新生成一个配对码再试一次。"}</span></p>
           </div>
         )}
 
         <div className="dialog-actions">
           {hasFailed ? (
-            <button type="button" className="primary-button" onClick={onRestart}><RefreshCw size={14} /> Try again</button>
+            <button type="button" className="primary-button" onClick={onRestart}><RefreshCw size={14} /> 重试</button>
           ) : (
             <button type="button" className={isComplete ? "primary-button" : "secondary-button"} onClick={onClose}>
-              {isComplete ? "Done" : "Close"}
+              {isComplete ? "完成" : "关闭"}
             </button>
           )}
         </div>

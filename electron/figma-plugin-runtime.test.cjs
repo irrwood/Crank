@@ -584,7 +584,7 @@ test("Figma bridge overlays only text captured from the running app", async () =
   await figma.ui.onmessage({ type: "connect", pairingCode: "123456" });
 
   const screen = page.children.find((node) => node.name === "Rendered Screen");
-  const rendered = screen.children.find((node) => node.name === "UI Sync · SwiftUI PDF + Captured Runtime Text");
+  const rendered = screen.children.find((node) => node.name === "Crank · SwiftUI PDF + Captured Runtime Text");
   assert.ok(rendered, `screen children: ${screen.children.map((node) => node.name).join(", ")}`);
   assert.equal(rendered.children.length, 2);
   assert.equal(rendered.children[0].name, "Rendered Vector · SwiftUI");
@@ -625,7 +625,7 @@ test("Figma bridge preserves PDF glyphs without duplicating source-derived text"
   vm.runInNewContext(source, { figma, fetch, __html__: "", console, Error, Map, Set, Promise, String, Math });
   await figma.ui.onmessage({ type: "connect", pairingCode: "123456" });
   const screen = page.children.find((node) => node.name === "PDF Screen");
-  const rendered = screen.children.find((node) => node.name === "UI Sync · Rendered SwiftUI PDF");
+  const rendered = screen.children.find((node) => node.name === "Crank · Rendered SwiftUI PDF");
   assert.ok(rendered);
   assert.equal(rendered.children.length, 1);
   assert.equal(rendered.findAll((node) => node.type === "TEXT" && node.characters === "Do not duplicate").length, 0);
@@ -652,7 +652,7 @@ test("Figma bridge imports a PDF vector even when Swift runtime root matching is
   const screen = page.children.find((node) => node.name === "Food Truck PDF");
   assert.equal(screen.width, 402);
   assert.equal(screen.height, 874);
-  const rendered = screen.children.find((node) => node.name === "UI Sync · Rendered SwiftUI PDF");
+  const rendered = screen.children.find((node) => node.name === "Crank · Rendered SwiftUI PDF");
   assert.ok(rendered, `screen children: ${screen.children.map((node) => node.name).join(", ")}`);
   assert.equal(rendered.children[0].name, "Rendered Vector · SwiftUI");
   assert.match(rendered.children[0].sourceSvg, /fill="#7bb5e7"/);
@@ -685,7 +685,7 @@ test("Figma bridge creates editable text nodes from complete PDF text geometry",
   vm.runInNewContext(source, { figma, fetch, __html__: "", console, Error, Map, Set, Promise, String, Math });
   await figma.ui.onmessage({ type: "connect", pairingCode: "123456" });
   const screen = page.children.find((node) => node.name === "Editable PDF Screen");
-  const rendered = screen.children.find((node) => node.name === "UI Sync · SwiftUI PDF + Editable Text");
+  const rendered = screen.children.find((node) => node.name === "Crank · SwiftUI PDF + Editable Text");
   assert.ok(rendered, `screen children: ${screen.children.map((node) => node.name).join(", ")}`);
   const title = rendered.findAll((node) => node.type === "TEXT" && node.characters === "脑子里在想什么？")[0];
   assert.ok(title);
@@ -1023,7 +1023,7 @@ test("Figma bridge rebuilds rendered DOM as editable Figma layers", async () => 
   assert.equal(completion.mappings[0].contentDisposition, "rendered");
   const screen = page.children.find((node) => node.name === "Connections");
   assert.equal(screen.width, 1220);
-  assert.equal(screen.children[0].name, "UI Sync · Editable DOM");
+  assert.equal(screen.children[0].name, "Crank · Editable DOM");
   const importedTitle = screen.findAll((node) => node.type === "TEXT").find((node) => node.characters === "Application pages");
   assert.ok(importedTitle);
   assert.deepEqual(importedTitle.fontName, { family: "Inter", style: "Bold" });
@@ -1070,7 +1070,7 @@ test("Figma bridge rebuilds rendered DOM as editable Figma layers", async () => 
   assert.ok(!messages.some((message) => message.type === "error"), "a missing font is not a failure");
   const substituted = page.children.find((node) => node.name === "Missing Font");
   assert.ok(substituted, "the frame is created");
-  assert.equal(substituted.children[0].name, "UI Sync · Editable DOM", "and it is not left empty");
+  assert.equal(substituted.children[0].name, "Crank · Editable DOM", "and it is not left empty");
   assert.ok(substituted.findAll((node) => node.name === "Link icon").length > 0, "the vector on it survives the missing font");
   const swapped = substituted.findAll((node) => node.type === "TEXT").find((node) => node.characters === "Application pages");
   assert.notEqual(swapped.fontName.family, "Unavailable Sans", "the run uses something Figma actually has");

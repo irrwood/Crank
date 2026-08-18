@@ -145,12 +145,12 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
  * open its own window.
  */
 async function scanSelf({ appRoot, onStatus, ...options } = {}) {
-  onStatus?.({ phase: "starting", detail: "Opening UI Sync's own interface" });
+  onStatus?.({ phase: "starting", detail: "Opening Crank's own interface" });
   const { createSelfScanSession } = require("./self-scan-session.cjs");
   const { origin, session } = await createSelfScanSession({ appRoot });
   const result = await runScan(session, origin, "/", { ...options, onStatus });
   return result.ok
-    ? { ...result, servedBy: "UI Sync itself, through a bridge that only reads", attached: false }
+    ? { ...result, servedBy: "Crank itself, through a bridge that only reads", attached: false }
     : result;
 }
 

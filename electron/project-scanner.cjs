@@ -635,9 +635,13 @@ async function scanJavascriptProject(root) {
   if (hasElectron) framework = `Electron + ${framework}`;
   if (dependencies.tailwindcss || dependencies["@tailwindcss/vite"]) framework += " + Tailwind";
 
-  const isUiSync = manifest.name === "ui-sync-desktop" || productName === "UI Sync";
+  // Both names are checked: a project scanned before the rename still says the
+  // old one, and recognising itself is what keeps a scan from treating this
+  // repository as an ordinary web app.
+  const isSelf = ["crank-desktop", "ui-sync-desktop"].includes(manifest.name)
+    || ["Crank", "UI Sync"].includes(productName);
   const rendererEntry = await findRendererEntry(root);
-  const screens = isUiSync
+  const screens = isSelf
     ? [createJavascriptScreen(root, "Project", "connections")]
     : extractJavascriptPages(root, sourceByFile, dependencies, rendererEntry);
 

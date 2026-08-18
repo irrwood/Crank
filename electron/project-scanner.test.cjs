@@ -33,12 +33,12 @@ test("discovers SwiftUI project screens and semantic features", async () => {
   assert.equal(result.screens[2].sourceType, "component");
 });
 
-test("recognizes UI Sync itself as Electron and ignores nested Swift fixtures", async () => {
+test("recognizes this repository itself as Electron and ignores nested Swift fixtures", async () => {
   const root = path.resolve(__dirname, "..");
   const result = await scanJavascriptProject(root);
   assert.ok(result);
   assert.equal(result.kind, "desktop");
-  assert.equal(result.detectedName, "UI Sync");
+  assert.equal(result.detectedName, "Crank");
   assert.match(result.framework, /Electron \+ React/);
   assert.equal(result.analysisEngine, "Electron Chromium DOM capture");
   assert.deepEqual(result.screens.map((screen) => screen.name), ["Project"]);
