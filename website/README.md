@@ -4,8 +4,9 @@
 
 ## 换素材
 
-- **大图**：把应用截图存成 `hero.png`（1600×1000 左右即可，页面会自适应宽度），
-  覆盖现在的占位图。占位源文件是 `hero-placeholder.svg`，可改后重新生成。
+- **中间大图**：现在是操作演示视频（YouTube `FXM977ig0UY`）。换片只改
+  `index.html` 里 `.hero-shot iframe` 的视频 ID；想换回静态图就把 `iframe`
+  换成 `<img src="./hero.png">`，样式已经都写好了。
 - **开始使用按钮**：`https://github.com/irrwood/Crank/releases/latest`。
 - **GitHub 链接**：`https://github.com/irrwood/Crank`。
 - **品牌图标**：`icon.svg` 来自 `public/app-icon.svg`。

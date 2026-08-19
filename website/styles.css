@@ -172,7 +172,7 @@ a {
   font-size: 13px;
 }
 
-/* ---------- big screenshot ---------- */
+/* ---------- big demo video ---------- */
 
 .hero-shot {
   max-width: 1280px;
@@ -180,7 +180,8 @@ a {
   padding: 0 28px;
 }
 
-.hero-shot img {
+.hero-shot img,
+.hero-frame {
   display: block;
   width: 100%;
   height: auto;
@@ -188,6 +189,23 @@ a {
   border: 1px solid var(--line);
   box-shadow: var(--shadow-demo);
   background: var(--surface);
+}
+
+/* 播放器自己会在画面左右留一两像素黑边，把 iframe 稍微撑大再裁掉。 */
+.hero-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+
+.hero-frame iframe {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: calc(100% + 4px);
+  height: calc(100% + 4px);
+  border: 0;
+  display: block;
 }
 
 /* ---------- supports ---------- */
