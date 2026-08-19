@@ -43,8 +43,17 @@
     </section>
 
     <figure class="hero-shot">
-      <!-- 把应用截图存成 website/hero.png（同尺寸即可），这里会自动替换。 -->
-      <img src="./hero.png" alt="Crank screenshot" width="3200" height="2000" />
+      <!-- 操作演示：YouTube 视频 FXM977ig0UY，换片只改这里的 ID。
+           播放器边缘会留一两像素黑边，外层 .hero-frame 把 iframe 撑大后裁掉。 -->
+      <div class="hero-frame">
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/FXM977ig0UY?rel=0&amp;modestbranding=1"
+          title="Crank demo"
+          loading="lazy"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowfullscreen></iframe>
+      </div>
     </figure>
 
     <section class="supports" aria-labelledby="supports-title">
