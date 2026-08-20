@@ -13,6 +13,7 @@ const { readdir } = require("node:fs/promises");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 const { createAttachedSession, listTargets } = require("./cdp-session.cjs");
 const { describeAppBundle, launchAppBundle, looksLikeAppBundle, readAppIcon } = require("./app-bundle.cjs");
+const { looksLikeXcodeProject, scanSwiftUiFolder } = require("./swiftui-inventory.cjs");
 const { isAppOrigin, originOf, routeWithin } = require("./page-origin.cjs");
 
 /**
@@ -742,10 +743,15 @@ async function withProjectServer(root, { onStatus, allowWorkspaceRoot = false, .
 }
 
 async function scanFolder(root, options = {}) {
-  const { onStatus, allowWorkspaceRoot, ...forward } = options;
+  const { onStatus, allowWorkspaceRoot, swift, ...forward } = options;
   // An installed app is a folder too, and dropping one means the app, not its
   // insides: there is no dev script in there to run, only a build to open.
   if (looksLikeAppBundle(root)) return scanAppBundle(root, options);
+  // An iOS project has no address to serve and no dev script to run: it is
+  // built, launched on a Simulator, and its screens are exported there. Claimed
+  // before anything tries to serve it, or it would be turned away for having no
+  // package.json.
+  if (await looksLikeXcodeProject(root)) return scanSwiftUiFolder(root, { ...(swift ?? {}), onStatus });
   return withProjectServer(root, options, (url, served) => scanUrl(url, {
     ...forward,
     onStatus,

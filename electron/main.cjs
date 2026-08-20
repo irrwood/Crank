@@ -11,7 +11,7 @@ const { shippedPath } = require("./packaged-path.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { holdServer } = require("./held-server.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
-const { buildFigmaJob } = require("./figma-export.cjs");
+const { buildFigmaJob, projectIdFor } = require("./figma-export.cjs");
 const { createInventoryRegistry, nameFor, targetId } = require("./inventory-registry.cjs");
 const { identityOf } = require("./state-discovery.cjs");
 const { internalise, mimeFor } = require("./asset-store.cjs");
@@ -22,7 +22,8 @@ const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan
 const { createSwiftUiRuntimeServer, mergeRuntimeSnapshot, runSwiftUiDesignBuild, runtimeSnapshotSchema } = require("./swiftui-design-runtime.cjs");
 const { buildSwiftVisualPayload } = require("./swift-visual-assets.cjs");
 const { isTextCleanPdfSafe } = require("./pdf-text-clean.cjs");
-const { convertPdfToFigmaSvg } = require("./swift-pdf-vector.cjs");
+const { convertPdfToFigmaSvg, resolvePdfToCairo } = require("./swift-pdf-vector.cjs");
+const { MAX_SWIFT_PAGES, buildSwiftFigmaScreens } = require("./swift-figma-page.cjs");
 const { extractPdfTextRuns } = require("./swift-pdf-text.cjs");
 const { prepareNativeSvgShadows } = require("./svg-native-shadows.cjs");
 const { resolveCapturedSwiftVectorEffects, sourceVectorEffectSchema } = require("./swift-vector-effects.cjs");
@@ -104,6 +105,13 @@ const registrySchema = z.array(
       }).strict()
     }).strict().optional(),
     swiftRuntimeVectorMessage: z.string().min(1).max(1000).optional(),
+    // The Simulator this project was captured on, so later exports keep one
+    // device and therefore one viewport.
+    swiftSimulator: z.object({
+      udid: z.string().min(1).max(80),
+      name: z.string().min(1).max(120),
+      runtimeId: z.string().min(1).max(160).nullable().optional()
+    }).strict().optional(),
     swiftRuntimePdf: z.object({
       path: z.string().min(1).refine(path.isAbsolute),
       capturedAt: z.string().datetime(),
@@ -179,6 +187,16 @@ const handoffPageSchema = z.object({
   // Why this page has no layers, when it has none. Carried so the export can
   // say what went wrong rather than only that something did.
   layerError: z.string().max(400).nullable().optional(),
+  // An iOS page is an exported PDF page rather than a captured document. Only
+  // its identity travels: the PDF, its clean variants, and the runtime capture
+  // stay on disk, and the Figma step reads them from there.
+  vector: z.object({
+    pageId: z.string().regex(/^pdf-page-\d+$/),
+    width: z.number().finite(),
+    height: z.number().finite(),
+    renderSource: z.enum(["image-renderer", "window-fallback"]).nullable().optional(),
+    sourceName: z.string().max(200).nullable().optional()
+  }).nullable().optional(),
   // The page's own document. Held as references to stored pictures, so the
   // length is the markup itself rather than the markup plus every image in it.
   snapshot: z.object({
@@ -213,6 +231,10 @@ const handoffPageSchema = z.object({
 
 const handoffInventorySchema = z.object({
   origin: z.string().max(2000).optional(),
+  // How the pages were captured. A served project is crawled in a browser; an
+  // iOS project is built and exported on a Simulator, and reaches Figma as its
+  // rendered pages rather than as a layer tree.
+  platform: z.enum(["web", "swiftui"]).optional(),
   // What the scan is *of*, as opposed to where it was served from. A folder is
   // served on a fresh port every time, so the origin cannot name the project.
   source: z.object({
@@ -847,6 +869,107 @@ async function inspectAndRegisterProjectFolders(roots, expectedKind = null) {
   return projects;
 }
 
+/**
+ * Stores what an iOS export produced, keyed by the project folder.
+ *
+ * The scan hands the renderer pages and pictures; the PDF pages, their clean
+ * variants, and the runtime snapshot stay here, because that is what building
+ * the Figma layers reads — and none of it belongs in a renderer payload.
+ */
+async function rememberSwiftCapture(root, capture) {
+  const registry = await readRegistry();
+  const index = registry.findIndex((item) => item.root === root);
+  const entry = {
+    ...(index >= 0 ? registry[index] : { root }),
+    swiftRuntimeSnapshot: capture.snapshot,
+    swiftRuntimeScreenshot: capture.screenshot,
+    ...(capture.pdfDocument ? { swiftRuntimePdf: capture.pdfDocument } : {}),
+    ...(capture.simulator?.udid ? { swiftSimulator: capture.simulator } : {}),
+    ...(capture.vectorMessage ? { swiftRuntimeVectorMessage: capture.vectorMessage } : {})
+  };
+  delete entry.swiftRuntimeVector;
+  if (!capture.pdfDocument) delete entry.swiftRuntimePdf;
+  if (!capture.vectorMessage) delete entry.swiftRuntimeVectorMessage;
+  await writeRegistry(index >= 0
+    ? registry.map((item, at) => (at === index ? entry : item))
+    : [...registry, entry]);
+  return entry;
+}
+
+/**
+ * Builds the Figma job for the exported iOS pages of one scan.
+ *
+ * The renderer sends page identities; the export they name is read back from
+ * disk, so what is drawn is the capture UI Sync actually took rather than
+ * anything a payload could have carried or altered.
+ */
+async function buildSwiftInventoryJob(parsed, { kind, target, figmaFileName, frames }) {
+  const registry = await readRegistry();
+  const metadata = registry.find((item) => item.root === target);
+  if (!metadata?.swiftRuntimePdf) {
+    return { ok: false, message: "This iOS project has no exported pages yet. Scan it again." };
+  }
+  const wanted = new Set(parsed.pages.map((page) => page.vector?.pageId).filter(Boolean));
+  const pages = metadata.swiftRuntimePdf.pages.filter((page) => wanted.has(page.id));
+  if (pages.length === 0) {
+    return { ok: false, message: "None of these pages are in the current export. Scan the project again." };
+  }
+  if (pages.length > MAX_SWIFT_PAGES) {
+    return { ok: false, message: `This scan has ${pages.length} pages. Send them page by page — one Figma sync carries at most ${MAX_SWIFT_PAGES}.` };
+  }
+  const project = await inspectProject(target, metadata);
+  const { screens, assets, warnings } = await buildSwiftFigmaScreens({
+    root: target,
+    metadata,
+    screens: project.screens,
+    pages,
+    frames
+  });
+  return {
+    ok: true,
+    assets,
+    warnings,
+    missing: [],
+    dropped: [],
+    substitutedFonts: [],
+    job: {
+      operation: "push",
+      projectId: projectIdFor(`${kind}:${target}`),
+      projectName: String(nameFor(kind, target) || "Project").slice(0, 160),
+      figmaFileName: String(figmaFileName || "").slice(0, 240),
+      screens
+    }
+  };
+}
+
+/** What an iOS scan needs from the app: where to build, what to talk to, and
+ * which Simulator this project was last captured on. */
+async function swiftScanOptions(root) {
+  const registry = await readRegistry().catch(() => []);
+  const remembered = registry.find((item) => item.root === root);
+  return {
+    cacheDirectory: path.join(app.getPath("userData"), "design-build"),
+    runtimeServer: swiftUiRuntimeServer,
+    preferredUdid: remembered?.swiftSimulator?.udid ?? null
+  };
+}
+
+/**
+ * Keeps an iOS capture, with its pages tied back to the views they came from.
+ *
+ * The association is what lets the Figma step restore this page's own text,
+ * effects, and images rather than another page's.
+ */
+async function storeSwiftCapture(root, capture) {
+  if (capture.pdfDocument) {
+    const scanned = await scanSwiftUiProject(root, { cacheDirectory: path.join(app.getPath("userData"), "tools") }).catch(() => null);
+    if (scanned?.screens?.length) {
+      capture.pdfDocument.pages = associatePdfPagesWithScreens(capture.pdfDocument.pages, scanned.screens, capture.snapshot);
+    }
+  }
+  await rememberSwiftCapture(root, capture);
+}
+
 async function performSwiftUiDesignBuild(safeRoot) {
   if (!swiftUiRuntimeServer) throw new Error("The local SwiftUI runtime bridge is not running");
   const registry = await readRegistry();
@@ -1408,7 +1531,14 @@ function registerIpc() {
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth }) };
     const scanned = path.resolve(safeRoot) === path.resolve(app.getAppPath())
       ? await scanSelf({ appRoot: safeRoot, ...scanning })
-      : await scanFolder(safeRoot, scanning);
+      : await scanFolder(safeRoot, { ...scanning, swift: await swiftScanOptions(safeRoot) });
+    // An iOS scan carries its capture with it. The pages go to the renderer;
+    // the capture is kept here, because that is what turns a page into Figma
+    // layers later, and it is all absolute paths and runtime measurements.
+    if (scanned.ok && scanned.capture) {
+      await storeSwiftCapture(safeRoot, scanned.capture);
+      delete scanned.capture;
+    }
     // The folder is what was scanned; the port it was served on is an accident
     // of this run and must not be what the project is remembered as.
     const inventory = scanned.ok
@@ -1650,26 +1780,36 @@ function registerIpc() {
     // project each time — new baseline, new frames beside the old ones.
     const kind = parsed.source?.kind ?? (parsed.origin?.startsWith("http") ? "url" : "folder");
     const target = parsed.source?.target ?? parsed.origin ?? "";
-    const built = buildFigmaJob(parsed, {
-      identity: `${kind}:${target}`,
-      projectName: nameFor(kind, target),
-      figmaFileName: link.fileName
-    });
-    if (!built.ok) return built;
 
     // A page the plugin has already drawn is sent back to its own frame. The
     // renderer holds the scan, not what became of it, so the frames are read
     // from what the last push recorded.
     const known = (await inventoryRegistry().loadFigmaBaseline(targetId(kind, target)))?.frames ?? {};
+
+    // An iOS page reaches Figma as its exported page — the rendered PDF as
+    // vectors, with only reliably matched native layers restored on top —
+    // rather than as a captured layer tree.
+    const built = parsed.pages.some((page) => page.vector?.pageId)
+      ? await buildSwiftInventoryJob(parsed, { kind, target, figmaFileName: link.fileName, frames: known })
+      : buildFigmaJob(parsed, {
+        identity: `${kind}:${target}`,
+        projectName: nameFor(kind, target),
+        figmaFileName: link.fileName
+      });
+    if (!built.ok) return built;
+
     for (const screen of built.job.screens) {
       screen.currentNodeId = screen.currentNodeId ?? known[screen.id]?.nodeId ?? null;
     }
 
     // What is being sent becomes the baseline a later pull compares against.
     // flattenEditableDom is the same reader the original pull path uses, so
-    // both directions agree on what a node's properties are.
+    // both directions agree on what a node's properties are. An exported iOS
+    // page has no DOM to read: its baseline is the PDF it came from.
     const baselines = Object.fromEntries(
-      built.job.screens.map((screen) => [screen.id, flattenEditableDom(screen.domTree)])
+      built.job.screens
+        .filter((screen) => screen.domTree)
+        .map((screen) => [screen.id, flattenEditableDom(screen.domTree)])
     );
     const inventoryId = await inventoryRegistry().saveFigmaBaseline(kind, target, baselines, { fileKey: link.fileKey });
 
@@ -1680,7 +1820,7 @@ function registerIpc() {
         built.job,
         { root: target, inventoryId, figmaFileKey: link.fileKey, connectionToken: connection.token },
         connection.token,
-        new Map()
+        built.assets ?? new Map()
       );
     } catch (cause) {
       // A page that captured fine can still hold one value the bridge refuses,
