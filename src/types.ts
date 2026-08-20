@@ -358,6 +358,19 @@ export type DiscoveredPage = {
   layerTree: FigmaTree | null;
   /** The page's own document — the one view of it that is not an approximation. */
   snapshot: HtmlSnapshot | null;
+  /**
+   * Present when the page was exported from a running iOS app rather than
+   * captured in a browser. It names the exported PDF page; the export itself
+   * stays on disk. Such a page has no address, so it cannot be reloaded,
+   * recaptured, or walked further.
+   */
+  vector?: {
+    pageId: string;
+    width: number;
+    height: number;
+    renderSource?: "image-renderer" | "window-fallback" | null;
+    sourceName?: string | null;
+  } | null;
   /** The same page re-skinned — theme or language — not separate pages. */
   variants: PageVariant[];
 };

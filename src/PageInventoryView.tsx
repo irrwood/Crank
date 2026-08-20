@@ -15,6 +15,13 @@ import { useLocale, useT, type Translate } from "./lib/locale";
  */
 
 function addressOf(page: DiscoveredPage, t: Translate): string {
+  // An exported iOS page has no address. Saying where it came from is the
+  // useful thing to put in its place.
+  if (page.vector) {
+    return page.vector.sourceName
+      ? t("inventory.exportedFrom", { view: page.vector.sourceName })
+      : t("inventory.exportedPage");
+  }
   if (page.recipe.length === 0) return page.route;
   const steps = page.recipe.map((step) => t("inventory.recipeStep", {
     label: `${t("common.quoteOpen")}${step.label || step.locator}${t("common.quoteClose")}`
@@ -71,9 +78,11 @@ type PageAction = "recapture" | "explore" | "figma" | "drop";
  * applies to the whole project belongs on the project, not repeated on each of
  * its pages.
  */
-function PageMenu({ at, busy, onPick, onClose }: {
+function PageMenu({ at, busy, exported, onPick, onClose }: {
   at: { x: number; y: number };
   busy: boolean;
+  /** An exported iOS page: no address, so nothing that reloads one applies. */
+  exported?: boolean;
   onPick: (action: PageAction) => void;
   onClose: () => void;
 }) {
@@ -104,9 +113,14 @@ function PageMenu({ at, busy, onPick, onClose }: {
     };
   }, [onClose]);
 
+  // Recapturing and exploring both mean loading an address in a browser, which
+  // an exported iOS page does not have. They are left out rather than offered
+  // and then refused.
   const items: Array<{ id: PageAction; label: string; danger?: boolean }> = [
-    { id: "recapture", label: t("inventory.menuRecapture") },
-    { id: "explore", label: t("inventory.menuExplore") },
+    ...(exported ? [] : [
+      { id: "recapture" as const, label: t("inventory.menuRecapture") },
+      { id: "explore" as const, label: t("inventory.menuExplore") }
+    ]),
     { id: "figma", label: t("inventory.menuImport") },
     { id: "drop", label: t("inventory.menuDelete"), danger: true }
   ];
@@ -550,11 +564,13 @@ function PageOverlay({ page, targetId, onClose }: {
   // Only the page as it was found can be opened live. A re-skinned look is a
   // click away from it, and clicking is exactly what the recipe already does —
   // but the second look has no recipe of its own, so it stays a capture.
-  const liveWanted = shown === 0 && targetId !== null;
+  // An exported iOS page cannot be opened live either: there is no address to
+  // load and no browser to load it in.
+  const liveWanted = shown === 0 && targetId !== null && !page.vector;
 
   useEffect(() => {
     if (!liveWanted) {
-      setLive({ state: "unavailable", why: t("inventory.variantCaptureOnly") });
+      setLive({ state: "unavailable", why: page.vector ? t("inventory.exportedPageOnly") : t("inventory.variantCaptureOnly") });
       return;
     }
     const bridge = window.uiSync;
@@ -1612,6 +1628,7 @@ export default function PageInventoryView() {
         <PageMenu
           at={menu.at}
           busy={busyPage !== null}
+          exported={Boolean(menu.page.vector)}
           onClose={() => setMenu(null)}
           onPick={(action) => {
             const { page } = menu;
