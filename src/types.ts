@@ -396,7 +396,15 @@ export type InventoryGroup = {
 export type WorkspacePackage = { root: string; name: string };
 
 export type PageInventory =
-  | { ok: false; message: string; reason?: string; packages?: WorkspacePackage[]; foreign?: ForeignProject }
+  | {
+      ok: false;
+      message: string;
+      reason?: string;
+      packages?: WorkspacePackage[];
+      foreign?: ForeignProject;
+      /** The command that would make this project runnable, and what named it. */
+      install?: { command: string; source: string; root: string };
+    }
   | {
       ok: true;
       /** Where the pages were served from on this run — a fresh port each scan. */
@@ -407,7 +415,15 @@ export type PageInventory =
       /** Controls skipped because their label reads as destructive. */
       skipped: Array<{ label: string; reason: string }>;
       /** States left out for changing too little, with the measured ratio. */
-      filtered: Array<{ label: string; from: string; reason: string; magnitude: number }>;
+      filtered: Array<{
+        label: string;
+        from: string;
+        reason: string;
+        magnitude: number;
+        /** How to get back to it. Absent on scans taken before this was kept. */
+        route?: string;
+        recipe?: Array<{ kind?: string; locator: string; label: string }>;
+      }>;
       /** Controls that left the page exactly as it was — they did nothing. */
       inert?: Array<{ label: string; from: string }>;
       sources: { sitemap: number; seeds: number; crawled: number };
@@ -428,3 +444,11 @@ export type ScanLifecycle = {
 };
 
 export type ScanProgress = { name: string; route: string; depth: number; id?: string };
+
+/** Whether the Figma plugin on this Mac is paired, and where it connects. */
+export type FigmaConnection = {
+  connected: boolean;
+  running: boolean;
+  port: number;
+  manifestPath: string;
+};

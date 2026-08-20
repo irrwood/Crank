@@ -6,15 +6,18 @@ const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
 const { exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, recaptureInApp, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer } = require("./page-inventory.cjs");
+const { readAppIcon } = require("./app-bundle.cjs");
+const { shippedPath } = require("./packaged-path.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
 const { holdServer } = require("./held-server.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob } = require("./figma-export.cjs");
 const { createInventoryRegistry, nameFor, targetId } = require("./inventory-registry.cjs");
-const { internalise, mimeFor, referencesIn } = require("./asset-store.cjs");
+const { identityOf } = require("./state-discovery.cjs");
+const { internalise, mimeFor } = require("./asset-store.cjs");
 const { carryUserData } = require("./user-data-migration.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
-const { createFigmaBridge } = require("./figma-bridge.cjs");
+const { DEFAULT_PORT: FIGMA_BRIDGE_PORT, createFigmaBridge } = require("./figma-bridge.cjs");
 const { applyPatchPlan, buildPullPreview, buildSwiftCodeScreens, createPatchPlan, createSwiftPatchPlan, flattenEditableDom } = require("./local-pull.cjs");
 const { createSwiftUiRuntimeServer, mergeRuntimeSnapshot, runSwiftUiDesignBuild, runtimeSnapshotSchema } = require("./swiftui-design-runtime.cjs");
 const { buildSwiftVisualPayload } = require("./swift-visual-assets.cjs");
@@ -173,6 +176,9 @@ const handoffPageSchema = z.object({
     height: z.number().finite(),
     tree: z.unknown()
   }).nullable().optional(),
+  // Why this page has no layers, when it has none. Carried so the export can
+  // say what went wrong rather than only that something did.
+  layerError: z.string().max(400).nullable().optional(),
   // The page's own document. Held as references to stored pictures, so the
   // length is the markup itself rather than the markup plus every image in it.
   snapshot: z.object({
@@ -222,6 +228,28 @@ const handoffInventorySchema = z.object({
   })).max(500).optional()
 });
 
+/**
+ * A validator's complaint, in a sentence.
+ *
+ * Zod reports the path as an array of every index it walked through, which for
+ * a captured page is dozens of "children" entries and tells the reader nothing
+ * about where on their screen the trouble is. The page and the property do.
+ */
+function describeRejectedJob(cause, job) {
+  const issues = Array.isArray(cause?.issues) ? cause.issues : [];
+  if (issues.length === 0) {
+    return cause instanceof Error ? cause.message : "Figma refused this export.";
+  }
+  const [first] = issues;
+  const path = Array.isArray(first.path) ? first.path : [];
+  const property = [...path].reverse().find((part) => typeof part === "string" && part !== "children") ?? "a property";
+  const screenIndex = path[0] === "screens" && typeof path[1] === "number" ? path[1] : null;
+  const page = screenIndex !== null ? job?.screens?.[screenIndex]?.name : null;
+  const where = page ? `「${page}」` : "one page";
+  const more = issues.length > 1 ? ` (${issues.length} values in all)` : "";
+  return `${where} could not be sent: ${property} — ${first.message}${more}.`;
+}
+
 const projectRootSchema = z.string().min(1).refine(path.isAbsolute);
 const expectedProjectKindSchema = z.enum(["web", "desktop", "swiftui"]).optional();
 const screenIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/);
@@ -233,7 +261,9 @@ const projectPreviewSchema = z.object({
   height: z.number().finite().positive().max(10000)
 }).strict();
 const appIconPath = path.join(__dirname, "..", "assets", "app-icon.png");
-const figmaPluginManifestPath = path.join(__dirname, "..", "figma-plugin", "manifest.json");
+// Reached from outside the app — the Finder reveals it and Figma imports it —
+// so it must be the copy on disk rather than the one inside the archive.
+const figmaPluginManifestPath = shippedPath("figma-plugin", "manifest.json");
 let figmaBridge = null;
 let swiftUiRuntimeServer = null;
 const pendingPulls = new Map();
@@ -1193,8 +1223,15 @@ function createPreviewView(window, origin) {
  * handoff file opened on someone else's machine.
  */
 let inventoryPreview = null;
+// Bumped by every open and every close, so work started for one page can tell
+// that it is no longer the page anyone is looking at. Starting a project's
+// server takes seconds, and closing the page during those seconds used to leave
+// a preview nobody asked for — a native view over the window and a server held
+// open for the rest of the session.
+let previewGeneration = 0;
 
 function closeInventoryPreview() {
+  previewGeneration += 1;
   if (!inventoryPreview) return;
   const { release, view, window } = inventoryPreview;
   inventoryPreview = null;
@@ -1354,13 +1391,20 @@ function registerIpc() {
     // Register before scanning, not after: the project should appear in the
     // sidebar the moment it is dropped, so the wait is something to walk away
     // from rather than something to sit in front of.
-    await inventoryRegistry().remember("folder", safeRoot, { parent });
+    // An installed app is recognised by its icon, and it has one before it has
+    // been scanned — so the row wears it from the moment it is dropped rather
+    // than after the minutes a scan takes.
+    await inventoryRegistry().remember("folder", safeRoot, {
+      parent,
+      icon: looksLikeAppBundle(safeRoot) ? await readAppIcon(safeRoot) : null
+    });
     send("inventory:started", { kind: "folder", target: safeRoot });
     // Scanning UI Sync itself is the one project served this way. Every other
     // route to it produces a copy with no bridge and therefore no projects to
     // show; this one opens a window of its own interface with a preload that
     // only reads. See scanSelf.
-    const scanning = { onStatus: (status) => send("inventory:status", status),
+    const scanning = { keepAnyway: await inventoryRegistry().kept(id),
+      onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth }) };
     const scanned = path.resolve(safeRoot) === path.resolve(app.getAppPath())
       ? await scanSelf({ appRoot: safeRoot, ...scanning })
@@ -1530,6 +1574,68 @@ function registerIpc() {
     return outcome;
   });
 
+  /**
+   * Puts back a page the crawl judged too small to be one.
+   *
+   * The threshold is 12% of the screen, and it is a judgement rather than a
+   * fact: a tab that swaps a single number really is a page to whoever is
+   * documenting the app. So the list of what was left out is not just a report,
+   * it is a list of decisions that can be reversed — and the reversal is
+   * remembered, because a scan applies the threshold every time and would
+   * otherwise take the page away again on the next one.
+   */
+  ipcMain.handle("inventory:restore-filtered", async (event, source, item) => {
+    const where = z.object({ kind: z.enum(["folder", "url"]), target: z.string().min(1).max(2000) }).parse(source);
+    const safeItem = z.object({
+      label: z.string().max(300),
+      route: z.string().max(2000),
+      recipe: z.array(z.object({
+        kind: z.string().max(40).optional(),
+        locator: z.string().max(2000),
+        label: z.string().max(300)
+      })).min(1).max(20)
+    }).parse(item);
+
+    const id = targetId(where.kind, where.target);
+    const send = (detail) => {
+      if (!event.sender.isDestroyed()) event.sender.send("inventory:status", { phase: "capturing", detail, id });
+    };
+
+    // The same identity the crawl would have given it, so the exception matches
+    // the page a later scan produces rather than a lookalike of it.
+    const recipe = safeItem.recipe.map((step) => ({ kind: step.kind ?? "click", label: step.label, locator: step.locator }));
+    const page = {
+      id: identityOf(safeItem.route, recipe),
+      name: safeItem.label || safeItem.route,
+      route: safeItem.route,
+      recipe,
+      depth: recipe.length,
+      signature: "",
+      url: "",
+      thumbnail: null,
+      variants: []
+    };
+
+    send(`把「${page.name}」加回来`);
+    const outcome = where.kind === "url"
+      ? await recapturePage(where.target, page)
+      : looksLikeAppBundle(where.target)
+        ? await recaptureInApp(where.target, page, { onStatus: (status) => send(status.detail) })
+        : await withProjectServer(where.target, { onStatus: (status) => send(status.detail) }, (url) => recapturePage(url, page));
+    if (!outcome.ok) return outcome;
+
+    await inventoryRegistry().keep(id, page.id);
+    const stored = await inventoryRegistry().loadInventory(id);
+    if (stored?.ok) {
+      await inventoryRegistry().updateInventory(id, {
+        ...stored,
+        pages: [...stored.pages.filter((entry) => entry.id !== outcome.page.id), outcome.page],
+        filtered: (stored.filtered ?? []).filter((entry) => !(entry.route === safeItem.route && entry.label === safeItem.label))
+      });
+    }
+    return outcome;
+  });
+
   ipcMain.handle("inventory:send-to-figma", async (_event, inventory, figmaUrl) => {
     if (!figmaBridge) throw new Error("The local Figma bridge is not running");
     const link = parseFigmaDesignUrl(z.string().min(1).max(2000).parse(figmaUrl));
@@ -1568,12 +1674,21 @@ function registerIpc() {
     const inventoryId = await inventoryRegistry().saveFigmaBaseline(kind, target, baselines, { fileKey: link.fileKey });
 
     const connection = await ensureDeviceConnection();
-    const session = figmaBridge.enqueue(
-      built.job,
-      { root: target, inventoryId, figmaFileKey: link.fileKey, connectionToken: connection.token },
-      connection.token,
-      new Map()
-    );
+    let session;
+    try {
+      session = figmaBridge.enqueue(
+        built.job,
+        { root: target, inventoryId, figmaFileKey: link.fileKey, connectionToken: connection.token },
+        connection.token,
+        new Map()
+      );
+    } catch (cause) {
+      // A page that captured fine can still hold one value the bridge refuses,
+      // and the whole export then failed as a wall of validator output with a
+      // path forty levels deep. Say which property, on which page, and what it
+      // was — the rest of that output helps nobody.
+      return { ok: false, message: describeRejectedJob(cause, built.job) };
+    }
     return {
       ok: true,
       ...session,
@@ -1585,6 +1700,7 @@ function registerIpc() {
       // Named so the caller can say what will not arrive, rather than letting
       // a short export look complete.
       missing: built.missing,
+      missingReasons: built.missingReasons,
       dropped: built.dropped,
       substitutedFonts: built.substitutedFonts
     };
@@ -1617,12 +1733,20 @@ function registerIpc() {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) return { ok: false, message: "没有可以放预览的窗口。" };
     closeInventoryPreview();
+    const generation = previewGeneration;
 
     let origin;
     let release = null;
     try {
       if (entry.kind === "url") {
-        origin = new URL(normalizeTargetUrl(entry.target)).origin;
+        // normalizeTargetUrl answers with a result, not a string. Handed to
+        // `new URL` it stringified to "[object Object]" and threw, so opening
+        // the real page never once worked for a scanned address — it fell
+        // silently back to the capture, which is exactly the failure that is
+        // hardest to notice.
+        const normalized = normalizeTargetUrl(entry.target);
+        if (!normalized.ok) return { ok: false, message: normalized.message };
+        origin = normalized.origin;
       } else {
         const held = holdServer(entry.target, { run: withProjectServer });
         release = held.release;
@@ -1631,6 +1755,10 @@ function registerIpc() {
     } catch (cause) {
       release?.();
       return { ok: false, message: cause instanceof Error ? cause.message : "这个项目起不来。" };
+    }
+    if (generation !== previewGeneration || window.isDestroyed()) {
+      release?.();
+      return { ok: false, message: "预览已经关掉了。" };
     }
 
     const { view, blockedHosts } = createPreviewView(window, origin);
@@ -1646,9 +1774,12 @@ function registerIpc() {
       target = new URL(safePage.route || "/", origin).toString();
       await view.webContents.loadURL(target);
     } catch (cause) {
-      closeInventoryPreview();
+      // Only if this is still the open preview: closing during the load has
+      // already torn it down, and tearing down the next one would be wrong.
+      if (generation === previewGeneration) closeInventoryPreview();
       return { ok: false, message: `打不开 ${target ?? entry.target}：${cause instanceof Error ? cause.message : "未知错误"}` };
     }
+    if (generation !== previewGeneration) return { ok: false, message: "预览已经关掉了。" };
     const missed = safePage.recipe.length > 0 ? await replayRecipe(view.webContents, safePage.recipe) : [];
     return { ok: true, missed, url: target };
   });
@@ -1738,6 +1869,7 @@ function registerIpc() {
     send("inventory:started", { kind: "url", target });
     const scanned = await scanAttached(safePort, {
       targetId: windows[0].id,
+      keepAnyway: await inventoryRegistry().kept(id),
       onStatus: (status) => send("inventory:status", status),
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
@@ -1768,6 +1900,7 @@ function registerIpc() {
     await inventoryRegistry().remember("url", target);
     send("inventory:started", { kind: "url", target });
     const scanned = await scanUrl(target, {
+      keepAnyway: await inventoryRegistry().kept(id),
       seedPaths: seeds,
       onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
     });
@@ -2343,6 +2476,55 @@ function registerIpc() {
     shell.showItemInFolder(figmaPluginManifestPath);
   });
 
+  /**
+   * Whether the plugin on this Mac is connected.
+   *
+   * The connection is device-level and already remembered on disk; until now it
+   * was only ever visible in the middle of a sync, as the presence or absence
+   * of a pairing code. Someone who wanted to know whether Crank and Figma were
+   * talking had to start sending pages to find out.
+   */
+  ipcMain.handle("figma:connection", async () => {
+    const connection = await readDeviceConnection();
+    return {
+      connected: Boolean(connection?.confirmed),
+      running: Boolean(figmaBridge),
+      port: FIGMA_BRIDGE_PORT,
+      manifestPath: figmaPluginManifestPath
+    };
+  });
+
+  /**
+   * Hands out a pairing code with nothing behind it.
+   *
+   * Connecting used to require sending pages somewhere, which is backwards for
+   * someone who has just installed the plugin and has nothing to send yet.
+   */
+  ipcMain.handle("figma:start-pairing", async () => {
+    if (!figmaBridge) return { ok: false, message: "The local Figma bridge is not running." };
+    const connection = await ensureDeviceConnection();
+    const session = figmaBridge.enqueue({
+      operation: "pair",
+      projectId: createHash("sha256").update("crank:pairing").digest("hex").slice(0, 24),
+      projectName: "Crank",
+      figmaFileName: "",
+      screens: []
+    }, { pairing: true, connectionToken: connection.token }, connection.token);
+    return { ok: true, ...session };
+  });
+
+  /**
+   * Forgets the pairing, so the next sync asks for a code again.
+   *
+   * The plugin can already drop the connection from its side; this is the same
+   * door from this side — for a Mac someone is handing on, or a pairing that
+   * has gone stale and has to be made again.
+   */
+  ipcMain.handle("figma:forget-connection", async () => {
+    await writeDeviceConnection({ token: randomBytes(32).toString("hex"), confirmed: false });
+    return { connected: false, running: Boolean(figmaBridge), port: FIGMA_BRIDGE_PORT, manifestPath: figmaPluginManifestPath };
+  });
+
   ipcMain.handle("codex:open-thread", async (_event, threadId) => {
     const safeThreadId = z.string().uuid().parse(threadId);
     await shell.openExternal(`codex://threads/${safeThreadId}`);
@@ -2388,6 +2570,9 @@ function createWindow() {
   window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   window.on("closed", () => {
     if (livePreview?.window === window) destroyLivePreview();
+    // The page preview holds the project's own server open for as long as
+    // someone is reading it. Closing the window is someone having stopped.
+    if (inventoryPreview?.window === window) closeInventoryPreview();
   });
   window.webContents.on("did-finish-load", () => {
     if (process.platform !== "darwin") return;
@@ -2417,7 +2602,10 @@ app.whenReady().then(async () => {
       : new Response("", { status: 404 });
   });
   inventoryRegistry().sweepAssets()
-    .then(({ removed }) => { if (removed > 0) console.log(`Removed ${removed} stored images nothing points at.`); })
+    .then(({ removed, skipped, unread }) => {
+      if (skipped) console.log(`Kept every stored image: ${unread} scan(s) could not be read, so what is unreferenced is not known.`);
+      else if (removed > 0) console.log(`Removed ${removed} stored images nothing points at.`);
+    })
     .catch(() => null);
   // The product was renamed, and Electron derives this directory from the
   // product name — so without this every scanned project would appear to have
@@ -2430,6 +2618,12 @@ app.whenReady().then(async () => {
   if (process.platform === "darwin") app.dock.setIcon(appIconPath);
   figmaBridge = createFigmaBridge({
     onComplete: async (context, result) => {
+      // A pairing job has no pages behind it and nothing to save: the plugin
+      // reporting back *is* the pairing, and confirming it is the whole job.
+      if (result.operation === "pair") {
+        await confirmDeviceConnection(context.connectionToken);
+        return {};
+      }
       const completion = result.operation === "pull"
         ? await preparePullPreview(context, result)
         : context.inventoryId
@@ -2460,6 +2654,7 @@ app.on("window-all-closed", () => {
 /** Dev servers UI Sync spawned must not outlive it; attached ones have no stop. */
 function stopOwnedDevServers() {
   destroyLivePreview();
+  closeInventoryPreview();
   for (const server of devServers.values()) server.stop?.();
   devServers.clear();
 }

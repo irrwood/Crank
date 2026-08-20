@@ -150,12 +150,29 @@ function isAppearanceLabel(label) {
   return appearanceWords.some((word) => value.includes(word));
 }
 
+/**
+ * A value that identifies a row rather than describing a page.
+ *
+ * Kept to query values, where a mix of letters and digits with no spaces is an
+ * id and nothing else. A label or a heading is not held to this: "iPhone 15"
+ * would be, and is a perfectly good name.
+ */
+function isOpaqueIdentifier(value) {
+  const text = String(value ?? "");
+  return text.length >= 8 && /^[a-z0-9_-]+$/i.test(text) && /[a-z]/i.test(text) && /\d/.test(text);
+}
+
 function humanizeRoute(route) {
   const value = String(route ?? "").trim();
   if (!value || value === "/") return "Home";
   const [address, hash = ""] = value.split("#");
   const [path, query] = address.split("?");
-  const fromQuery = query ? query.split("&").map((pair) => pair.split("=").pop()).join(" ") : "";
+  // "?view=settings" names a page; "?chat=u1amzv4kql" names a row of someone's
+  // data, and names it differently on every scan — a real app's window came
+  // back as the page "U1amzv4kql". An identifier is not a name.
+  const fromQuery = query
+    ? query.split("&").map((pair) => pair.split("=").pop()).filter((part) => !isVolatileText(part) && !isOpaqueIdentifier(part)).join(" ")
+    : "";
   // Hash routing puts the app's own route after the "#", and the document in
   // front of it is the same one on every page: "index.html#/settings" is the
   // settings page, not another Index.
@@ -373,6 +390,10 @@ async function discoverStates(session, {
   maxDepth = 1,
   maxActionsPerState = 12,
   minChangeRatio = 0.12,
+  // Pages this project was told to keep even though they change too little to
+  // clear the threshold. The judgement is the user's; the measurement only
+  // decides the default.
+  keepAnyway = new Set(),
   onProgress
 } = {}) {
   const states = [];
@@ -431,6 +452,8 @@ async function discoverStates(session, {
         from: entryRoute,
         reason: `serves ${snapshot.contentType}, not a page`,
         magnitude: 0
+        // No route: a PDF or a zip is not a page, and adding one to a scan of
+        // screens would only put a broken card in the grid.
       });
       return null;
     }
@@ -563,7 +586,9 @@ async function discoverStates(session, {
         label: step.action.label,
         from: step.from.state.name,
         reason: "an anchor on the same page",
-        magnitude: 0
+        magnitude: 0,
+        route: step.from.entryRoute,
+        recipe
       });
       continue;
     }
@@ -581,12 +606,20 @@ async function discoverStates(session, {
     }
 
     const magnitude = changeMagnitude(step.from.state.fingerprint, snapshot.fingerprint, snapshot.viewport);
-    if (!navigated && magnitude < minChangeRatio) {
+    // Asked for by name, so the threshold does not get to overrule it. Checked
+    // before the measurement rather than after, because a page restored once
+    // must survive every later scan without being restored again.
+    if (!navigated && magnitude < minChangeRatio && !keepAnyway.has(identityOf(step.from.entryRoute, recipe))) {
       filtered.push({
         label: step.action.label,
         from: step.from.state.name,
         reason: "changed too little to be a page",
-        magnitude: Number(magnitude.toFixed(3))
+        magnitude: Number(magnitude.toFixed(3)),
+        // How to get back here. The threshold is a judgement — a tab that
+        // swaps one number really is a page to whoever is documenting it — so
+        // what was left out has to be recoverable, not merely reported.
+        route: step.from.entryRoute,
+        recipe
       });
       continue;
     }

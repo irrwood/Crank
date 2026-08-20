@@ -12,7 +12,7 @@ const { startLocalRendererServer } = require("./static-server.cjs");
 const { readdir } = require("node:fs/promises");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 const { createAttachedSession, listTargets } = require("./cdp-session.cjs");
-const { describeAppBundle, launchAppBundle, looksLikeAppBundle } = require("./app-bundle.cjs");
+const { describeAppBundle, launchAppBundle, looksLikeAppBundle, readAppIcon } = require("./app-bundle.cjs");
 const { isAppOrigin, originOf, routeWithin } = require("./page-origin.cjs");
 
 /**
@@ -132,7 +132,20 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
     if (!reached) break;
     reached = await session.click(step.locator, { patient: true });
   }
-  if (!reached) return { thumbnail: null, snapshot: null, reached: false };
+  // A page that could not be reached again is the other way to arrive with no
+  // layers, and it used to say nothing at all — the export then reported the
+  // absence and not the cause.
+  if (!reached) {
+    return {
+      thumbnail: null,
+      snapshot: null,
+      layerTree: null,
+      layerError: recipe.length > 0
+        ? "Could not be reached again — the clicks that led to it no longer land."
+        : `Nothing answered at ${route || "/"} when the page was captured.`,
+      reached: false
+    };
+  }
   // Three views of one visit, each for a different distance. The thumbnail
   // keeps a grid quick to draw. The layer tree is what a card draws and what
   // reaches Figma. The markup is the page itself, for opening one and reading
@@ -147,7 +160,16 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
     ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
     : null;
   const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
-  return { thumbnail, snapshot, layerTree: figma?.tree ? figma : null, reached: true };
+  // The capture already says why it came back without a tree, and that reason
+  // was being dropped here — leaving the export to report "no page has captured
+  // layers" about pages whose failure it could have named.
+  return {
+    thumbnail,
+    snapshot,
+    layerTree: figma?.tree ? figma : null,
+    layerError: figma?.tree ? null : figma?.error ?? null,
+    reached: true
+  };
 }
 
 /**
@@ -268,16 +290,6 @@ async function withAppSession(root, { onStatus } = {}, job) {
   }
 }
 
-/** The icon macOS already draws for an installed app. */
-async function bundleIcon(root) {
-  try {
-    const image = await require("electron").app?.getFileIcon?.(root, { size: "normal" });
-    return image && !image.isEmpty() ? image.toDataURL() : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Where in the app the window Crank attached to already was. */
 function startPathOf(url, origin) {
   try {
@@ -296,10 +308,10 @@ async function scanAppBundle(target, { onStatus, ...options } = {}) {
     return result.ok
       ? {
         ...result,
-        // A page declares its icon and a scan takes it from there, but a
-        // desktop app rarely bothers — it already has one, the one it wears in
-        // the Dock, and that is what tells it apart in the list.
-        icon: result.icon ?? await bundleIcon(bundle.root),
+        // The app's own icon ahead of the one its page declares: an installed
+        // app is known by what it wears in the Dock, and half of them declare
+        // no favicon at all.
+        icon: await readAppIcon(bundle.root) ?? result.icon,
         servedBy: `${bundle.name}, opened with a debugging port`,
         attached: true,
         launched: bundle.name
@@ -460,6 +472,10 @@ async function runScan(session, origin, startPath, {
   withThumbnails = true,
   withHtml = true,
   withFigmaTree = true,
+  // Pages this project was told to keep despite changing too little to clear
+  // the threshold. Applied on every scan, or restoring one would last exactly
+  // until the next.
+  keepAnyway = [],
   onProgress,
   onStatus
 } = {}) {
@@ -477,6 +493,7 @@ async function runScan(session, origin, startPath, {
       maxStates,
       maxDepth,
       maxActionsPerState,
+      keepAnyway: new Set(keepAnyway),
       onProgress
     });
 

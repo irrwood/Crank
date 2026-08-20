@@ -46,6 +46,24 @@ function serializeRenderedApplication() {
    */
   const IMAGE_HEADROOM = 4;
 
+  /** Whether anything in the drawing is see-through, and so needs PNG. */
+  const opaque = (context, canvas) => {
+    try {
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      // Every fourth byte is alpha; stepping by whole pixels over a large photo
+      // is the difference between a check and a cost.
+      const step = 4 * Math.max(1, Math.floor(data.length / 4 / 40_000));
+      for (let index = 3; index < data.length; index += step) {
+        if (data[index] !== 255) return false;
+      }
+      return true;
+    } catch {
+      // A canvas holding a cross-origin image cannot be read. PNG is the answer
+      // that is never wrong.
+      return false;
+    }
+  };
+
   const imageData = (element) => {
     try {
       const natural = Math.max(1, element.naturalWidth || element.width);
@@ -55,16 +73,132 @@ function serializeRenderedApplication() {
       canvas.width = width;
       canvas.height = Math.max(1, Math.round((element.naturalHeight || element.height || 1) * (width / natural)));
       canvas.getContext("2d")?.drawImage(element, 0, 0, canvas.width, canvas.height);
+      // PNG or JPEG, never WebP. These are the pictures that go to Figma, and
+      // figma.createImage takes PNG, JPEG and GIF — a WebP is not a smaller
+      // image there, it is no image at all. (The page raster is a different
+      // picture with a different destination, and stays WebP.)
+      //
+      // JPEG only where there is nothing to lose by it: one transparent pixel
+      // and it would be composited onto black.
       const png = canvas.toDataURL("image/png");
-      // Whichever is smaller. WebP wins on photographs by a wide margin and PNG
-      // on flat icons and logos, and a real page has both.
-      const webp = canvas.toDataURL("image/webp", 0.85);
-      return webp.startsWith("data:image/webp") && webp.length < png.length ? webp : png;
+      if (!opaque(context, canvas)) return png;
+      const jpeg = canvas.toDataURL("image/jpeg", 0.85);
+      return jpeg.startsWith("data:image/jpeg") && jpeg.length < png.length ? jpeg : png;
     } catch {
       return null;
     }
   };
-  const nodeStyle = (style) => ({
+  /**
+   * The icon behind a CSS mask.
+   *
+   * A whole family of icon sets — UnoCSS and Iconify's "pure CSS icons",
+   * Tailwind's mask idiom — draw an icon as an empty element whose background
+   * colour is cut to shape by `mask-image`. Read as an element it is a filled
+   * rectangle, and that is exactly how a real application's toolbar arrived in
+   * Figma: a row of solid blue and grey squares where its icons had been. The
+   * shape is right there in the mask, as an SVG.
+   *
+   * The mask carries no colour of its own — only where the paint falls — so
+   * whatever the shape declares is replaced with the colour the element paints
+   * with, which is the one on screen.
+   */
+  function maskedShape(element, style, rect) {
+    const declared = [style.maskImage, style.webkitMaskImage]
+      .find((value) => value && value !== "none");
+    if (!declared) return null;
+    const source = String(declared).match(/url\((['"]?)(data:image\/svg\+xml[^)]*?)\1\)/i)?.[2];
+    if (!source) return null;
+
+    let markup;
+    try {
+      const [header, ...body] = source.split(",");
+      const payload = body.join(",");
+      markup = /;base64/i.test(header) ? atob(payload) : decodeURIComponent(payload);
+    } catch {
+      return null;
+    }
+    if (!/^\s*<svg[\s>]/i.test(markup)) return null;
+
+    const paint = style.backgroundColor && style.backgroundColor !== "rgba(0, 0, 0, 0)"
+      ? style.backgroundColor
+      : style.color;
+    // The element is the size the icon is drawn at; the mask's own viewBox is
+    // what it is drawn from.
+    return markup
+      .replace(/\bcurrentColor\b/g, paint)
+      .replace(/\bfill=(['"])(?!none)[^'"]*\1/gi, `fill="${paint}"`)
+      .replace(/\bstroke=(['"])(?!none)[^'"]*\1/gi, `stroke="${paint}"`)
+      .replace(/<svg\b([^>]*)>/i, (match, attributes) => {
+        const cleaned = attributes
+          .replace(/\s(width|height)=(['"])[^'"]*\2/gi, "")
+          .replace(/\sfill=(['"])[^'"]*\1/gi, "");
+        return `<svg${cleaned} width="${rounded(rect.width)}" height="${rounded(rect.height)}" fill="${paint}">`;
+      });
+  }
+
+  /**
+   * An icon drawn by a font, which is neither text nor a box.
+   *
+   * A large share of real interfaces draw their icons this way — codicon,
+   * FontAwesome, Material, Bootstrap — as a private-use character in
+   * `::before { content }`. It is not a DOM text node, so a walk over the DOM
+   * cannot see it, and Cursor's window arrived in Figma with 2,252 icon
+   * references and not one icon.
+   *
+   * It cannot be sent as text either: the character is private-use and the font
+   * is one Figma does not have, so it would draw as a box or as nothing. Here
+   * the font *is* loaded — it is what the screen is showing — so the glyph is
+   * drawn to a canvas and travels as a picture of itself.
+   *
+   * Only leaves are asked. An icon span holds nothing else, and asking every
+   * element on a page for two more computed styles is not free.
+   */
+  function glyphImage(element, rect) {
+    if (rect.width < 4 || rect.height < 4 || rect.width > 256 || rect.height > 256) return null;
+    for (const pseudo of ["::before", "::after"]) {
+      let computed;
+      try {
+        computed = getComputedStyle(element, pseudo);
+      } catch {
+        continue;
+      }
+      const content = String(computed.content || "");
+      if (!content || content === "none" || content === "normal") continue;
+      const literal = content.replace(/^["']|["']$/g, "");
+      // One character in the Private Use Area is what every icon font emits,
+      // and nothing else does. A stricter test than "the font differs", which
+      // would rasterise quotation marks and bullets as well.
+      if ([...literal].length !== 1 || !/[\uE000-\uF8FF]/u.test(literal)) continue;
+
+      const scale = Math.min(4, Math.max(2, window.devicePixelRatio || 1) * 2);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(rect.width * scale));
+      canvas.height = Math.max(1, Math.round(rect.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) continue;
+      context.scale(scale, scale);
+      // The pseudo-element's own font and colour, not the element's: an icon
+      // sized by `font-size` on ::before is a different size from its box.
+      context.font = `${computed.fontStyle || "normal"} ${computed.fontWeight || "400"} ${computed.fontSize || "16px"} ${computed.fontFamily}`;
+      context.fillStyle = computed.color || "#000";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      try {
+        context.fillText(literal, rect.width / 2, rect.height / 2);
+      } catch {
+        continue;
+      }
+      // PNG, not WebP: an icon needs its transparency, and Figma's createImage
+      // takes PNG, JPEG and GIF only.
+      const drawn = canvas.toDataURL("image/png");
+      // A glyph that drew nothing — a missing font, a blank in the icon set —
+      // is not worth a layer. An empty canvas encodes to almost nothing.
+      return drawn.length > 400 ? { dataUrl: drawn, name: `Icon · ${literal.codePointAt(0).toString(16)}` } : null;
+    }
+    return null;
+  }
+
+  const nodeStyle = (style, rect) => ({
     backgroundColor: style.backgroundColor,
     borderTopColor: style.borderTopColor,
     borderRightColor: style.borderRightColor,
@@ -74,11 +208,20 @@ function serializeRenderedApplication() {
     borderRightWidth: pixels(style.borderRightWidth),
     borderBottomWidth: pixels(style.borderBottomWidth),
     borderLeftWidth: pixels(style.borderLeftWidth),
-    borderRadius: Math.max(
-      pixels(style.borderTopLeftRadius),
-      pixels(style.borderTopRightRadius),
-      pixels(style.borderBottomRightRadius),
-      pixels(style.borderBottomLeftRadius)
+    // A pill is written "border-radius: 9999px" and a circle "50%", and both
+    // compute to a number far larger than the box they round. The browser
+    // already draws no more than half the shorter side — 9999 is only a way of
+    // writing "as round as it goes" — so the drawn radius is what travels.
+    // The raw number is not merely useless downstream, it is refused: a real
+    // app's pill buttons failed a whole export for being "greater than 5000".
+    borderRadius: Math.min(
+      Math.max(
+        pixels(style.borderTopLeftRadius),
+        pixels(style.borderTopRightRadius),
+        pixels(style.borderBottomRightRadius),
+        pixels(style.borderBottomLeftRadius)
+      ),
+      Math.max(0, Math.min(rect?.width ?? 0, rect?.height ?? 0) / 2)
     ),
     opacity: Number.parseFloat(style.opacity || "1"),
     // Shadows are everywhere in a real interface and were dropped entirely, so
@@ -282,11 +425,38 @@ function serializeRenderedApplication() {
     return [...element.childNodes];
   }
 
-  function serializeElement(element, parentRect, identity, inheritedSelector = null) {
+  /**
+   * The same list, with the boxes that are not boxes flattened out of it.
+   *
+   * A slot and a `display: contents` element generate no box of their own —
+   * they measure 0×0 and would be dropped as invisible, taking everything
+   * inside them with them. What draws is what they contain, in their place. A
+   * component's entire interface sat behind one such slot.
+   */
+  function drawnChildren(element) {
+    const drawn = [];
+    for (const child of renderedChildren(element)) {
+      if (child.nodeType === Node.ELEMENT_NODE
+        && (child.tagName === "SLOT" || getComputedStyle(child).display === "contents")) {
+        drawn.push(...drawnChildren(child));
+        continue;
+      }
+      drawn.push(child);
+    }
+    return drawn;
+  }
+
+  function serializeElement(element, parentRect, identity, inheritedSelector = null, measuredAs = null) {
     if (!(element instanceof Element)) return null;
-    const rect = element.getBoundingClientRect();
+    const rect = measuredAs ?? element.getBoundingClientRect();
     const style = getComputedStyle(element);
-    if (!visible(style, rect)) return null;
+    // A root measured against the viewport is exempt from the size test and
+    // from it alone: it is a container for what is drawn, not something drawn
+    // itself. Hidden is still hidden.
+    const drawn = measuredAs
+      ? style.display !== "none" && style.visibility !== "hidden" && Number.parseFloat(style.opacity || "1") > 0
+      : visible(style, rect);
+    if (!drawn) return null;
     const selector = sourceSelector(element, inheritedSelector);
     // Where this element was written, when the project was served through a
     // build UI Sync controls. It is the identity the node keeps, and the exact
@@ -307,7 +477,39 @@ function serializeRenderedApplication() {
       return dataUrl ? { kind: "image", ...common, dataUrl } : null;
     }
 
+    // An icon drawn by a mask is not a box, however much it measures like one.
+    const masked = maskedShape(element, style, rect);
+    if (masked) return { kind: "svg", ...common, svg: masked };
+
+    // Nor is one drawn by a font. Asked of leaves only, which is what an icon
+    // span is, and what keeps this from costing two computed styles per element.
+    //
+    // Kept as a child rather than put in the element's place: an icon button
+    // has a background, a radius and a border of its own, and standing the
+    // glyph in for the whole element threw all of that away — every toolbar
+    // button would have arrived as a bare symbol on nothing.
+    // "Holds nothing" has to mean nothing *drawn*, not nothing at all: markup
+    // formatted across lines leaves a whitespace text node inside the tag, and
+    // testing firstChild made every icon in a pretty-printed template invisible.
+    const empty = [...element.childNodes].every(
+      (child) => child.nodeType === Node.TEXT_NODE && !String(child.textContent ?? "").trim()
+    );
+    const glyph = empty ? glyphImage(element, rect) : null;
+
     const children = [];
+    if (glyph) {
+      children.push({
+        kind: "image",
+        id: `${identity}/glyph`,
+        selector,
+        name: glyph.name,
+        x: 0,
+        y: 0,
+        width: rounded(rect.width),
+        height: rounded(rect.height),
+        dataUrl: glyph.dataUrl
+      });
+    }
     let elementIndex = 0;
     let textIndex = 0;
     // What the browser actually draws, which is not always what the element
@@ -318,7 +520,7 @@ function serializeRenderedApplication() {
     //
     // A closed root cannot be reached by anyone, by design; such a host is
     // captured as whatever it draws on its own, which is usually nothing.
-    for (const child of renderedChildren(element)) {
+    for (const child of drawnChildren(element)) {
       if (child.nodeType === Node.TEXT_NODE) {
         const sourceText = String(child.textContent || "").replace(/\r\n?/g, "\n");
         const text = normalizedText(sourceText, style.whiteSpace);
@@ -373,7 +575,7 @@ function serializeRenderedApplication() {
     return {
       kind: "element",
       ...common,
-      style: nodeStyle(style),
+      style: nodeStyle(style, rect),
       children
     };
   }
@@ -398,10 +600,26 @@ function serializeRenderedApplication() {
     document.documentElement
   ].filter(Boolean);
 
+  /**
+   * A root can measure nothing and still be the page.
+   *
+   * An application whose interface is entirely position:fixed — which is most
+   * desktop applications — leaves both body and html with no height at all: a
+   * real one reported 1182×0 and came back with a screenshot and no layers,
+   * because the container of everything on screen was judged invisible. What is
+   * drawn there is drawn against the viewport, so that is the box to measure
+   * from.
+   */
+  const viewportRect = () => ({
+    left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
+    width: window.innerWidth, height: window.innerHeight
+  });
+
   let attempted = null;
   for (const candidate of candidates) {
-    const rect = candidate.getBoundingClientRect();
-    const tree = serializeElement(candidate, rect, "root");
+    const own = candidate.getBoundingClientRect();
+    const rect = own.width >= 1 && own.height >= 1 ? own : viewportRect();
+    const tree = serializeElement(candidate, rect, "root", null, rect);
     if (tree?.children?.length > 0) {
       return { width: rounded(rect.width), height: rounded(rect.height), tree };
     }
@@ -416,8 +634,8 @@ function serializeRenderedApplication() {
 
   const bodyRect = document.body.getBoundingClientRect();
   return {
-    width: rounded(bodyRect.width),
-    height: rounded(bodyRect.height),
+    width: rounded(bodyRect.width || window.innerWidth),
+    height: rounded(bodyRect.height || window.innerHeight),
     // Named, because "no layers" on its own sent someone looking in the wrong
     // place for an afternoon.
     error: `Nothing on this page could be captured as layers: ${candidates.length} candidate root${candidates.length === 1 ? "" : "s"} were tried and each drew nothing (the body measured ${Math.round(bodyRect.width)}×${Math.round(bodyRect.height)}).`

@@ -133,3 +133,55 @@ test("serves local application snapshots without exposing a filesystem path", as
   assert.deepEqual([...new Uint8Array(await assetResponse.arrayBuffer())], [137, 80, 78, 71]);
   await bridge.stop();
 });
+
+test("a pairing code can be had with nothing behind it", async () => {
+  // Connecting used to require sending pages somewhere, which is backwards for
+  // someone who has just installed the plugin: they have no pages yet, and no
+  // file chosen to put them in.
+  const connectionToken = "c".repeat(64);
+  let completion = null;
+  const bridge = createFigmaBridge({
+    port: 0,
+    onComplete: async (context, result) => { completion = { context, result }; return {}; }
+  });
+  await bridge.start();
+  try {
+    const session = bridge.enqueue({
+      operation: "pair",
+      projectId: "0123456789abcdef01234567",
+      projectName: "Crank",
+      figmaFileName: "",
+      screens: []
+    }, { pairing: true, connectionToken }, connectionToken);
+    assert.match(session.pairingCode, /^\d{6}$/);
+    assert.equal(session.screenCount, 0);
+
+    // The plugin fetches it by code like any other job, and is handed the token.
+    const job = await (await fetch(`http://localhost:${bridge.port}/v1/jobs/${session.pairingCode}`)).json();
+    assert.equal(job.operation, "pair");
+    assert.equal(job.connectionToken, connectionToken);
+
+    const done = await fetch(`http://localhost:${bridge.port}/v1/jobs/${session.pairingCode}/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation: "pair", fileName: "Whatever file is open" })
+    });
+    assert.equal(done.status, 200);
+    assert.equal(bridge.getStatus(session.pairingCode).state, "complete");
+    assert.equal(completion.result.operation, "pair", "the app is told this was a pairing, not a push");
+    assert.equal(completion.context.pairing, true);
+  } finally {
+    await bridge.stop();
+  }
+});
+
+test("a push still has to name a file and carry pages", async () => {
+  const bridge = createFigmaBridge({ port: 0, onComplete: async () => ({}) });
+  const connectionToken = "d".repeat(64);
+  assert.throws(() => bridge.enqueue({
+    projectId: "0123456789abcdef01234567",
+    projectName: "Sample",
+    figmaFileName: "",
+    screens: []
+  }, { root: "/tmp/sample" }, connectionToken));
+});

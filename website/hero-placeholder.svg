@@ -1,0 +1,135 @@
+<svg width="1600" height="1000" viewBox="0 0 1600 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Crank 官网英雄图：英文界面的虚界面（mock），铺满画布。等真实截图就绪后，覆盖 website/hero.png。 -->
+
+  <!-- 窗口（铺满） -->
+  <rect width="1600" height="1000" fill="#ffffff"/>
+  <rect x="0" y="0" width="1600" height="60" fill="#f7f7f7"/>
+  <circle cx="44" cy="30" r="8" fill="#ff5f57"/>
+  <circle cx="78" cy="30" r="8" fill="#febc2e"/>
+  <circle cx="112" cy="30" r="8" fill="#28c840"/>
+
+  <!-- 侧边栏 -->
+  <rect x="0" y="60" width="270" height="940" fill="#f4f4f2"/>
+  <rect x="24" y="88" width="20" height="20" rx="6" fill="#e4e4e1"/>
+  <text x="54" y="104" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="700" fill="#242424">Crank</text>
+
+  <text x="24" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#92938e">Projects</text>
+  <circle cx="246" cy="146" r="11" fill="#e0e0dd"/>
+  <text x="241" y="151" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" fill="#92938e">+</text>
+
+  <!-- 项目行 -->
+  <rect x="24" y="170" width="16" height="16" rx="4" fill="#c9c9c6"/>
+  <text x="48" y="183" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" fill="#242424">crank-demo</text>
+  <text x="48" y="199" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">24 pages · Today</text>
+
+  <rect x="24" y="214" width="16" height="16" rx="4" fill="#c9c9c6"/>
+  <text x="48" y="227" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" fill="#242424">ui-sync-app</text>
+  <text x="48" y="243" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">12 pages · Yesterday</text>
+
+  <rect x="24" y="258" width="16" height="16" rx="4" fill="#c9c9c6"/>
+  <text x="48" y="271" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" fill="#242424">portfolio</text>
+  <text x="48" y="287" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">6 pages · 3 days ago</text>
+
+  <rect x="24" y="302" width="16" height="16" rx="4" fill="#c9c9c6"/>
+  <text x="48" y="315" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" fill="#242424">admin-dashboard</text>
+  <text x="48" y="331" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">Not scanned</text>
+
+  <rect x="24" y="346" width="16" height="16" rx="4" fill="#c9c9c6"/>
+  <text x="48" y="359" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" fill="#242424">docs-site</text>
+  <text x="48" y="375" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">3 pages · 5 days ago</text>
+
+  <!-- 底部：Figma 连接行 -->
+  <circle cx="30" cy="914" r="4" fill="#3f9468"/>
+  <text x="42" y="920" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#242424">Figma plugin</text>
+  <text x="250" y="920" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">Connected</text>
+
+  <!-- 底部：语言行 -->
+  <text x="24" y="956" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#242424">Language</text>
+  <rect x="118" y="940" width="126" height="24" rx="8" fill="#e8e8e5"/>
+  <rect x="120" y="942" width="58" height="20" rx="6" fill="#ffffff"/>
+  <text x="136" y="957" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#242424">EN</text>
+  <text x="196" y="957" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">中文</text>
+
+  <!-- 主区域：项目头 -->
+  <text x="320" y="112" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#242424">crank-demo</text>
+  <text x="320" y="142" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" fill="#92938e">24 pages · 4 from the sitemap · 3 looks merged</text>
+
+  <!-- 视图切换 -->
+  <rect x="320" y="168" width="130" height="26" rx="9" fill="#f1f1f0"/>
+  <rect x="322" y="170" width="58" height="22" rx="7" fill="#ffffff"/>
+  <text x="330" y="185" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#242424">Gallery</text>
+  <text x="396" y="185" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">Compact</text>
+  <text x="466" y="185" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">List</text>
+  <text x="508" y="185" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" fill="#92938e">Single</text>
+
+  <!-- 页面卡片：三列 × 两行 -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <g>
+      <rect x="320" y="222" width="396" height="330" rx="16" fill="#f4f4f2"/>
+      <rect x="344" y="246" width="348" height="240" rx="10" fill="#e7e7e4"/>
+      <rect x="368" y="280" width="180" height="18" rx="9" fill="#d8d8d4"/>
+      <rect x="368" y="312" width="240" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="368" y="336" width="210" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="368" y="360" width="150" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="368" y="384" width="70" height="18" rx="9" fill="#d8d8d4"/>
+      <text x="344" y="508" font-size="11" fill="#92938e">01</text>
+      <text x="380" y="508" font-size="15" font-weight="600" fill="#242424">Home</text>
+      <text x="344" y="528" font-size="12" fill="#92938e">/home</text>
+    </g>
+    <g>
+      <rect x="736" y="222" width="396" height="330" rx="16" fill="#f4f4f2"/>
+      <rect x="760" y="246" width="348" height="240" rx="10" fill="#e7e7e4"/>
+      <rect x="784" y="280" width="150" height="18" rx="9" fill="#d8d8d4"/>
+      <rect x="784" y="312" width="220" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="784" y="336" width="190" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="784" y="384" width="60" height="18" rx="9" fill="#d8d8d4"/>
+      <text x="760" y="508" font-size="11" fill="#92938e">02</text>
+      <text x="796" y="508" font-size="15" font-weight="600" fill="#242424">Settings</text>
+      <text x="760" y="528" font-size="12" fill="#92938e">/settings</text>
+    </g>
+    <g>
+      <rect x="1152" y="222" width="396" height="330" rx="16" fill="#f4f4f2"/>
+      <rect x="1176" y="246" width="348" height="240" rx="10" fill="#e7e7e4"/>
+      <rect x="1200" y="280" width="140" height="18" rx="9" fill="#d8d8d4"/>
+      <rect x="1200" y="312" width="250" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="1200" y="336" width="200" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="1200" y="384" width="80" height="18" rx="9" fill="#d8d8d4"/>
+      <text x="1176" y="508" font-size="11" fill="#92938e">03</text>
+      <text x="1212" y="508" font-size="15" font-weight="600" fill="#242424">Profile</text>
+      <text x="1176" y="528" font-size="12" fill="#92938e">/profile</text>
+    </g>
+    <g>
+      <rect x="320" y="590" width="396" height="330" rx="16" fill="#f4f4f2"/>
+      <rect x="344" y="614" width="348" height="240" rx="10" fill="#e7e7e4"/>
+      <rect x="368" y="648" width="170" height="18" rx="9" fill="#d8d8d4"/>
+      <rect x="368" y="680" width="230" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="368" y="704" width="180" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="368" y="752" width="70" height="18" rx="9" fill="#d8d8d4"/>
+      <text x="344" y="876" font-size="11" fill="#92938e">04</text>
+      <text x="380" y="876" font-size="15" font-weight="600" fill="#242424">Messages</text>
+      <text x="344" y="896" font-size="12" fill="#92938e">/messages</text>
+    </g>
+    <g>
+      <rect x="736" y="590" width="396" height="330" rx="16" fill="#f4f4f2"/>
+      <rect x="760" y="614" width="348" height="240" rx="10" fill="#e7e7e4"/>
+      <rect x="784" y="648" width="120" height="18" rx="9" fill="#d8d8d4"/>
+      <rect x="784" y="680" width="200" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="784" y="704" width="150" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="784" y="752" width="60" height="18" rx="9" fill="#d8d8d4"/>
+      <text x="760" y="876" font-size="11" fill="#92938e">05</text>
+      <text x="796" y="876" font-size="15" font-weight="600" fill="#242424">Login</text>
+      <text x="760" y="896" font-size="12" fill="#92938e">/login</text>
+    </g>
+    <g>
+      <rect x="1152" y="590" width="396" height="330" rx="16" fill="#f4f4f2"/>
+      <rect x="1176" y="614" width="348" height="240" rx="10" fill="#e7e7e4"/>
+      <rect x="1200" y="648" width="200" height="18" rx="9" fill="#d8d8d4"/>
+      <rect x="1200" y="680" width="230" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="1200" y="704" width="160" height="10" rx="5" fill="#d8d8d4"/>
+      <rect x="1200" y="752" width="70" height="18" rx="9" fill="#d8d8d4"/>
+      <text x="1176" y="876" font-size="11" fill="#92938e">06</text>
+      <text x="1212" y="876" font-size="15" font-weight="600" fill="#242424">Detail</text>
+      <text x="1176" y="896" font-size="12" fill="#92938e">/detail/1</text>
+    </g>
+  </g>
+</svg>

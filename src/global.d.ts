@@ -1,4 +1,4 @@
-import type { DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryGroup, InventoryTarget, ScanLifecycle, ScanProgress, ScanStatus, AutomaticMappingSession, AutomaticMappingStatus, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
+import type { DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryGroup, InventoryTarget, ScanLifecycle, ScanProgress, ScanStatus, AutomaticMappingSession, AutomaticMappingStatus, FigmaConnection, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
 
 declare global {
   interface Window {
@@ -42,6 +42,10 @@ declare global {
       chooseFolder: () => Promise<string | null>;
       listInventoryTargets: () => Promise<Array<InventoryTarget | InventoryGroup>>;
       openInventory: (id: string) => Promise<PageInventory | null>;
+      restoreFilteredPage: (
+        source: { kind: "folder" | "url"; target: string },
+        item: { label: string; route: string; recipe: Array<{ kind?: string; locator: string; label: string }> }
+      ) => Promise<{ ok: boolean; message?: string; page?: DiscoveredPage }>;
       openPagePreview: (
         id: string,
         page: { route: string; recipe: Array<{ locator: string; label: string }> },
@@ -72,6 +76,9 @@ declare global {
       applySwiftUiVisualEdits?: (root: string, batch: { version: 1; projectRoot: string; pageName: string; createdAt: string; nodes: SwiftUiDesignSession["nodes"]; operations: SemanticIntent[] }) => Promise<VisualEditResult>;
       resolveSwiftUiVisualEdit?: (root: string, resolution: "accept" | "reject") => Promise<void>;
       showFigmaPlugin: () => Promise<void>;
+      getFigmaConnection: () => Promise<FigmaConnection>;
+      startFigmaPairing: () => Promise<{ ok: boolean; message?: string; pairingCode?: string; expiresAt?: string }>;
+      forgetFigmaConnection: () => Promise<FigmaConnection>;
       copyText: (value: string) => Promise<void>;
       openFigma: (fileKey: string, nodeId: string | null) => Promise<void>;
       startLivePreview: (root: string, capturePath: string, bounds: LivePreviewBounds) => Promise<LivePreviewSession>;

@@ -248,3 +248,36 @@ test("leaves PATH alone when the package manager is a real binary", () => {
   const before = { PATH: "/usr/bin" };
   assert.equal(ensureLauncherOnPath("npm", before).PATH, "/usr/bin");
 });
+
+test("a project with nothing installed is told which command to run, and where", async () => {
+  // The usual state of a repository someone just cloned. "Install them in this
+  // project" was true and useless: it named neither the package manager nor the
+  // folder, and the package manager is something the project itself declares.
+  const root = await mkdtemp(path.join(os.tmpdir(), "crank-deps-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "x", scripts: { dev: "vite" } }));
+    await writeFile(path.join(root, "pnpm-lock.yaml"), "");
+
+    const outcome = await resolveDevCommand(root);
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.reason, "dependencies-missing");
+    assert.equal(outcome.install.command, "pnpm install", "the lockfile chooses the package manager");
+    assert.equal(outcome.install.source, "pnpm-lock.yaml", "and is cited, so the suggestion is not a guess");
+    assert.equal(outcome.install.root, root);
+    assert.match(outcome.message, /pnpm install/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("with no lockfile it still answers, and says what it went on", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "crank-deps-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "x", scripts: { dev: "vite" } }));
+    const outcome = await resolveDevCommand(root);
+    assert.equal(outcome.install.command, "npm install");
+    assert.equal(outcome.install.source, "package.json");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

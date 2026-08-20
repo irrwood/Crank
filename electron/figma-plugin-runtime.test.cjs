@@ -1076,3 +1076,195 @@ test("Figma bridge rebuilds rendered DOM as editable Figma layers", async () => 
   assert.notEqual(swapped.fontName.family, "Unavailable Sans", "the run uses something Figma actually has");
   assert.deepEqual(completion.substitutedFonts, ["Unavailable Sans"], "and the swap is reported, never silent");
 });
+
+/**
+ * A real application used emoji as its icons, and every one of them arrived in
+ * Figma as a black square: SF Pro has no glyph for them, and a text layer set
+ * in it draws the missing-glyph box.
+ */
+async function pushEmojiText(fonts) {
+  const source = await readFile(path.join(__dirname, "..", "figma-plugin", "code.js"), "utf8");
+  const { figma, page } = createFigmaMock();
+  if (fonts) figma.listAvailableFontsAsync = async () => fonts;
+  let completion = null;
+  const job = {
+    projectId: "1234567890abcdef12345678",
+    projectName: "UI Sync",
+    figmaFileName: "Sample Design",
+    screens: [{
+      id: "emoji-screen", name: "Chat", sourceType: "screen", currentNodeId: null,
+      renderMode: "editable-dom", width: 600, height: 400,
+      domTree: {
+        kind: "element", id: "root", selector: ".shell", name: "Application", x: 0, y: 0, width: 600, height: 400,
+        style: {
+          backgroundColor: "rgb(255, 255, 255)",
+          borderTopColor: "rgba(0, 0, 0, 0)", borderRightColor: "rgba(0, 0, 0, 0)",
+          borderBottomColor: "rgba(0, 0, 0, 0)", borderLeftColor: "rgba(0, 0, 0, 0)",
+          borderTopWidth: 0, borderRightWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0,
+          borderRadius: 0, opacity: 1, clipsContent: true
+        },
+        children: [{
+          kind: "text", id: "root/text:0", selector: ".row", name: "Row", text: "Ask 🤓 anything",
+          sourceText: "Ask 🤓 anything", wrapMode: "nowrap", lineCount: 1,
+          lineRects: [{ x: 0, y: 0, width: 160, height: 20 }], layoutWidth: 160,
+          x: 20, y: 20, width: 160, height: 20,
+          style: {
+            color: "rgb(0, 0, 0)", fontSize: 14, fontWeight: 400, lineHeight: 20, letterSpacing: 0, textAlign: "left",
+            fontFamilies: ["ui-sans-serif"], resolvedFontFamily: "ui-sans-serif", fontStyle: "normal", fontStretch: "100%",
+            whiteSpace: "nowrap", wordBreak: "normal", overflowWrap: "normal", direction: "ltr", writingMode: "horizontal-tb"
+          }
+        }]
+      }
+    }]
+  };
+  const fetch = async (url, options) => {
+    if (options?.method === "POST") {
+      completion = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ createdCount: 1, reusedCount: 0, renderedCount: 1 }) };
+    }
+    return { ok: true, json: async () => job };
+  };
+  vm.runInNewContext(source, { figma, fetch, __html__: "", console, Error, Map, Set, Promise, String, Math });
+  await figma.ui.onmessage({ type: "connect", pairingCode: "123456" });
+  const text = page.findAll((node) => node.type === "TEXT").find((node) => node.characters.includes("🤓"));
+  return { text, completion };
+}
+
+test("an emoji is set in a font that has one, without moving the sentence around it", async () => {
+  const { text } = await pushEmojiText([
+    { fontName: { family: "SF Pro", style: "Regular" } },
+    { fontName: { family: "SF Pro", style: "Bold" } },
+    { fontName: { family: "SF Pro", style: "Semibold" } },
+    { fontName: { family: "Apple Color Emoji", style: "Regular" } }
+  ]);
+  assert.ok(text, "the row was drawn");
+  assert.equal(text.fontName.family, "SF Pro", "the words keep the typeface they were measured in");
+  const ranges = text.fontRanges ?? [];
+  const emojiRange = ranges.find((range) => range.fontName.family === "Apple Color Emoji");
+  assert.ok(emojiRange, `expected an emoji range, got ${JSON.stringify(ranges)}`);
+  // "Ask " is four characters; the emoji is a surrogate pair.
+  assert.deepEqual([emojiRange.start, emojiRange.end], [4, 6]);
+});
+
+test("and when Figma has no emoji font at all, that is reported rather than drawn as boxes", async () => {
+  const { text, completion } = await pushEmojiText([
+    { fontName: { family: "SF Pro", style: "Regular" } },
+    { fontName: { family: "SF Pro", style: "Bold" } },
+    { fontName: { family: "SF Pro", style: "Semibold" } }
+  ]);
+  assert.ok(text);
+  assert.deepEqual(text.fontRanges ?? [], [], "nothing is set to a font that does not exist");
+  assert.ok(
+    completion.substitutedFonts.includes("an emoji font"),
+    `expected the missing emoji font to be named, got ${JSON.stringify(completion.substitutedFonts)}`
+  );
+});
+
+test("a dark interface written in modern CSS colour arrives dark, not empty", async () => {
+  // Cursor's whole window came through as blank frames. Chromium reports
+  // `color(srgb …)` for anything a stylesheet wrote with color-mix() or a
+  // wide-gamut literal, and the plugin's colour reader knew only rgb() — so it
+  // returned no fill at all, for every panel and every line of text.
+  const source = await readFile(path.join(__dirname, "..", "figma-plugin", "code.js"), "utf8");
+  const { figma, page } = createFigmaMock();
+  const blank = {
+    borderTopColor: "rgba(0, 0, 0, 0)", borderRightColor: "rgba(0, 0, 0, 0)",
+    borderBottomColor: "rgba(0, 0, 0, 0)", borderLeftColor: "rgba(0, 0, 0, 0)",
+    borderTopWidth: 0, borderRightWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0,
+    borderRadius: 0, opacity: 1, clipsContent: true
+  };
+  const job = {
+    projectId: "1234567890abcdef12345678",
+    projectName: "Cursor",
+    figmaFileName: "Sample Design",
+    screens: [{
+      id: "dark", name: "Workbench", sourceType: "screen", currentNodeId: null,
+      renderMode: "editable-dom", width: 400, height: 300,
+      domTree: {
+        kind: "element", id: "root", selector: "body", name: "Workbench", x: 0, y: 0, width: 400, height: 300,
+        style: { ...blank, backgroundColor: "color(srgb 0.130353 0.130353 0.130353)" },
+        children: [
+          {
+            kind: "element", id: "root/panel", selector: ".panel", name: "Panel", x: 0, y: 0, width: 400, height: 40,
+            style: { ...blank, backgroundColor: "color(srgb 0.941176 0.941176 0.941176 / 0.08)" },
+            children: []
+          },
+          {
+            kind: "text", id: "root/text:0", selector: ".label", name: "Label", text: "No Repo",
+            sourceText: "No Repo", wrapMode: "nowrap", lineCount: 1,
+            lineRects: [{ x: 0, y: 0, width: 60, height: 16 }], layoutWidth: 60,
+            x: 12, y: 12, width: 60, height: 16,
+            style: {
+              color: "color(srgb 0.8 0.8 0.8)", fontSize: 13, fontWeight: 400, lineHeight: 16, letterSpacing: 0,
+              textAlign: "left", fontFamilies: ["Inter"], resolvedFontFamily: "Inter", fontStyle: "normal",
+              fontStretch: "100%", whiteSpace: "nowrap", wordBreak: "normal", overflowWrap: "normal",
+              direction: "ltr", writingMode: "horizontal-tb"
+            }
+          }
+        ]
+      }
+    }]
+  };
+  const fetch = async (_url, options) => (options?.method === "POST"
+    ? { ok: true, json: async () => ({ createdCount: 1, reusedCount: 0, renderedCount: 1 }) }
+    : { ok: true, json: async () => job });
+
+  vm.runInNewContext(source, { figma, fetch, __html__: "", console, Error, Map, Set, Promise, String, Math, Number, Buffer });
+  await figma.ui.onmessage({ type: "connect", pairingCode: "123456" });
+
+  const screen = page.children.find((node) => node.name === "Workbench");
+  const body = screen.findAll((node) => node.name === "Workbench")[0] ?? screen.children[0];
+  const [fill] = body.fills;
+  assert.equal(fill?.type, "SOLID", "the window has a background");
+  assert.ok(Math.abs(fill.color.r - 0.130353) < 0.001, `expected the captured grey, got ${JSON.stringify(fill.color)}`);
+
+  const panel = screen.findAll((node) => node.name === "Panel")[0];
+  assert.equal(panel.fills[0].opacity, 0.08, "and a translucent panel keeps its alpha");
+
+  const label = screen.findAll((node) => node.type === "TEXT").find((node) => node.characters === "No Repo");
+  assert.ok(Math.abs(label.fills[0].color.r - 0.8) < 0.001, "text is the colour it was, not black on black");
+});
+
+test("a picture in a format Figma cannot read leaves a named gap, not a half-drawn page", async () => {
+  // createImage takes PNG, JPEG and GIF. Handed a WebP it throws, and the throw
+  // came out of the middle of the render — so one picture cost every layer
+  // after it, and the canvas kept filling with a page that would never finish.
+  const source = await readFile(path.join(__dirname, "..", "figma-plugin", "code.js"), "utf8");
+  const { figma, page } = createFigmaMock();
+  const blank = {
+    borderTopColor: "rgba(0, 0, 0, 0)", borderRightColor: "rgba(0, 0, 0, 0)",
+    borderBottomColor: "rgba(0, 0, 0, 0)", borderLeftColor: "rgba(0, 0, 0, 0)",
+    borderTopWidth: 0, borderRightWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0,
+    borderRadius: 0, opacity: 1, clipsContent: true
+  };
+  const job = {
+    projectId: "1234567890abcdef12345678", projectName: "Editor", figmaFileName: "Sample Design",
+    screens: [{
+      id: "s", name: "Workbench", sourceType: "screen", currentNodeId: null,
+      renderMode: "editable-dom", width: 200, height: 100,
+      domTree: {
+        kind: "element", id: "root", selector: "body", name: "Workbench", x: 0, y: 0, width: 200, height: 100,
+        style: { ...blank, backgroundColor: "rgb(20, 20, 20)" },
+        children: [
+          { kind: "image", id: "root/webp", selector: ".icon", name: "Icon", x: 0, y: 0, width: 16, height: 16,
+            dataUrl: "data:image/webp;base64,UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==" },
+          { kind: "image", id: "root/png", selector: ".logo", name: "Logo", x: 40, y: 0, width: 16, height: 16,
+            dataUrl: "data:image/png;base64,iVBORw0KGgo=" }
+        ]
+      }
+    }]
+  };
+  const fetch = async (_url, options) => (options?.method === "POST"
+    ? { ok: true, json: async () => ({ createdCount: 1, reusedCount: 0, renderedCount: 1 }) }
+    : { ok: true, json: async () => job });
+
+  vm.runInNewContext(source, { figma, fetch, __html__: "", console, Error, Map, Set, Promise, String, Math, Number, Buffer });
+  await figma.ui.onmessage({ type: "connect", pairingCode: "123456" });
+
+  const screen = page.children.find((node) => node.name === "Workbench");
+  const unreadable = screen.findAll((node) => String(node.name).startsWith("Unreadable image"));
+  assert.equal(unreadable.length, 1, "the one it cannot read is named");
+  assert.match(unreadable[0].name, /image\/webp/, "and the format is in the name, so it can be fixed");
+  // Everything after it still arrived, which is the whole point.
+  assert.ok(screen.findAll((node) => node.name === "Logo").length > 0, "the picture after it is drawn");
+});

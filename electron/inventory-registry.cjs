@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { createHash } = require("node:crypto");
-const { readFile, writeFile, mkdir, rm } = require("node:fs/promises");
+const { readFile, writeFile, mkdir, readdir, rm } = require("node:fs/promises");
 const { createAssetStore, externalise, referencesIn } = require("./asset-store.cjs");
 
 /**
@@ -166,6 +166,7 @@ function createInventoryRegistry(directory) {
       await rm(cachePath(id), { force: true });
       await rm(path.join(directory, "baselines", `${id}.json`), { force: true });
       await rm(path.join(directory, "dropped", `${id}.json`), { force: true });
+      await rm(path.join(directory, "kept", `${id}.json`), { force: true });
     },
 
     /**
@@ -177,12 +178,46 @@ function createInventoryRegistry(directory) {
      * wording changes, which a content-derived id could never manage.
      */
     async drop(id, pageId) {
+      // Dropping is the opposite decision to keeping, so it replaces it rather
+      // than sitting beside it — otherwise a page restored and then dropped is
+      // crawled out of the threshold on every scan only to be discarded again.
+      const kept = await this.kept(id);
+      if (kept.includes(pageId)) {
+        await writeFile(path.join(directory, "kept", `${id}.json`), JSON.stringify(kept.filter((entry) => entry !== pageId)));
+      }
       const current = await this.dropped(id);
       if (current.includes(pageId)) return current;
       const next = [...current, pageId];
       await mkdir(path.join(directory, "dropped"), { recursive: true });
       await writeFile(path.join(directory, "dropped", `${id}.json`), JSON.stringify(next));
       return next;
+    },
+
+    /**
+     * Pages the crawl judged too small, that the user wants anyway.
+     *
+     * The threshold is a judgement, and a tab that swaps one number really is a
+     * page to whoever is documenting it. Kept by the same identity dropping
+     * uses — the address and the clicks that reach it — and for the same
+     * reason: a scan applies the threshold every time, so the exception has to
+     * be applied every time too, or restoring a page lasts until the next scan.
+     */
+    async keep(id, pageId) {
+      const current = await this.kept(id);
+      if (current.includes(pageId)) return current;
+      const next = [...current, pageId];
+      await mkdir(path.join(directory, "kept"), { recursive: true });
+      await writeFile(path.join(directory, "kept", `${id}.json`), JSON.stringify(next));
+      return next;
+    },
+
+    async kept(id) {
+      try {
+        const parsed = JSON.parse(await readFile(path.join(directory, "kept", `${id}.json`), "utf8"));
+        return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === "string") : [];
+      } catch {
+        return [];
+      }
     },
 
     async dropped(id) {
@@ -315,12 +350,31 @@ function createInventoryRegistry(directory) {
      */
     async sweepAssets() {
       const referenced = new Set();
-      for (const entry of await read()) {
-        const stored = await this.loadInventory(entry.id);
-        if (stored) referencesIn(stored, referenced);
-        referencesIn(entry, referenced);
+      let unread = 0;
+
+      // Every scan on disk, not every scan in the list. An inventory whose list
+      // entry has gone — a half-finished forget, a hand-edited file — still
+      // holds pictures, and reading the list alone would call them unreferenced
+      // and delete them.
+      let files = [];
+      try {
+        files = (await readdir(path.join(directory, "inventories"))).filter((name) => name.endsWith(".json"));
+      } catch {
+        return { removed: 0, skipped: false };
       }
-      return assets.collect(referenced);
+      for (const file of files) {
+        const stored = await this.loadInventory(file.slice(0, -".json".length));
+        if (stored) referencesIn(stored, referenced);
+        else unread += 1;
+      }
+      for (const entry of await read()) referencesIn(entry, referenced);
+
+      // A scan that could not be read is not a scan with no pictures in it.
+      // Deleting on that assumption destroys the images of every project whose
+      // file is corrupt, too large to parse, or simply new in a shape this
+      // version does not know — and there is no getting them back.
+      if (unread > 0) return { removed: 0, skipped: true, unread };
+      return { ...await assets.collect(referenced), skipped: false };
     }
   };
 }

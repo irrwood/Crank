@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   chooseFolder: () => ipcRenderer.invoke("inventory:choose-folder"),
   listInventoryTargets: () => ipcRenderer.invoke("inventory:targets"),
   openInventory: (id) => ipcRenderer.invoke("inventory:open", id),
+  restoreFilteredPage: (source, item) => ipcRenderer.invoke("inventory:restore-filtered", source, item),
   // The project's own page, served and shown where a capture would have been.
   openPagePreview: (id, page, bounds) => ipcRenderer.invoke("inventory:preview-open", id, page, bounds),
   setPagePreviewBounds: (bounds) => ipcRenderer.invoke("inventory:preview-bounds", bounds),
@@ -73,6 +74,9 @@ contextBridge.exposeInMainWorld("uiSync", {
   applySwiftUiVisualEdits: (root, batch) => ipcRenderer.invoke("projects:visual-edit", root, batch),
   resolveSwiftUiVisualEdit: (root, resolution) => ipcRenderer.invoke("projects:visual-edit-resolve", root, resolution),
   showFigmaPlugin: () => ipcRenderer.invoke("figma:show-plugin"),
+  getFigmaConnection: () => ipcRenderer.invoke("figma:connection"),
+  startFigmaPairing: () => ipcRenderer.invoke("figma:start-pairing"),
+  forgetFigmaConnection: () => ipcRenderer.invoke("figma:forget-connection"),
   copyText: (value) => ipcRenderer.invoke("clipboard:write", value),
   openFigma: (fileKey, nodeId) => ipcRenderer.invoke("figma:open", fileKey, nodeId),
   startLivePreview: (root, capturePath, bounds) => ipcRenderer.invoke("preview:start", root, capturePath, bounds),

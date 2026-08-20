@@ -23,6 +23,99 @@ The active product scope is web and Electron projects. Prefer Electron and Chrom
 
 Rules here are decisions, not axioms. Where evidence contradicts one, change it and say what the evidence was; rules 3, 4 and 8 were narrowed after each was read as a prohibition it never stated.
 
+## How this repository is laid out
+
+| Area | Language | What it owns |
+| --- | --- | --- |
+| `electron/` | CommonJS `.cjs` on Node | Everything that touches the machine: starting projects, driving Chromium, capture, storage, the Figma bridge. |
+| `src/` | TypeScript + React 18, built by Vite | The window. Reaches the machine only through `window.uiSync`. |
+| `shared/` | Plain ESM `.js` with a hand-written `.d.ts` | The few decisions both sides must agree on. Loaded by `await import()` in the main process and bundled by Vite in the renderer, so it may use neither Node nor the DOM. |
+| `figma-plugin/` | Plain JS against the Figma Plugin API | The other half of a sync. No build step — `code.js` ships as written, typechecked by `npm run typecheck:plugin`. |
+| `figma-plugin/listing/` | — | The Community submission: the copy and the artwork it is published with. |
+| `swift-tools/`, `swift-sdk/` | Swift | The dormant SwiftUI path. |
+| `public/`, `assets/` | — | `public/app-icon.png` is the icon; `assets/` holds the macOS `.icns` variants built from it. |
+
+Read the docblock at the top of a module before reading the module. Nearly every
+file in `electron/` opens with one that says what the file is for and, more
+usefully, what went wrong before it existed. `asset-store.cjs`,
+`node-identity.cjs`, `page-origin.cjs` and `browsing-session.cjs` are the four to
+read first. Grepping for a symbol tends to land in the wrong file; those
+docblocks are the map.
+
+### What is dormant, and stays that way
+
+`src/App.tsx` is the previous interface. It is unreachable from `src/main.tsx`
+and is kept deliberately, to be folded back in a piece at a time. The SwiftUI
+runtime — `electron/swiftui-*.cjs`, `electron/swift-*.cjs`, `swift-tools/`,
+`swift-sdk/` — is the same: kept readable for compatibility, not extended.
+Neither is dead code to be tidied away, and neither is somewhere to add
+anything.
+
+## Conventions
+
+### Comments and commit messages
+
+A comment says why the code is the way it is, and names what went wrong without
+it. `// increment the counter` is noise; `// Chromium reports the origin of every
+file as "null", so without this the whole disk is either inside the app or
+outside it` is the reason the next person does not delete the line. Prefer one
+paragraph at the top of a module to a comment on every function.
+
+A commit subject says what changed for the person using Crank, as an imperative
+sentence — "Keep every picture once", not "refactor asset store". The body
+carries the evidence: what was observed, what it cost, what was measured
+afterwards.
+
+### Tests
+
+`node:test` and `node:assert/strict`, colocated as `electron/<module>.test.cjs`.
+No test framework and no mocking library. A test name is a sentence about
+behaviour — "an app that registered a scheme of its own is that scheme and host"
+— so a failing run reads as a list of things that stopped being true. Cases
+taken from real projects earn a comment naming the project and the symptom.
+
+### The IPC surface
+
+Channels are named `domain:verb` — `inventory:scan`, `projects:add`,
+`preview:start`. Adding one means changing three files together, and there is no
+way to add a working one without all three:
+
+1. `electron/main.cjs` — `ipcMain.handle("domain:verb", …)`
+2. `electron/preload.cjs` — one method on the `uiSync` bridge
+3. `src/global.d.ts` — its type
+
+Validate what crosses that boundary with Zod, along with stored registry data
+and anything read back out of a captured page (rule 7).
+
+### The renderer
+
+- One stylesheet, `src/styles.css`, in semantic class names — `.sidebar-bar`,
+  `.project-item`. Tailwind is imported at the top of it, but the interface is
+  not written in utility classes; do not start.
+- Every user-facing string goes through `t()` and exists in both `en` and
+  `zh-CN` in `src/lib/locale.tsx`. A literal in JSX is a defect that
+  typechecking cannot catch.
+- The window is `hiddenInset` with the traffic lights at (18, 18), so a column
+  starts below the `.sidebar-drag` spacer.
+- The renderer has no Node. If it needs the machine, it needs a channel.
+- A column that must keep something pinned at its foot needs `min-height: 0` on
+  the part that scrolls: a flex item's automatic minimum is its content, so
+  without it the list never overflows and pushes the rest off the bottom.
+
+### Code that is injected into a captured page
+
+`electron/figma-tree.cjs` is serialised with `toString()` and evaluated inside
+the page being captured. It can close over nothing and require nothing, and the
+same holds for any function handed to `browsing-session`. Adding an import to
+one of these fails only at capture time, in someone else's app.
+
+### The product is called Crank
+
+It was called UI Sync. The old name survives where changing it would be risky or
+pointless — the `window.uiSync` bridge, the user-data migration, the Swift SDK's
+`UISyncDesignNode`, and many docblocks. Leave those. Anything a user reads says
+Crank.
+
 ## SwiftUI PDF-to-Figma rules
 
 These rules are mandatory for existing SwiftUI PDF import compatibility:
@@ -37,6 +130,12 @@ The import order is therefore fixed: preserve the complete PDF-to-SVG visual res
 
 ## Development loop
 
+While working on the renderer, the fast check is:
+
+```bash
+npm run typecheck
+```
+
 After changing TypeScript, JavaScript, Electron, Figma plugin, or Swift scanner code:
 
 ```bash
@@ -44,6 +143,25 @@ npm test
 npm run build
 npm audit --omit=dev
 ```
+
+### Looking at the running app
+
+`npm run dev` runs Vite and Electron together with reload. To see a change as a
+user gets it — the built renderer, at the real window size, with the real
+registry behind it — and to be able to screenshot it:
+
+```bash
+npm run build && npx electron . --remote-debugging-port=9223
+```
+
+The window is then a CDP target: `curl -s http://127.0.0.1:9223/json/list` names
+it, and `Page.captureScreenshot` over its `webSocketDebuggerUrl` returns a PNG.
+Node has had `WebSocket` built in since 21, so this needs nothing installed.
+
+Look at the result. A change to the window is not finished because it
+typechecks: the sidebar's own status label was truncated to "Figma …" at the
+real 180px width, which no test would have failed on and which the browser at a
+comfortable width never showed.
 
 ## UI direction
 

@@ -1,6 +1,6 @@
 {
   "name": "crank-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A local-first visual sync client for React and Figma.",
   "productName": "Crank",
@@ -12,7 +12,8 @@
     "typecheck:plugin": "tsc --allowJs --checkJs --noEmit --strict false --skipLibCheck --target ES2022 --lib ES2022,DOM --types @figma/plugin-typings figma-plugin/code.js",
     "test": "node --test electron/*.test.cjs",
     "build": "npm run typecheck && npm run typecheck:plugin && vite build",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+    "package": "vite build && node scripts/package.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -22,6 +23,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
     "@figma/plugin-typings": "^1.133.0",
     "@tailwindcss/vite": "^4.0.0",
     "@types/react": "^18.3.18",

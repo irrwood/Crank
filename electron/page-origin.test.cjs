@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { isFileOrigin, originOf, routeWithin, withinOrigin } = require("./page-origin.cjs");
+const { isAppOrigin, isFileOrigin, originOf, routeWithin, withinOrigin } = require("./page-origin.cjs");
 const { createBrowsingSession } = require("./browsing-session.cjs");
 
 const installed = "file:///Applications/Ledger.app/Contents/Resources/app.asar/dist/index.html";
@@ -11,6 +11,25 @@ test("an app loaded from disk has its own folder for an origin", () => {
   assert.equal(originOf("http://localhost:5173/dashboard"), "http://localhost:5173");
   assert.equal(isFileOrigin(app), true);
   assert.equal(isFileOrigin("http://localhost:5173"), false);
+});
+
+test("an app that registered a scheme of its own is that scheme and host", () => {
+  // A real one: ChatWise serves its interface from client://app/. The browser
+  // calls that origin "null", which is not even a URL — parsing it is what
+  // turned a scan of it into "Invalid URL".
+  const own = originOf("client://app/?chat=u1amzv4kql");
+  assert.equal(own, "client://app");
+  assert.equal(isAppOrigin(own), true);
+  assert.equal(originOf("app://-/index.html"), "app://-");
+  assert.equal(withinOrigin("client://app/settings", own), true);
+  // A prefix is not a boundary: this is a different app, not a page of that one.
+  assert.equal(withinOrigin("client://application/settings", own), false);
+  assert.equal(withinOrigin("https://api.example.com/rows", own), false);
+  // Its pages are already addressed relative to it; only a folder has a prefix
+  // worth stripping.
+  assert.equal(routeWithin("/settings", own), "/settings");
+  assert.equal(isAppOrigin("http://localhost:5173"), false);
+  assert.equal(isFileOrigin(own), false);
 });
 
 test("the app's own pages belong to it and the rest of the machine does not", () => {

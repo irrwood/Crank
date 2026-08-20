@@ -249,6 +249,17 @@ test("a hash route names its page, not the document every page shares", () => {
   assert.equal(chooseStateName({ recipe: [], route: "/pricing#details" }), "Pricing");
 });
 
+test("an identifier in the address is not a name", () => {
+  // A real app opened its window at "?chat=u1amzv4kql", and the page came back
+  // called "U1amzv4kql · Overview" — a name that is different on every scan,
+  // which is exactly what a page's identity cannot be.
+  // What is left is the page it actually is: the app's home, and its heading.
+  assert.equal(chooseStateName({ recipe: [], route: "/?chat=u1amzv4kql", heading: "Overview" }), "Home · Overview");
+  assert.equal(chooseStateName({ recipe: [], route: "/?id=8f2a9c31", title: "Ledger" }), "Home · Ledger");
+  // A readable one still names its page, which is why the query is read at all.
+  assert.equal(chooseStateName({ recipe: [], route: "/?view=settings" }), "Settings");
+});
+
 test("does not repeat an identical name part", () => {
   assert.equal(humanizeStateName(["新任务", "新任务"]), "新任务");
 });
@@ -284,6 +295,34 @@ test("keeps small-change states out of the inventory but reports them", async ()
   assert.ok(names.some((name) => name.includes("Reports")));
   assert.equal(filtered.length, 1);
   assert.match(filtered[0].label, /tooltip/i);
+  // Reported with the way back to it, because the threshold is a judgement and
+  // what it leaves out has to be recoverable rather than merely listed.
+  assert.equal(filtered[0].route, "/");
+  assert.deepEqual(filtered[0].recipe, [{ kind: "click", locator: "#tip", label: "Show tooltip" }]);
+});
+
+test("a page asked for by name is kept however little it changed", async () => {
+  const app = {
+    "/": {
+      url: "/",
+      fingerprint: ["main|app||125x100"],
+      controls: [{ locator: "#tip", label: "Show tooltip", to: "tooltip" }]
+    },
+    tooltip: { url: "/", fingerprint: ["main|app||125x100", "span|tip||8x4"], controls: [] }
+  };
+  const asked = identityOf("/", [{ kind: "click", locator: "#tip", label: "Show tooltip" }]);
+
+  const kept = await discoverStates(fakeSession(app), { routes: ["/"], maxDepth: 1, keepAnyway: new Set([asked]) });
+  assert.equal(kept.states.length, 2, "the page the user asked for is in the inventory");
+  assert.equal(kept.filtered.length, 0, "and is not also reported as left out");
+  // The same identity the crawl gives it, so the exception matches the page a
+  // later scan produces rather than a lookalike of it.
+  assert.ok(kept.states.some((state) => state.id === asked));
+
+  // Someone else's exception must not let this one through.
+  const other = await discoverStates(fakeSession(app), { routes: ["/"], maxDepth: 1, keepAnyway: new Set(["page-somethingelse"]) });
+  assert.equal(other.states.length, 1);
+  assert.equal(other.filtered.length, 1);
 });
 
 test("a different address is a page even when it looks almost identical", async () => {

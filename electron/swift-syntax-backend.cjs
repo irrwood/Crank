@@ -1,6 +1,7 @@
 const { access, mkdir, stat } = require("node:fs/promises");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
+const { shippedPath } = require("./packaged-path.cjs");
 
 const xcodeHostLibraryPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host";
 const xcodeSwiftCompilerPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc";
@@ -42,7 +43,7 @@ async function ensureScannerBinary(cacheDirectory) {
     return null;
   }
 
-  const sourcePath = path.resolve(__dirname, "..", "swift-tools", "UISyncSwiftScanner", "main.swift");
+  const sourcePath = path.resolve(shippedPath("swift-tools"), "UISyncSwiftScanner", "main.swift");
   const binaryDirectory = path.join(cacheDirectory, "swift-syntax");
   const binaryPath = path.join(binaryDirectory, "ui-sync-swift-scanner");
   await mkdir(binaryDirectory, { recursive: true });

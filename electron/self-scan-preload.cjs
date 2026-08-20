@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   listInventoryTargets: forward("inventory:targets"),
   openInventory: forward("inventory:open"),
   openPagePreview: inert({ ok: false, message: "Crank 正在扫描自己，这份副本不能开预览。" }),
+  restoreFilteredPage: inert({ ok: false, message: "Crank 正在扫描自己，这份副本不能改扫描结果。" }),
   setPagePreviewBounds: inert(false),
   closePagePreview: inert(true),
 

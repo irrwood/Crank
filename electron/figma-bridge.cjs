@@ -133,13 +133,25 @@ const screenSchema = z.discriminatedUnion("renderMode", [
   })
 ]);
 
+/**
+ * A pairing job carries no pages and names no file.
+ *
+ * Every code used to belong to a batch of pages, which meant the only way to
+ * connect the plugin was to send something somewhere — and someone who just
+ * installed the plugin has nothing to send yet. A job whose whole content is
+ * the connection token is the smallest thing that can hand one over, and it
+ * goes through the same door as any other job: the plugin fetches it by code.
+ */
 const publicJobSchema = z.object({
-  operation: z.enum(["push", "pull"]).default("push"),
+  operation: z.enum(["push", "pull", "pair"]).default("push"),
   projectId: z.string().regex(/^[a-f0-9]{24}$/),
   projectName: z.string().min(1).max(160),
-  figmaFileName: z.string().min(1).max(240),
-  screens: z.array(screenSchema).min(1).max(120)
-});
+  figmaFileName: z.string().max(240),
+  screens: z.array(screenSchema).max(120)
+}).refine(
+  (job) => job.operation === "pair" || (job.screens.length > 0 && job.figmaFileName.length > 0),
+  { message: "A push or a pull needs a file to work in and at least one screen" }
+);
 
 const figmaDomNodeSnapshotSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_:/-]{1,500}$/),
@@ -177,7 +189,11 @@ const pullCompletionSchema = z.object({
   fileName: z.string().min(1).max(240),
   screens: z.array(screenSnapshotSchema).min(1).max(120)
 });
-const completionSchema = z.union([pushCompletionSchema, pullCompletionSchema]);
+const pairCompletionSchema = z.object({
+  operation: z.literal("pair"),
+  fileName: z.string().min(1).max(240)
+});
+const completionSchema = z.union([pushCompletionSchema, pullCompletionSchema, pairCompletionSchema]);
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -323,6 +339,17 @@ function createFigmaBridge({ port = DEFAULT_PORT, onComplete, onDisconnect = asy
     if (request.method === "POST" && match[2]) {
       try {
         const result = completionSchema.parse(await readJson(request));
+        // Nothing was sent, so there is nothing to match: what the plugin
+        // returns is the fact that it now holds the connection.
+        if (result.operation === "pair") {
+          await onComplete(job.context, result);
+          job.state = "complete";
+          job.createdCount = 0;
+          job.reusedCount = 0;
+          job.renderedCount = 0;
+          sendJson(response, 200, publicStatus(job));
+          return;
+        }
         const expectedIds = new Set(job.publicJob.screens.map((screen) => screen.id));
         const returnedScreens = "mappings" in result ? result.mappings : result.screens;
         if (returnedScreens.length !== expectedIds.size || returnedScreens.some((entry) => !expectedIds.has(entry.screenId))) {

@@ -8,3 +8,6 @@ npm-debug.log*
 artifacts
 output
 tmp
+# Build output: the packaged app and the archive that goes to a release.
+release
+.claude

@@ -1,7 +1,9 @@
-const { spawn } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const net = require("node:net");
 const path = require("node:path");
-const { readFile, readdir, stat } = require("node:fs/promises");
+const { readFile, readdir, rm, stat } = require("node:fs/promises");
+const os = require("node:os");
+const { createHash } = require("node:crypto");
 const { listTargets } = require("./cdp-session.cjs");
 
 /**
@@ -97,6 +99,102 @@ async function describeAppBundle(target) {
   };
 }
 
+/**
+ * The copy of this app that is already running, if there is one.
+ *
+ * An app that allows only one of itself hands its arguments to the copy already
+ * running and exits — including the debugging port, which that copy was never
+ * started with. Inferring that from a quick exit was close enough to be
+ * misleading: an app that failed for any other reason was reported as already
+ * running. Asking the process list is the actual evidence, and it also answers
+ * the more useful question — whether the copy already running has a debugging
+ * port of its own, because then there is nothing to start at all.
+ */
+async function runningInstance(executable, { processes = listProcesses, argumentsOf = readArguments } = {}) {
+  const lines = await processes().catch(() => []);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const at = trimmed.indexOf(" ");
+    if (at < 0) continue;
+    // Matched on the executable itself rather than on the command line, which
+    // cannot be split reliably — every path in it may contain spaces, an app
+    // opened with a document carries that document in it, and an app's helpers
+    // carry the app's own path in their arguments.
+    if (trimmed.slice(at + 1) !== executable) continue;
+    const pid = Number(trimmed.slice(0, at));
+    const port = String(await argumentsOf(pid).catch(() => "")).match(/--remote-debugging-port=(\d+)/)?.[1];
+    return { pid, port: port ? Number(port) : null };
+  }
+  return null;
+}
+
+function listProcesses() {
+  return run("ps", ["-axo", "pid=,comm="]).then((output) => output.split("\n"));
+}
+
+function readArguments(pid) {
+  return run("ps", ["-p", String(pid), "-o", "command="]);
+}
+
+function run(command, args) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { maxBuffer: 8_000_000 }, (cause, stdout) => {
+      if (cause) reject(cause);
+      else resolve(String(stdout));
+    });
+  });
+}
+
+/**
+ * The icon the app carries in its own bundle.
+ *
+ * A page declares a favicon and a scan takes it from there, but that is the
+ * icon of a window; an installed app is known by the one on it in the Dock and
+ * in Applications. It also exists before anything has been scanned, so the row
+ * can wear it from the moment the app is dropped.
+ *
+ * Read from the file the bundle names, rather than asked of the system:
+ * `app.getFileIcon` never returned at all here, and nativeImage decodes no
+ * .icns — it answered 0×0 for a perfectly good icon. `sips` is macOS's own
+ * converter and ships with it.
+ */
+async function readAppIcon(root, { convert = convertWithSips } = {}) {
+  const contents = path.join(String(root ?? ""), "Contents");
+  const declared = await readFile(path.join(contents, "Info.plist"), "utf8")
+    .then((plist) => plist.match(/<key>\s*CFBundleIconFile\s*<\/key>\s*<string>([^<]+)<\/string>/)?.[1]?.trim() ?? null)
+    .catch(() => null);
+
+  const named = declared ? [declared.endsWith(".icns") ? declared : `${declared}.icns`] : [];
+  // Some bundles name no icon, or name one that is not there; the Resources
+  // folder holds exactly one .icns in almost every case.
+  const found = (await readdir(path.join(contents, "Resources")).catch(() => []))
+    .filter((entry) => entry.endsWith(".icns"));
+  for (const candidate of [...named, ...found]) {
+    const icns = path.join(contents, "Resources", candidate);
+    if (!(await exists(icns))) continue;
+    const png = path.join(os.tmpdir(), `crank-icon-${createHash("sha256").update(icns).digest("hex").slice(0, 16)}.png`);
+    try {
+      await convert(icns, png);
+      const bytes = await readFile(png);
+      await rm(png, { force: true });
+      if (bytes.length > 0) return `data:image/png;base64,${bytes.toString("base64")}`;
+    } catch {
+      await rm(png, { force: true }).catch(() => {});
+    }
+  }
+  return null;
+}
+
+/** 128px: crisp at the 28px the list draws it, and small enough to store. */
+function convertWithSips(icns, png) {
+  return new Promise((resolve, reject) => {
+    execFile("sips", ["-s", "format", "png", "-Z", "128", icns, "--out", png], { timeout: 8000 }, (cause) => {
+      if (cause) reject(cause);
+      else resolve();
+    });
+  });
+}
+
 /** A port the app can have to itself, rather than one that may already be busy. */
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -120,11 +218,30 @@ async function launchAppBundle(bundle, {
   timeout = LAUNCH_TIMEOUT,
   launch = spawn,
   targetsOn = listTargets,
-  wait = delay
+  wait = delay,
+  running = runningInstance
 } = {}) {
   if (!bundle?.executable) {
     return { ok: false, message: `${bundle?.name ?? "That app"} does not say which file to start; it cannot be opened this way.` };
   }
+
+  const already = await running(bundle.executable).catch(() => null);
+  if (already?.port) {
+    // Already open with a debugging port — started that way by the person, or
+    // left over from an earlier scan. Either way it is the copy with their data
+    // in it, and starting a second one is both impossible and unwanted.
+    const windows = (await targetsOn(already.port).catch(() => []))
+      .filter((target) => target.url && target.url !== "about:blank");
+    // Not stopped afterwards: Crank did not open this one.
+    if (windows.length > 0) return { ok: true, port: already.port, windows, adopted: true, stop: async () => {} };
+  }
+  if (already) {
+    return {
+      ok: false,
+      message: `${bundle.name} is already running, and a copy that is already running cannot be given a debugging port. Quit ${bundle.name}, then scan again.`
+    };
+  }
+
   const chosen = port ?? await freePort();
 
   let child;
@@ -138,11 +255,20 @@ async function launchAppBundle(bundle, {
   child.on?.("exit", (code) => { ended = { code }; });
   child.on?.("error", (cause) => { ended = { code: null, message: cause.message }; });
 
+  // Waited on, not merely asked for: an app takes a moment to close, and a
+  // scan started straight after one that has just finished would otherwise find
+  // the dying copy still in the process list and report it as already running.
   const stop = async () => {
     if (ended) return;
     try {
       child.kill();
     } catch {}
+    for (let waited = 0; !ended && waited < 4_000; waited += 100) await wait(100);
+    if (!ended) {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    }
   };
 
   const deadline = Date.now() + timeout;
@@ -150,14 +276,12 @@ async function launchAppBundle(bundle, {
     const targets = await targetsOn(chosen).catch(() => []);
     const windows = targets.filter((target) => target.url && target.url !== "about:blank");
     if (windows.length > 0) return { ok: true, port: chosen, windows, stop };
-    // An app that only allows one copy of itself hands its arguments to the
-    // copy already running and exits — including the debugging port, which that
-    // copy was not started with and will not open. Quitting it is the only way
-    // through, and saying that beats waiting out the full timeout.
+    // Nothing to attach to and nothing left running: say that it closed, and
+    // what it said on the way out, rather than guessing at why.
     if (ended) {
       return {
         ok: false,
-        message: `${bundle.name} closed again as soon as it was started, which is what happens when a copy of it is already running. Quit ${bundle.name}, then scan again.`
+        message: `${bundle.name} closed again as soon as it was opened${ended.message ? `: ${ended.message}` : ""}. Nothing was left running to scan.`
       };
     }
     await wait(250);
@@ -170,4 +294,4 @@ async function launchAppBundle(bundle, {
   };
 }
 
-module.exports = { describeAppBundle, launchAppBundle, looksLikeAppBundle };
+module.exports = { describeAppBundle, launchAppBundle, looksLikeAppBundle, readAppIcon, runningInstance };

@@ -12,73 +12,143 @@ what the browser laid out, so what arrives is what the page actually renders.
 - **Starts the project itself.** npm and pnpm projects run their own dev script;
   Electron projects serve the renderer without opening a window; Python and Ruby
   projects use the command their Dockerfile, Procfile or README already declares.
+  Crank never invents a start command — a half-working start produces a
+  confusing scan rather than an honest failure.
 - **Walks every page.** Routes, tabs and overlays each count as a page. A theme
   or language switch is the same page wearing a different look, and is grouped
-  with it.
+  with it. Every page carries the exact steps to reach it again from a fresh
+  load, so a page that takes a click is not a page that can only be found once.
 - **Attaches to what is already running.** An app started with a debugging port
   can be scanned as it is, with the data actually in it — which is the only way
   to capture screens that live behind a login or a bridge.
 - **Hands the result over.** A self-contained HTML handoff page, or editable
   layers pushed straight into a Figma file.
 
-## Development
+## Giving it something to scan
+
+Drop a project folder anywhere on the window. If the folder is a workspace with
+several independently runnable applications, each becomes its own project;
+component libraries with no start script are ignored.
+
+Three other ways in, for the cases where there is no folder to give:
+
+- **A built `.app`.** A designer handed a build has no project — Crank opens the
+  bundle's own debug port, scans, and closes it again.
+- **An address.** If the app is already running, scan the URL. Discovery only
+  ever talks HTTP, so what the project is written in does not come into it.
+- **An app you are using right now**, over its debugging port. The pages worth
+  handing to a designer are usually the ones with real data in them, and those
+  only exist in the process you are actually running.
+
+Supported sources:
+
+- Web projects — Vite, Next.js, Remix, Gatsby, Astro
+- Electron desktop projects, including React, Vue, Svelte, Angular, Solid, Lit
+  and plain Chromium renderers
+- Any address that answers over HTTP, whatever served it
+- Tailwind is recognised when the project depends on it
+
+An external renderer is opened in a sandboxed Electron session with Node
+integration disabled. Non-GET requests are cancelled unless they are framework
+tooling, and off-host scripts and data calls are cancelled too, so a scan cannot
+write to your project or run a third party's code inside it. What the page
+merely draws — its fonts, its images — is loaded, because a scan that comes back
+worse than opening the page in a browser is a defect, not a safety measure.
+
+## What comes back
+
+A page can be looked at three ways, and the window says which one is on screen,
+because they differ and knowing which you are looking at is the point of having
+more than one:
+
+1. **The project's own page**, served and shown live. Fonts, `::before`,
+   gradients, hover and animation are then simply correct, because nothing is
+   standing in for them.
+2. **The captured markup**, when the real page cannot be reached — the folder
+   moved, the address is down, the project was an installed app.
+3. **The layer tree**, which is what Figma receives.
+
+Every captured image is stored once, under the hash of its own bytes, however
+many pages show it.
+
+The handoff export is one `.html` file that opens in any browser and carries its
+own images, so it can be sent to someone who has none of this installed.
+
+## Figma
+
+Connect a Figma Design file and choose **Create & link frames**. Crank gives you
+a six-digit pairing code for the companion plugin in [`figma-plugin/`](figma-plugin/).
+Pairing is per-machine and remembered, so it is done once rather than per
+project.
+
+The plugin uses Figma's official Plugin API to:
+
+- reuse an exact stored node ID while it still exists;
+- recover a moved or renamed frame from stable shared plugin data;
+- create a frame at the captured viewport — 393 × 852 when there is nothing to
+  go on — only when no identity exists;
+- rebuild Chromium's geometry, text, SVG, images, fills, borders, radii and
+  typography as editable Figma layers;
+- send back the file name, the new node IDs, and the text, size, colour and font
+  of each mapped layer, which is how a later run finds the same frames and how
+  Crank can tell what changed in Figma.
+
+Import it once from `figma-plugin/manifest.json` via **Plugins → Development →
+Import plugin from manifest…**. It can reach `localhost:38457` and nothing else;
+a sync sends normalized visual structure, never your source code.
+
+Nothing about a project leaves the machine except during an explicit sync.
+
+## Running it
 
 ```bash
-npm run dev
+npm run dev     # Vite and Electron together, with reload
+npm start       # build, then run it the way a user gets it
 ```
+
+Or double-click `Start UI Sync.command`, which installs dependencies on first
+run and then does the same.
+
+The icon comes from `public/app-icon.png`; the macOS `.icns` variants built from
+it live in `assets/`.
+
+## Working on Crank
+
+[`AGENTS.md`](AGENTS.md) is the file to read first: the rules the product is
+held to, where everything lives, and the conventions this codebase actually
+follows. The short version is that `electron/` owns everything touching the
+machine, `src/` is the window and reaches the machine only through
+`window.uiSync`, and nearly every module opens with a paragraph saying what it
+is for and what went wrong before it existed.
+
+```bash
+npm test
+npm run build
+npm audit --omit=dev
+```
+
+<!--
+The SwiftUI path is not part of the current product scope. Per AGENTS.md,
+existing SwiftUI connections stay readable for backward compatibility, but the
+parsing and Design Build loop are not being extended. This section is kept
+rather than deleted so that, if the direction changes again, what the loop
+already did is on record.
 
 ## SwiftUI visual editing MVP
 
 The SwiftUI Design Studio implements the v1 visual-editing loop:
 
 - discover every SwiftUI screen, modal, and component and expose them in the local Pages & Views rail;
-- render source-linked SwiftUI IR as real selectable DOM layers in the UI Sync canvas;
+- render source-linked SwiftUI IR as real selectable DOM layers in the canvas;
 - edit text, width, height, corner radius, font size, and background with immediate local preview;
 - keep a Simulator PNG as an optional, hidden-by-default visual reference rather than editable content;
-- add [`swift-sdk/UISyncDesignNode.swift`](swift-sdk/UISyncDesignNode.swift) to the app target;
+- add `swift-sdk/UISyncDesignNode.swift` to the app target;
 - wrap the editable screen root in `UISyncDesignCanvas { ... }`;
 - mark 5–30 component-level views with `.designNode("stable-id", cornerRadius: ..., fontSize: ...)`;
 - optionally run Design Build to add runtime measurements for the active launch route, then switch between Interact and Select mode;
 - resize a node or set an Inspector target, review the relational intent payload, and confirm it for Codex;
-- UI Sync creates a clean `ui-sync/design-edit-*` Git branch, rebuilds up to three times, spot-checks a second Simulator canvas for geometry edits, then waits for Accept or Reject.
+- Crank creates a clean `ui-sync/design-edit-*` Git branch, rebuilds up to three times, spot-checks a second Simulator canvas for geometry edits, then waits for Accept or Reject.
 
-The target project must be a clean Git worktree before a visual edit. Runtime capture stays local; only the confirmed normalized intent batch is sent to Codex.
-
-The application icon is sourced from `public/app-icon.png`; macOS raster and `.icns` variants live in `assets/`.
-
-Supported local sources:
-
-- Electron desktop projects, including React, Vue, Svelte, Angular, Solid, Lit, and plain Chromium renderers
-- Web projects, including Vite, Next.js, Remix, Gatsby, and Astro
-- Tailwind is detected automatically when present
-
-Website and desktop sources use the same explicit element-to-Figma identity. A published URL without its source repository is treated separately because it cannot support safe two-way code updates.
-
-Drop a project or workspace folder anywhere on the application window to inspect it. If the folder contains several independently runnable packages, UI Sync creates one Project for each app. Component libraries without an app start script are ignored.
-
-External Electron renderers are opened through Electron's official sandboxed `BrowserWindow` runtime. Node integration is disabled, permissions and new windows are denied, and non-local network requests are blocked. UI Sync reads Chromium's real DOM geometry and computed styles into editable structure; it does not use a screenshot as the Figma result. A built renderer such as `out/renderer/index.html`, `dist/renderer/index.html`, or `dist/index.html` is required for deterministic capture.
-
-## Automatic Figma frame identity
-
-After connecting a Figma Design file, choose **Create & link frames**. UI Sync gives you a six-digit pairing code for the local **UI Sync Bridge** Figma plugin in `figma-plugin/`.
-
-The plugin uses Figma's official Plugin API to:
-
-- reuse an exact stored node ID when it still exists;
-- recover a moved or renamed frame from stable shared plugin data;
-- create a 393 × 852 screen frame only when no identity exists;
-- rebuild Chromium DOM geometry, text, SVG, images, fills, borders, radii, and typography as editable Figma layers;
-- return every native Figma node ID to the desktop app automatically.
-
-Import the plugin once from `figma-plugin/manifest.json` via **Plugins → Development → Import plugin from manifest…**. Communication is restricted to `localhost:38457`; the explicit sync action sends normalized editable visual structure, never project source code.
-
-## Run
-
-Double-click `Start UI Sync.command`, or run:
-
-```sh
-cd /Users/qian/Documents/UI-Sync
-npm start
-```
-
-The current milestone includes real local project discovery, a source-structured local SwiftUI editor, Codex-backed SwiftUI edits with Git accept/reject checkpoints, and automatic native Figma frame creation/identity recovery.
+The target project must be a clean Git worktree before a visual edit. Runtime
+capture stays local; only the confirmed normalized intent batch is sent to Codex.
+-->

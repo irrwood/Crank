@@ -256,7 +256,7 @@ test("a swept store keeps what the remembered projects still use", async () => {
     });
     await registry.forget(targetId("url", "http://gone.test"));
 
-    assert.deepEqual(await registry.sweepAssets(), { removed: 1 });
+    assert.deepEqual(await registry.sweepAssets(), { removed: 1, skipped: false });
     assert.equal((await readdir(path.join(directory, "assets"))).length, 1);
     const loaded = await registry.loadInventory(targetId("url", "http://kept.test"));
     assert.equal(await registry.assets.dataUrl(loaded.pages[0].thumbnail.dataUrl), kept);
@@ -299,5 +299,74 @@ test("an older scan keeps its markup, under the current names", async () => {
 
     const rewritten = await readFile(path.join(directory, "inventories", `${id}.json`), "utf8");
     assert.equal(rewritten.includes("base64"), false, "with the pictures lifted out of the markup, and written back");
+  });
+});
+
+test("a page kept against the threshold stays kept", async () => {
+  await withRegistry(async (registry) => {
+    const id = targetId("folder", "/repos/site");
+    assert.deepEqual(await registry.kept(id), [], "nothing is excepted to begin with");
+
+    // A scan applies the threshold every time, so the exception has to outlast
+    // the scan that it was made during — exactly like dropping one.
+    await registry.keep(id, "page-abc123");
+    await registry.keep(id, "page-abc123");
+    assert.deepEqual(await registry.kept(id), ["page-abc123"], "and is remembered once");
+
+    await registry.keep(id, "page-def456");
+    assert.deepEqual(await registry.kept(id), ["page-abc123", "page-def456"]);
+  });
+});
+
+test("forgetting a project forgets what it kept and what it dropped", async () => {
+  await withRegistry(async (registry) => {
+    const id = await registry.saveInventory("folder", "/repos/site", { ok: true, pages: [{ id: "a" }] });
+    await registry.keep(id, "page-abc123");
+    await registry.drop(id, "page-zzz999");
+
+    await registry.forget(id);
+    assert.deepEqual(await registry.kept(id), [], "or a folder scanned again later inherits decisions about a different scan");
+    assert.deepEqual(await registry.dropped(id), []);
+  });
+});
+
+test("nothing is swept while any scan cannot be read", async () => {
+  await withRegistry(async (registry, directory) => {
+    const kept = `data:image/png;base64,${Buffer.from("used by the unreadable scan").toString("base64")}`;
+    await registry.saveInventory("url", "http://good.test", { ok: true, pages: [{ id: "a", thumbnail: { dataUrl: kept } }] });
+    // A file too large to parse, or written by a version this one does not
+    // know, is not a file with no pictures in it. Sweeping on that assumption
+    // deletes images there is no way to get back.
+    await writeFile(path.join(directory, "inventories", `${targetId("url", "http://broken.test")}.json`), "{ not json");
+
+    const outcome = await registry.sweepAssets();
+    assert.deepEqual(outcome, { removed: 0, skipped: true, unread: 1 });
+    assert.equal((await readdir(path.join(directory, "assets"))).length, 1, "and the pictures are all still there");
+  });
+});
+
+test("a scan whose list entry is gone still keeps its pictures", async () => {
+  await withRegistry(async (registry, directory) => {
+    const orphaned = `data:image/png;base64,${Buffer.from("in an unlisted scan").toString("base64")}`;
+    await registry.saveInventory("url", "http://listed.test", { ok: true, pages: [{ id: "a" }] });
+    await registry.saveInventory("url", "http://unlisted.test", { ok: true, pages: [{ id: "a", thumbnail: { dataUrl: orphaned } }] });
+    // The list loses the entry but the scan stays: a half-finished forget, or a
+    // hand-edited list. Reading the list alone would call these unreferenced.
+    await writeFile(path.join(directory, "inventory-targets.json"),
+      JSON.stringify((await registry.list()).filter((entry) => entry.name !== "unlisted.test")));
+
+    assert.deepEqual(await registry.sweepAssets(), { removed: 0, skipped: false });
+    assert.equal((await readdir(path.join(directory, "assets"))).length, 1);
+  });
+});
+
+test("dropping a page undoes having kept it", async () => {
+  await withRegistry(async (registry) => {
+    const id = targetId("folder", "/repos/site");
+    await registry.keep(id, "page-abc123");
+    await registry.drop(id, "page-abc123");
+
+    assert.deepEqual(await registry.kept(id), [], "the two are opposite answers to the same question");
+    assert.deepEqual(await registry.dropped(id), ["page-abc123"]);
   });
 });

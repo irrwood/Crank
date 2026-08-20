@@ -2,6 +2,7 @@ const { access, mkdir, stat } = require("node:fs/promises");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { z } = require("zod");
+const { shippedPath } = require("./packaged-path.cjs");
 
 const xcodeSwiftCompilerPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc";
 const xcodeMacSdkPath = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
@@ -47,7 +48,7 @@ async function ensureCompositorBinary(cacheDirectory) {
   if (!(await exists(xcodeSwiftCompilerPath))) {
     throw new Error("The full Xcode toolchain is required to compose SwiftUI PDF pages");
   }
-  const sourcePath = path.resolve(__dirname, "..", "swift-tools", "UISyncPdfCompositor", "main.swift");
+  const sourcePath = path.resolve(shippedPath("swift-tools"), "UISyncPdfCompositor", "main.swift");
   const binaryDirectory = path.join(cacheDirectory, "pdf-compositor");
   const binaryPath = path.join(binaryDirectory, "ui-sync-pdf-compositor");
   await mkdir(binaryDirectory, { recursive: true });

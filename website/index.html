@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-zh="Crank：你的应用，重新可编辑" data-en="Crank: Your app, editable again">Crank：你的应用，重新可编辑</title>
+  <meta name="description" content="把项目文件夹或 .app 拖进 Crank，它自己跑起应用、扫遍每个页面，把真实渲染的界面导入 Figma，得到可编辑的图层，不是截图。再同步一次，更新的还是原来那批帧。"
+        data-zh-content="把项目文件夹或 .app 拖进 Crank，它自己跑起应用、扫遍每个页面，把真实渲染的界面导入 Figma，得到可编辑的图层，不是截图。再同步一次，更新的还是原来那批帧。"
+        data-en-content="Drop in a project folder or a built .app. Crank runs the app itself, walks every page, and turns the real rendered UI into editable Figma layers, not screenshots. Sync again, and the same frames update in place." />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="stylesheet" href="./styles.css?v=3" />
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Crank">
+      <img class="brand-mark" src="./icon.svg" alt="" width="22" height="22" />
+      <span class="brand-name">Crank</span>
+    </a>
+    <div class="header-actions">
+      <a class="github-link" href="https://github.com/irrwood/Crank" target="_blank" rel="noopener noreferrer">
+        GitHub
+        <svg class="external" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
+      <div class="language-switch" role="group" aria-label="Language">
+        <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        <button type="button" data-lang="zh-CN" aria-pressed="false">中文</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <h1 data-zh="你的应用，重新可编辑" data-en="Your app, editable again">你的应用，重新可编辑</h1>
+      <p class="hero-sub"
+         data-zh="拖入项目文件夹或者 .app，扫描页面，一键同步。不是截图，而是真正可编辑的 Figma 图层。"
+         data-en="Drop in a project folder or a .app. It scans the pages, then syncs in one click. Not screenshots, but truly editable Figma layers.">
+        拖入项目文件夹或者 .app，扫描页面，一键同步。不是截图，而是真正可编辑的 Figma 图层。
+      </p>
+      <a class="button button--primary" href="https://github.com/irrwood/Crank/releases/latest" target="_blank" rel="noopener noreferrer"
+         data-zh="开始使用" data-en="Get started">开始使用</a>
+      <p class="hero-meta"
+         data-zh="macOS · 本地优先 · 免费" data-en="macOS · Local-first · Free">macOS · 本地优先 · 免费</p>
+    </section>
+
+    <figure class="hero-shot">
+      <!-- 操作演示：YouTube 视频 FXM977ig0UY，换片只改这里的 ID。
+           播放器边缘会留一两像素黑边，外层 .hero-frame 把 iframe 撑大后裁掉。 -->
+      <div class="hero-frame">
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/FXM977ig0UY?rel=0&amp;modestbranding=1"
+          title="Crank demo"
+          loading="lazy"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowfullscreen></iframe>
+      </div>
+    </figure>
+
+    <section class="supports" aria-labelledby="supports-title">
+      <h2 id="supports-title" data-zh="支持什么" data-en="What it supports">支持什么</h2>
+      <div class="supports-grid">
+        <article class="support-card">
+          <h3 data-zh="Web 项目" data-en="Web projects">Web 项目</h3>
+          <p data-zh="贴一个地址，或丢一个文件夹，正在跑的应用直接扫。"
+             data-en="Paste an address or drop a folder. The app you have running scans as it is.">
+            贴一个地址，或丢一个文件夹，正在跑的应用直接扫。
+          </p>
+          <p class="support-tags"
+             data-zh-html="<code>Vite</code><code>Next.js</code><code>Remix</code><code>Astro</code><code>静态站点</code>"
+             data-en-html="<code>Vite</code><code>Next.js</code><code>Remix</code><code>Astro</code><code>Static sites</code>">
+            <code>Vite</code><code>Next.js</code><code>Remix</code><code>Astro</code><code>静态站点</code>
+          </p>
+        </article>
+        <article class="support-card">
+          <h3 data-zh="Electron 应用" data-en="Electron apps">Electron 应用</h3>
+          <p data-zh="React、Vue、Svelte，还是纯 Chromium，跑得起来，就扫得出来。"
+             data-en="React, Vue, Svelte, or plain Chromium. If it runs, it scans.">
+            React、Vue、Svelte，还是纯 Chromium，跑得起来，就扫得出来。
+          </p>
+          <p class="support-tags"
+             data-zh-html="<code>React</code><code>Vue</code><code>Svelte</code><code>Angular</code><code>Chromium</code>"
+             data-en-html="<code>React</code><code>Vue</code><code>Svelte</code><code>Angular</code><code>Chromium</code>">
+            <code>React</code><code>Vue</code><code>Svelte</code><code>Angular</code><code>Chromium</code>
+          </p>
+        </article>
+        <article class="support-card">
+          <h3 data-zh="SwiftUI 应用" data-en="SwiftUI apps">SwiftUI 应用</h3>
+          <p data-zh="打开 Xcode 项目，逐个界面渲染。渲染出来什么样，Figma 里就是什么样，能可靠对上的元素再换成原生可编辑图层。"
+             data-en="Point it at an Xcode project and it renders screen by screen. Figma gets exactly what rendered, and elements it can match reliably become native editable layers.">
+            打开 Xcode 项目，逐个界面渲染。渲染出来什么样，Figma 里就是什么样，能可靠对上的元素再换成原生可编辑图层。
+          </p>
+          <p class="support-tags"
+             data-zh-html="<code>SwiftUI</code><code>Xcode</code><code>模拟器</code>"
+             data-en-html="<code>SwiftUI</code><code>Xcode</code><code>Simulator</code>">
+            <code>SwiftUI</code><code>Xcode</code><code>模拟器</code>
+          </p>
+        </article>
+        <article class="support-card">
+          <h3 data-zh="本地优先" data-en="Local-first">本地优先</h3>
+          <p data-zh="数据留在你自己的机器上，只有你主动同步时，才会把结构发给 Figma。"
+             data-en="Everything stays on your machine. Nothing goes to Figma until you sync.">
+            数据留在你自己的机器上，只有你主动同步时，才会把结构发给 Figma。
+          </p>
+          <p class="support-tags"
+             data-zh-html="<code>本地优先</code><code>免费</code>"
+             data-en-html="<code>Local-first</code><code>Free</code>">
+            <code>本地优先</code><code>免费</code>
+          </p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span data-zh="Crank：你的应用，重新可编辑"
+          data-en="Crank: your app, editable again">Crank：你的应用，重新可编辑</span>
+    <span class="footer-muted" data-zh="macOS" data-en="macOS">macOS</span>
+  </footer>
+
+  <script>
+    // 中英文切换：localStorage 记住选择，默认跟随浏览器语言，兜底中文。
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem("crank-site-lang"); } catch (e) {}
+      var lang = saved || (navigator.language && navigator.language.toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en");
+
+      function apply(l) {
+        document.documentElement.lang = l;
+        document.querySelectorAll("[data-zh], [data-en]").forEach(function (el) {
+          var text = el.getAttribute(l === "zh-CN" ? "data-zh" : "data-en");
+          if (text !== null) el.textContent = text;
+        });
+        document.querySelectorAll("[data-zh-content], [data-en-content]").forEach(function (el) {
+          var text = el.getAttribute(l === "zh-CN" ? "data-zh-content" : "data-en-content");
+          if (text !== null) el.setAttribute("content", text);
+        });
+        document.querySelectorAll("[data-zh-html], [data-en-html]").forEach(function (el) {
+          var html = el.getAttribute(l === "zh-CN" ? "data-zh-html" : "data-en-html");
+          if (html !== null) el.innerHTML = html;
+        });
+        document.querySelectorAll(".language-switch button").forEach(function (b) {
+          var on = b.dataset.lang === l;
+          b.classList.toggle("is-on", on);
+          b.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+      }
+
+      apply(lang);
+
+      document.querySelectorAll(".language-switch button").forEach(function (b) {
+        b.addEventListener("click", function () {
+          lang = b.dataset.lang;
+          apply(lang);
+          try { localStorage.setItem("crank-site-lang", lang); } catch (e) {}
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

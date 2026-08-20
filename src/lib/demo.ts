@@ -2,7 +2,7 @@ import type { ProjectInfo, SemanticChange } from "../types";
 
 export const fallbackProject: ProjectInfo = {
   id: "ui-sync-preview",
-  root: "/Users/qian/Documents/UI-Sync",
+  root: "/Users/you/Projects/crank-demo",
   name: "UI Sync Demo",
   kind: "desktop",
   framework: "Electron + React + Vite",
@@ -48,7 +48,7 @@ export const swiftUiFallbackProject: ProjectInfo = {
 
 export const uiSyncSelfProject: ProjectInfo = {
   id: "ui-sync-self-capture",
-  root: "/Users/qian/Documents/UI-Sync",
+  root: "/Users/you/Projects/crank-demo",
   name: "UI Sync",
   kind: "desktop",
   framework: "Electron + React + Vite + Tailwind",

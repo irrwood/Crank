@@ -91,3 +91,12 @@ test("an installed app is still held to what a scan is allowed to do", () => {
   assert.equal(requestVerdict(`${installedApp}api/notes`, "POST", "xhr", installedApp).allow, false);
   assert.equal(requestVerdict("https://analytics.example.com/collect", "GET", "script", installedApp).allow, false);
 });
+
+test("an app serving itself from its own scheme may read itself too", () => {
+  const own = "client://app";
+  assert.equal(requestVerdict("client://app/index.html", "GET", "document", own).allow, true);
+  assert.equal(requestVerdict("client://app/assets/Inter.woff2", "GET", "font", own).allow, true);
+  // Another app's scheme, and a write to this one, are still not the app.
+  assert.equal(requestVerdict("client://other/index.html", "GET", "document", own).allow, false);
+  assert.equal(requestVerdict("client://app/notes", "POST", "xhr", own).allow, false);
+});

@@ -110,6 +110,11 @@ function preferredFonts(available) {
   if (!regular) throw new Error("SF Pro is unavailable in Figma. Enable Figma Font Helper, then run Crank again.");
   const findWeight = (styles) => names.find((font) => font.family === regular.family && styles.includes(font.style)) || regular;
   const monospaced = names.find((font) => /^SF Mono$/.test(font.family) && font.style === "Regular") || regular;
+  // SF Pro has no emoji glyphs, and an emoji set in it draws as a filled box.
+  // A real app's interface used emoji as its icons, and every one of them
+  // arrived in Figma as a black square.
+  const emoji = names.find((font) => /^(Apple Color Emoji|Noto Color Emoji|Segoe UI Emoji|Twemoji.*)$/.test(font.family))
+    || null;
   const cjkFamilies = ["PingFang SC", "Hiragino Sans GB", "Chiron Hei HK", "Noto Sans CJK SC", "Noto Sans SC"];
   const cjkRegular = cjkFamilies.flatMap((family) => names.filter((font) => font.family === family))
     .find((font) => ["Regular", "Text", "Normal", "Roman"].includes(font.style))
@@ -126,6 +131,7 @@ function preferredFonts(available) {
     heavy: findWeight(["Heavy", "Black", "Bold", "Semibold"]),
     black: findWeight(["Black", "Heavy", "Bold", "Semibold"]),
     monospaced,
+    emoji,
     cjkRegular,
     cjkMedium: findCjkWeight(["Medium", "Semibold", "Regular", "Text"]),
     cjkSemibold: findCjkWeight(["Semibold", "Medium", "Bold", "Regular"]),
@@ -188,7 +194,10 @@ async function ensureFontLoaded(fonts, font) {
 
 async function resolveMeasuredFont(fonts, measuredStyle, value) {
   const systemFamilies = new Set([
-    "systemui", "uisansserif", "sansserif", "apple-system", "blinkmacsystemfont",
+    // Compared after normalizedName, which strips the punctuation — so
+    // "apple-system" here never matched the "-apple-system" every Mac app
+    // actually asks for, and each one was reported as a substitution it was not.
+    "systemui", "uisansserif", "sansserif", "applesystem", "blinkmacsystemfont",
     "sfpro", "sfprotext", "sfprodisplay"
   ]);
   const requested = measuredStyle?.resolvedFontFamily
@@ -230,6 +239,69 @@ function weightName(value) {
   if (weight >= 550) return "semibold";
   if (weight >= 450) return "medium";
   return "regular";
+}
+
+/**
+ * The stretches of a string a browser draws as emoji.
+ *
+ * Not every pictographic character is one: "©" and "™" are drawn as text
+ * unless something asks for the emoji form, so the test is the Unicode
+ * presentation rule — emoji by default, or followed by the variation selector
+ * that requests it — and not merely "is pictographic". Skin tones, keycaps and
+ * the joiners that hold a sequence together are carried along with it.
+ */
+function emojiRanges(value) {
+  const source = String(value || "");
+  const joiners = /[\u200D\uFE0F\u20E3\u{1F3FB}-\u{1F3FF}]/u;
+  const characters = [...source];
+  const drawnAsEmoji = (character, next, after) => {
+    if (joiners.test(character)) return true;
+    if (/\p{Emoji_Presentation}/u.test(character)) return true;
+    // A keycap is an ordinary digit until the two characters after it say
+    // otherwise: "5\uFE0F\u20E3" is 5, the variation selector, and the enclosing key.
+    if (/[0-9#*]/.test(character) && next === "\uFE0F" && after === "\u20E3") return true;
+    return /\p{Extended_Pictographic}/u.test(character) && next === "\uFE0F";
+  };
+
+  const ranges = [];
+  let index = 0;
+  let start = -1;
+  for (let position = 0; position < characters.length; position += 1) {
+    const character = characters[position];
+    const isEmoji = drawnAsEmoji(character, characters[position + 1], characters[position + 2]);
+    if (isEmoji && start < 0) start = index;
+    if (!isEmoji && start >= 0) {
+      ranges.push([start, index]);
+      start = -1;
+    }
+    index += character.length;
+  }
+  if (start >= 0) ranges.push([start, index]);
+  // A joiner on its own is punctuation of a sequence, not a run worth setting.
+  return ranges.filter(([from, to]) => /[\p{Extended_Pictographic}\u20E3]/u.test(source.slice(from, to)));
+}
+
+/**
+ * Sets emoji in a font that has them, and says so when Figma has none.
+ *
+ * Applied as ranges rather than to the whole layer, so an emoji inside a
+ * sentence is drawn without moving the sentence to another typeface.
+ */
+async function applyEmojiFont(text, fonts) {
+  const ranges = emojiRanges(text.characters);
+  if (ranges.length === 0) return;
+  if (!fonts.emoji) {
+    // Named rather than left as boxes: Figma's font list is the user's to fix,
+    // and the report is what tells them there is something to fix.
+    fonts.substituted.add("an emoji font");
+    return;
+  }
+  await ensureFontLoaded(fonts, fonts.emoji);
+  for (const [from, to] of ranges) {
+    try {
+      text.setRangeFontName(from, to, fonts.emoji);
+    } catch {}
+  }
 }
 
 function fontForText(fonts, value, weight) {
@@ -1239,17 +1311,65 @@ async function renderSnapshotContent(frame, screen, pairingCode, managed) {
   return "rendered";
 }
 
+/**
+ * A CSS colour as Figma's 0–1 channels, or null when it is not one.
+ *
+ * Chromium hands back `color(srgb 0.13 0.13 0.13)` for anything a stylesheet
+ * wrote in modern colour syntax — `color-mix()`, a relative colour, a wide-gamut
+ * literal — and a parser that only knew rgb() silently returned nothing for all
+ * of them. Nothing, not black: the fill was simply never set, so Cursor's whole
+ * dark interface arrived in Figma as empty frames. 703 colours across the scans
+ * on this machine are in that syntax.
+ *
+ * display-p3 is converted rather than dropped, because a Mac reports colours in
+ * it whenever the display is wide-gamut, and Figma's canvas is sRGB.
+ */
+function parseCssColor(value) {
+  const text = String(value ?? "").trim();
+  const legacy = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.%]+))?\s*\)$/i.exec(text);
+  if (legacy) {
+    return {
+      r: Math.min(1, Number(legacy[1]) / 255),
+      g: Math.min(1, Number(legacy[2]) / 255),
+      b: Math.min(1, Number(legacy[3]) / 255),
+      a: alphaOf(legacy[4])
+    };
+  }
+  const modern = /^color\(\s*(srgb|srgb-linear|display-p3)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)(?:\s*\/\s*([\d.%]+))?\s*\)$/i.exec(text);
+  if (!modern) return null;
+  const clamp = (channel) => Math.max(0, Math.min(1, Number(channel)));
+  const [space, red, green, blue] = [modern[1].toLowerCase(), clamp(modern[2]), clamp(modern[3]), clamp(modern[4])];
+  const converted = space === "display-p3" ? p3ToSrgb(red, green, blue) : { r: red, g: green, b: blue };
+  return { ...converted, a: alphaOf(modern[5]) };
+}
+
+function alphaOf(value) {
+  if (value === undefined) return 1;
+  const text = String(value);
+  const number = text.endsWith("%") ? Number(text.slice(0, -1)) / 100 : Number(text);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 1;
+}
+
+/** Display P3 to sRGB, through linear light, as the CSS colour spec defines it. */
+function p3ToSrgb(red, green, blue) {
+  const toLinear = (channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  const toGamma = (channel) => {
+    const clamped = Math.max(0, Math.min(1, channel));
+    return clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055;
+  };
+  const [r, g, b] = [toLinear(red), toLinear(green), toLinear(blue)];
+  return {
+    r: toGamma(1.2249401 * r - 0.2249404 * g + 0.0000000 * b),
+    g: toGamma(-0.0420569 * r + 1.0420571 * g + 0.0000000 * b),
+    b: toGamma(-0.0196376 * r - 0.0786361 * g + 1.0982735 * b)
+  };
+}
+
 /** @param {string} value @returns {SolidPaint[]} */
 function cssPaint(value) {
-  const match = String(value || "").match(/^rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i);
-  if (!match) return [];
-  const opacity = match[4] === undefined ? 1 : Number(match[4]);
-  if (opacity <= 0) return [];
-  return [{
-    type: "SOLID",
-    color: { r: Number(match[1]) / 255, g: Number(match[2]) / 255, b: Number(match[3]) / 255 },
-    opacity
-  }];
+  const parsed = parseCssColor(value);
+  if (!parsed || parsed.a <= 0) return [];
+  return [{ type: "SOLID", color: { r: parsed.r, g: parsed.g, b: parsed.b }, opacity: parsed.a }];
 }
 
 function domFont(fonts, weight) {
@@ -1333,6 +1453,7 @@ async function renderDomNode(ir, fonts) {
     text.characters = ir.wrapMode === "wrap" && !ir.style.unavailableFonts?.length
       ? insertMeasuredLineBreaks(ir.text, ir.lineBreakOffsets)
       : ir.text;
+    await applyEmojiFont(text, fonts);
     text.fontSize = ir.style.fontSize;
     text.lineHeight = { unit: "PIXELS", value: ir.style.lineHeight };
     text.letterSpacing = { unit: "PIXELS", value: ir.style.letterSpacing };
@@ -1349,12 +1470,30 @@ async function renderDomNode(ir, fonts) {
     return positionDomNode(vector, ir);
   }
   if (ir.kind === "image") {
-    const encoded = ir.dataUrl.slice(ir.dataUrl.indexOf(",") + 1);
-    const image = figma.createImage(figma.base64Decode(encoded));
     const rectangle = figma.createRectangle();
     rectangle.resize(ir.width, ir.height);
-    rectangle.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
-    return positionDomNode(rectangle, ir);
+    // createImage reads PNG, JPEG and GIF. Anything else is not a smaller
+    // picture here, it is no picture — and handed one it throws, which took
+    // down the whole render partway and left a half-drawn page on the canvas.
+    // An empty shape in the right place, and the format named in the report,
+    // is a thing someone can act on.
+    const type = String(ir.dataUrl || "").slice(5, String(ir.dataUrl || "").indexOf(";"));
+    let unreadable = ["image/png", "image/jpeg", "image/gif"].includes(type) ? "" : (type || "unknown format");
+    if (!unreadable) {
+      try {
+        const image = figma.createImage(figma.base64Decode(ir.dataUrl.slice(ir.dataUrl.indexOf(",") + 1)));
+        rectangle.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
+      } catch (cause) {
+        unreadable = String((cause && cause.message) || cause).slice(0, 80);
+      }
+    }
+    positionDomNode(rectangle, ir);
+    // Named after positioning, which sets the name from the capture.
+    if (unreadable) {
+      rectangle.name = `Unreadable image (${unreadable})`;
+      rectangle.fills = [];
+    }
+    return rectangle;
   }
 
   const container = figma.createFrame();
@@ -2026,6 +2165,26 @@ async function snapshotPullJob(job) {
 }
 
 async function runJob(payload, pairingCode, connectionToken) {
+  // A pairing job names no file and carries no pages: it exists so this plugin
+  // can be handed the connection before there is anything to send. Nothing is
+  // drawn, and no file has to be open for it — which is the point, since the
+  // person doing this has not chosen where their pages will go yet.
+  if (payload.operation === "pair") {
+    const paired = await fetch(`${BRIDGE_URL}/v1/jobs/${pairingCode}/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation: "pair", fileName: figma.root.name })
+    });
+    const outcome = await paired.json();
+    if (!paired.ok) throw new Error(outcome.error || "Crank could not record the pairing");
+    if (connectionToken && figma.clientStorage) {
+      await figma.clientStorage.setAsync(CONNECTION_STORAGE_KEY, { token: connectionToken });
+    }
+    figma.ui.postMessage({ type: "connected", fileName: figma.root.name });
+    figma.ui.postMessage({ type: "progress", message: "Connected. Send pages from Crank whenever you like." });
+    return;
+  }
+
   if (normalizedName(payload.figmaFileName) !== normalizedName(figma.root.name)) {
     throw new Error(`Open “${payload.figmaFileName}” in Figma first. This file is “${figma.root.name}”.`);
   }
