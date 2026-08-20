@@ -2,10 +2,7 @@ const { access, mkdir, stat } = require("node:fs/promises");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { shippedPath } = require("./packaged-path.cjs");
-
-const xcodeHostLibraryPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host";
-const xcodeSwiftCompilerPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc";
-const xcodeMacSdkPath = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+const { resolveXcodePaths } = require("./xcode-paths.cjs");
 
 async function exists(target) {
   try {
@@ -39,7 +36,8 @@ function run(command, arguments_, options = {}) {
 }
 
 async function ensureScannerBinary(cacheDirectory) {
-  if (!(await exists(xcodeSwiftCompilerPath)) || !(await exists(path.join(xcodeHostLibraryPath, "SwiftSyntax.swiftmodule")))) {
+  const xcode = await resolveXcodePaths();
+  if (!xcode || !(await exists(xcode.swiftc)) || !(await exists(path.join(xcode.swiftHostLibrary, "SwiftSyntax.swiftmodule")))) {
     return null;
   }
 
@@ -50,37 +48,62 @@ async function ensureScannerBinary(cacheDirectory) {
 
   const [sourceInfo, compilerInfo, moduleInfo, binaryInfo] = await Promise.all([
     stat(sourcePath),
-    stat(xcodeSwiftCompilerPath),
-    stat(path.join(xcodeHostLibraryPath, "SwiftSyntax.swiftmodule")),
+    stat(xcode.swiftc),
+    stat(path.join(xcode.swiftHostLibrary, "SwiftSyntax.swiftmodule")),
     stat(binaryPath).catch(() => null)
   ]);
   const newestInput = Math.max(sourceInfo.mtimeMs, compilerInfo.mtimeMs, moduleInfo.mtimeMs);
   if (binaryInfo && binaryInfo.mtimeMs >= newestInput) return binaryPath;
 
-  await run(xcodeSwiftCompilerPath, [
-    "-sdk", xcodeMacSdkPath,
+  await run(xcode.swiftc, [
+    "-sdk", xcode.macosSdk,
     "-target", `${process.arch === "x64" ? "x86_64" : "arm64"}-apple-macosx14.0`,
-    "-I", xcodeHostLibraryPath,
-    "-L", xcodeHostLibraryPath,
+    "-I", xcode.swiftHostLibrary,
+    "-L", xcode.swiftHostLibrary,
     "-lSwiftSyntax",
     "-lSwiftParser",
     "-Xlinker", "-rpath",
-    "-Xlinker", xcodeHostLibraryPath,
+    "-Xlinker", xcode.swiftHostLibrary,
     sourcePath,
     "-o", binaryPath
   ]);
   return binaryPath;
 }
 
-async function scanWithSwiftSyntax(root, files, cacheDirectory) {
+/**
+ * Parses a project's Swift with Xcode's own SwiftSyntax.
+ *
+ * `onDiagnostic` separates "this Mac has no SwiftSyntax toolchain" from "the
+ * scanner was there and failed". The second case silently downgrades every
+ * later step to the regular-expression scan, which is exactly the kind of
+ * substitution that must be reported rather than absorbed.
+ */
+async function scanWithSwiftSyntax(root, files, cacheDirectory, { onDiagnostic } = {}) {
   if (!cacheDirectory || files.length === 0) return null;
+  const report = (reason, message) => {
+    if (typeof onDiagnostic === "function") onDiagnostic({ reason, message });
+  };
+  let binaryPath = null;
   try {
-    const binaryPath = await ensureScannerBinary(cacheDirectory);
-    if (!binaryPath) return null;
+    binaryPath = await ensureScannerBinary(cacheDirectory);
+  } catch (error) {
+    report("compile-failed", `The SwiftSyntax scanner could not be compiled: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+  if (!binaryPath) {
+    report("unavailable", "Xcode's bundled SwiftSyntax toolchain was not found, so UI Sync used its regular-expression Swift scan.");
+    return null;
+  }
+  try {
     const output = await run(binaryPath, [root], { input: `${files.join("\n")}\n` });
     const parsed = JSON.parse(output);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
+    if (!Array.isArray(parsed)) {
+      report("invalid-output", "The SwiftSyntax scanner returned an unexpected result.");
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    report("scan-failed", `The SwiftSyntax scanner failed: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }

@@ -3,6 +3,7 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const path = require("node:path");
 const { collectFiles } = require("./project-scanner.cjs");
+const { resolveXcodePaths } = require("./xcode-paths.cjs");
 
 const execFileAsync = promisify(execFile);
 const supportedProperties = {
@@ -406,7 +407,8 @@ async function runProjectValidation(root) {
     const projectFiles = await collectFiles(root, (target) => target.endsWith(".xcodeproj/project.pbxproj"), 20);
     if (projectFiles.length === 0) throw new Error("No Xcode project or Swift package was found for validation");
     const project = path.dirname(projectFiles[0]);
-    const xcodeEnvironment = { ...process.env, DEVELOPER_DIR: "/Applications/Xcode.app/Contents/Developer" };
+    const xcode = await resolveXcodePaths();
+    const xcodeEnvironment = xcode ? { ...process.env, DEVELOPER_DIR: xcode.developerDirectory } : { ...process.env };
     const listing = await execFileAsync("xcodebuild", ["-project", project, "-list", "-json"], {
       cwd: root, env: xcodeEnvironment, timeout: 2 * 60 * 1000, maxBuffer: 4 * 1024 * 1024
     });

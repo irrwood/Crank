@@ -1,12 +1,13 @@
 const http = require("node:http");
 const { createHash, randomBytes } = require("node:crypto");
-const { cp, mkdir, mkdtemp, readFile, readdir, stat, writeFile } = require("node:fs/promises");
+const { cp, mkdir, readFile, readdir, writeFile } = require("node:fs/promises");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const os = require("node:os");
 const { z } = require("zod");
 const { collectFiles, prepareDesignNodes } = require("./project-scanner.cjs");
 const { scanWithSwiftSyntax } = require("./swift-syntax-backend.cjs");
+const { requireXcodePaths } = require("./xcode-paths.cjs");
 const { convertPdfToFigmaSvg, indexPdfPages, isSwiftUiUnsupportedRendererSvg } = require("./swift-pdf-vector.cjs");
 const { sourceVectorEffectSchema } = require("./swift-vector-effects.cjs");
 
@@ -111,15 +112,18 @@ function createSwiftUiRuntimeServer({ port = DEFAULT_RUNTIME_PORT } = {}) {
     });
   }
 
+  // The deadline follows activity: a slow first launch keeps extending it for
+  // as long as the app is still posting, so a busy Mac cannot truncate a
+  // capture halfway through.
   async function waitForCapture(token, { timeoutMs = 12_000, settleMs = 750 } = {}) {
     const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
+    while (true) {
       const session = sessions.get(token);
       if (!session) throw new Error("The Design Build session expired");
       if (session.nodes.size > 0 && Date.now() - session.lastCaptureAt >= settleMs) return snapshot(token);
+      if (Date.now() - Math.max(startedAt, session.lastCaptureAt) >= timeoutMs) return snapshot(token);
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return snapshot(token);
   }
 
   async function waitForScreenshot(token, { timeoutMs = 6_000 } = {}) {
@@ -140,13 +144,13 @@ function createSwiftUiRuntimeServer({ port = DEFAULT_RUNTIME_PORT } = {}) {
 
   async function waitForVectors(token, { timeoutMs = 8_000, settleMs = 2_500 } = {}) {
     const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
+    while (true) {
       const session = sessions.get(token);
       if (!session) throw new Error("The Design Build session expired");
       if (session.vectorPdfs.length > 0 && Date.now() - session.lastVectorAt >= settleMs) return [...session.vectorPdfs];
+      if (Date.now() - Math.max(startedAt, session.lastVectorAt) >= timeoutMs) return [...session.vectorPdfs];
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return [];
   }
 
   async function waitForVectorSource(token, { sourceName, captureKind, timeoutMs = 6_000 } = {}) {
@@ -1707,7 +1711,7 @@ function extractBuildDiagnostics(output) {
     diagnostics.push(lines[index].trim());
     for (let offset = 1; offset <= 2; offset += 1) {
       const context = lines[index + offset]?.trim();
-      if (context && !context.startsWith("/Applications/Xcode.app/Contents/Developer/Toolchains/")) diagnostics.push(context);
+      if (context && !/\/Toolchains\/[^/]+\.xctoolchain\//.test(context)) diagnostics.push(context);
     }
     if (diagnostics.length >= 12) break;
   }
@@ -1739,7 +1743,7 @@ async function findXcodeProject(root) {
   return path.join(root, project.name);
 }
 
-async function newestInstalledIPhone(simctl, { preferTablet = false } = {}) {
+async function newestInstalledIPhone(simctl, { preferTablet = false, preferredUdid = null } = {}) {
   const runtimePayload = JSON.parse(await run(simctl, ["list", "runtimes", "available", "--json"]));
   const installedIosRuntimes = (runtimePayload.runtimes || []).filter((runtime) =>
     runtime.isAvailable !== false && /iOS/i.test(`${runtime.name || ""} ${runtime.identifier || ""}`)
@@ -1756,6 +1760,10 @@ async function newestInstalledIPhone(simctl, { preferTablet = false } = {}) {
     .flatMap(([runtimeId, runtimeDevices]) => runtimeDevices.map((device) => ({ ...device, runtimeId })))
     .filter((device) => device.isAvailable && /iPhone|iPad/.test(device.name));
   const preferred = devices.filter((device) => preferTablet ? /iPad/.test(device.name) : /iPhone/.test(device.name));
+  // A project stays on the device it was captured on, so its pages keep one
+  // viewport even after a newer runtime or device type is installed.
+  const pinned = preferredUdid ? devices.find((device) => device.udid === preferredUdid) : null;
+  if (pinned) return pinned;
   const dedicatedName = preferTablet ? "UI Sync iPad" : "UI Sync iPhone";
   const existing = preferred.find((device) => device.name === dedicatedName);
   if (existing) return existing;
@@ -1791,10 +1799,30 @@ async function bootSimulator(simctl, selected) {
   }
 }
 
+const COPY_EXCLUSIONS = [".build", ".git", "Build", "DerivedData", "Pods", "Carthage", "node_modules"];
+
+// rsync mirrors the project into the reused workspace: only changed files are
+// copied, files deleted from the project are removed, and the previous run's
+// instrumented sources are restored to their originals before this run
+// instruments them again.
 async function copyProject(root, destination) {
+  await mkdir(destination, { recursive: true });
+  try {
+    await run("/usr/bin/rsync", [
+      "-a",
+      "--delete",
+      ...COPY_EXCLUSIONS.flatMap((name) => ["--exclude", `/${name}`, "--exclude", name]),
+      `${root.replace(/\/$/, "")}/`,
+      `${destination}/`
+    ]);
+    return;
+  } catch {
+    // Fall through to a plain recursive copy when rsync is unavailable.
+  }
   await cp(root, destination, {
     recursive: true,
-    filter: (source) => ![".build", ".git", "Build", "DerivedData", "Pods", "Carthage", "node_modules"].includes(path.basename(source))
+    force: true,
+    filter: (source) => !COPY_EXCLUSIONS.includes(path.basename(source))
   });
 }
 
@@ -1804,14 +1832,19 @@ async function writeVectorPdf(target, contents) {
 }
 
 async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simulatorPreference = {} }) {
-  const xcodeDeveloper = "/Applications/Xcode.app/Contents/Developer";
-  const xcodebuild = path.join(xcodeDeveloper, "usr", "bin", "xcodebuild");
-  const simctl = path.join(xcodeDeveloper, "usr", "bin", "simctl");
-  await Promise.all([stat(xcodebuild), stat(simctl)]).catch(() => {
-    throw new Error("Install the full Xcode app before running Design Build");
-  });
+  const xcode = await requireXcodePaths("Install the full Xcode app before exporting an iOS project");
+  const xcodeDeveloper = xcode.developerDirectory;
+  const xcodebuild = xcode.xcodebuild;
+  const simctl = xcode.simctl;
   const files = await collectFiles(root, (target) => target.endsWith(".swift"));
-  const discovered = await scanWithSwiftSyntax(root, files, path.join(cacheDirectory, "tools"));
+  const scanDiagnostics = [];
+  const discovered = await scanWithSwiftSyntax(root, files, path.join(cacheDirectory, "tools"), {
+    onDiagnostic: (diagnostic) => scanDiagnostics.push(diagnostic)
+  });
+  // A scanner that is present and then fails would quietly downgrade every
+  // later step to the regular-expression scan.
+  const scanFailure = scanDiagnostics.find((diagnostic) => diagnostic.reason !== "unavailable");
+  if (scanFailure) throw new Error(scanFailure.message);
   const usesSwiftUi = Boolean(discovered?.some((view) => view.isAppEntry || view.designNodes.length > 0));
   const swiftPages = discoverSwiftUiPages(discovered || []);
   const pageViewNames = swiftPages.map((page) => page.sourceName);
@@ -1833,8 +1866,15 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
   };
   const session = runtimeServer.beginSession(root);
   return (async () => {
-  await mkdir(cacheDirectory || os.tmpdir(), { recursive: true });
-  const workspaceRoot = await mkdtemp(path.join(cacheDirectory || os.tmpdir(), "swiftui-design-build-"));
+  // One workspace per project, reused across runs, with Xcode's DerivedData
+  // inside it. A second export is then an incremental build rather than a full
+  // rebuild of a freshly copied project — and the copies stop accumulating.
+  const workspaceRoot = path.join(
+    cacheDirectory || os.tmpdir(),
+    "workspaces",
+    createHash("sha256").update(root).digest("hex").slice(0, 24)
+  );
+  await mkdir(workspaceRoot, { recursive: true });
   const copiedRoot = path.join(workspaceRoot, path.basename(root));
   await copyProject(root, copiedRoot);
   const byFile = new Map();
@@ -1948,7 +1988,6 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
         timeoutMs: 2_000
       });
     }
-    if (pageIndex < launchPages.length - 1) await new Promise((resolve) => setTimeout(resolve, 500));
   }
   let snapshot = await runtimeServer.waitForCapture(session.token, { timeoutMs: usesSwiftUi ? 12_000 : 1_500 });
   if (usesSwiftUi && snapshot.nodes.length === 0) throw new Error("The app launched, but no SwiftUI runtime nodes were captured");
@@ -2221,6 +2260,8 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
   }
   const capturedAt = new Date().toISOString();
   return {
+    warnings: scanDiagnostics.map((diagnostic) => diagnostic.message),
+    simulator: { udid: simulator.udid, name: simulator.name, runtimeId: simulator.runtimeId ?? null },
     snapshot: { ...snapshot, deviceName: simulator.name, scheme },
     screenshot: {
       path: screenshotPath,

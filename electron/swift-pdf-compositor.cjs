@@ -3,9 +3,7 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { z } = require("zod");
 const { shippedPath } = require("./packaged-path.cjs");
-
-const xcodeSwiftCompilerPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc";
-const xcodeMacSdkPath = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+const { resolveXcodePaths } = require("./xcode-paths.cjs");
 
 const compositionSchema = z.object({
   basePdfPath: z.string().min(1),
@@ -45,7 +43,8 @@ function run(command, arguments_) {
 }
 
 async function ensureCompositorBinary(cacheDirectory) {
-  if (!(await exists(xcodeSwiftCompilerPath))) {
+  const xcode = await resolveXcodePaths();
+  if (!xcode || !(await exists(xcode.swiftc))) {
     throw new Error("The full Xcode toolchain is required to compose SwiftUI PDF pages");
   }
   const sourcePath = path.resolve(shippedPath("swift-tools"), "UISyncPdfCompositor", "main.swift");
@@ -54,13 +53,13 @@ async function ensureCompositorBinary(cacheDirectory) {
   await mkdir(binaryDirectory, { recursive: true });
   const [sourceInfo, compilerInfo, binaryInfo] = await Promise.all([
     stat(sourcePath),
-    stat(xcodeSwiftCompilerPath),
+    stat(xcode.swiftc),
     stat(binaryPath).catch(() => null)
   ]);
   const newestInput = Math.max(sourceInfo.mtimeMs, compilerInfo.mtimeMs);
   if (!binaryInfo || binaryInfo.mtimeMs < newestInput) {
-    await run(xcodeSwiftCompilerPath, [
-      "-sdk", xcodeMacSdkPath,
+    await run(xcode.swiftc, [
+      "-sdk", xcode.macosSdk,
       "-target", `${process.arch === "x64" ? "x86_64" : "arm64"}-apple-macosx14.0`,
       sourcePath,
       "-o", binaryPath
