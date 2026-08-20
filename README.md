@@ -127,28 +127,33 @@ npm run build
 npm audit --omit=dev
 ```
 
-<!--
-The SwiftUI path is not part of the current product scope. Per AGENTS.md,
-existing SwiftUI connections stay readable for backward compatibility, but the
-parsing and Design Build loop are not being extended. This section is kept
-rather than deleted so that, if the direction changes again, what the loop
-already did is on record.
+## iOS projects
 
-## SwiftUI visual editing MVP
+An Xcode project is scanned like everything else — drop the folder, and it
+appears in the sidebar — but nothing about it can be served, so the scan takes
+a different road:
 
-The SwiftUI Design Studio implements the v1 visual-editing loop:
+1. The project is copied into a workspace of its own, its views are
+   instrumented in that copy, and it is built with `xcodebuild`. The originals
+   are never touched.
+2. It launches on a Simulator device the project keeps, and each top-level
+   navigation state is opened in turn.
+3. Each state is exported through SwiftUI's `ImageRenderer` as a vector PDF
+   page, with a UIKit window capture standing in for genuinely opaque content.
+4. Those pages become the project's inventory: the same cards, the same
+   right-click menu, the same **Send to Figma**.
 
-- discover every SwiftUI screen, modal, and component and expose them in the local Pages & Views rail;
-- render source-linked SwiftUI IR as real selectable DOM layers in the canvas;
-- edit text, width, height, corner radius, font size, and background with immediate local preview;
-- keep a Simulator PNG as an optional, hidden-by-default visual reference rather than editable content;
-- add `swift-sdk/UISyncDesignNode.swift` to the app target;
-- wrap the editable screen root in `UISyncDesignCanvas { ... }`;
-- mark 5–30 component-level views with `.designNode("stable-id", cornerRadius: ..., fontSize: ...)`;
-- optionally run Design Build to add runtime measurements for the active launch route, then switch between Interact and Select mode;
-- resize a node or set an Inspector target, review the relational intent payload, and confirm it for Codex;
-- Crank creates a clean `ui-sync/design-edit-*` Git branch, rebuilds up to three times, spot-checks a second Simulator canvas for geometry edits, then waits for Accept or Reject.
+Sending a page converts its PDF to SVG with Poppler and then restores only what
+the capture can vouch for on top of it — editable text, shadows and blur, the
+matching native Tab Bar, original asset-catalog images. Anything that cannot be
+matched confidently keeps its rendered appearance; the page is never redrawn
+from the source.
 
-The target project must be a clean Git worktree before a visual edit. Runtime
-capture stays local; only the confirmed normalized intent batch is sent to Codex.
--->
+An exported page has no address, so it cannot be reopened live, recaptured, or
+explored one level further. Its card says which view it came from instead.
+
+Needs the full Xcode app (found through `DEVELOPER_DIR`, `xcode-select -p`, or
+the default install), an installed iOS Simulator runtime, and Poppler
+(`brew install poppler`), which is checked before a build starts rather than
+after.
+
