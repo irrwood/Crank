@@ -1,7 +1,7 @@
 const { nativeImage } = require("electron");
 const { createBrowsingSession } = require("./browsing-session.cjs");
 const { requestVerdict } = require("./request-policy.cjs");
-const { isAppOrigin, originOf } = require("./page-origin.cjs");
+const { isAppOrigin, isFileOrigin, originOf } = require("./page-origin.cjs");
 
 /**
  * Drives an app UI Sync did not launch, over its debugging port.
@@ -203,6 +203,11 @@ async function createAttachedSession(target, { origin, connect = openSocket } = 
   };
 
   return createBrowsingSession(pageOrigin, {
+    // An installed app is one document that boots itself. Loading its own file
+    // again restarts it — the workbench comes back empty, with none of the
+    // controls the walk was following — so its screens are reached by clicking
+    // from where the app already is.
+    navigable: !ownApp && !isFileOrigin(pageOrigin),
     blocked,
     timing: {
       get lastRequestAt() { return lastRequestAt; },

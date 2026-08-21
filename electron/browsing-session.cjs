@@ -21,7 +21,11 @@ const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mill
  * half-rendered.
  */
 function createBrowsingSession(origin, driver) {
-  const { evaluate, navigate, screenshot, clearStorage, dispose, blocked, timing } = driver;
+  const { evaluate, navigate, screenshot, clearStorage, dispose, blocked, timing, navigable = true } = driver;
+  // A desktop app's interface sits far deeper in its document than a web page's
+  // does, and there is one window's worth of it rather than one page per
+  // address, so it is worth reading more of.
+  const readerOptions = navigable ? {} : { walkDepth: 20, maxNodes: 3000 };
 
   /**
    * Waits for the page to stop changing, not for a fixed delay.
@@ -94,7 +98,7 @@ function createBrowsingSession(origin, driver) {
   };
 
   const read = async () => {
-    const snapshot = await evaluate(`(${collectUiState.toString()})()`).catch(() => null);
+    const snapshot = await evaluate(`(${collectUiState.toString()})(${JSON.stringify(readerOptions)})`).catch(() => null);
     if (!snapshot || !isFileOrigin(origin)) return snapshot;
     // The page reports where it is as a path on disk, and every page of an
     // installed app shares the same long prefix — where it happens to have been
@@ -114,6 +118,28 @@ function createBrowsingSession(origin, driver) {
   return {
     get blocked() {
       return { mutations: [...blocked.mutations], external: [...blocked.external], fetched: [...blocked.fetched] };
+    },
+
+    /**
+     * Whether loading an address is a way to get anywhere in this app.
+     *
+     * A running desktop app answers no. Its window has one document, and
+     * pointing that document at its own file again does not return to a page —
+     * it restarts the application, which throws away the very screen the walk
+     * was about to look at.
+     */
+    navigable,
+
+    /**
+     * The app where it already stands.
+     *
+     * For anything with addresses this is what `goto` ends with anyway. For an
+     * app that cannot be navigated it is the only way to see the screen it is
+     * currently showing.
+     */
+    async look({ patient = false } = {}) {
+      await rest(patient);
+      return read();
     },
 
     /**

@@ -2,7 +2,7 @@ const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
 const { readFile } = require("node:fs/promises");
-const { discoverStates } = require("./state-discovery.cjs");
+const { discoverStates, reachState } = require("./state-discovery.cjs");
 const { resolveDevCommand, startDevServer } = require("./dev-server.cjs");
 const { detectElectronRenderer, startRendererServer } = require("./renderer-server.cjs");
 const { discoverJavascriptProjectRoots, scanJavascriptProject } = require("./project-scanner.cjs");
@@ -128,11 +128,7 @@ async function captureThumbnail(session, width = 1220) {
 async function capturePage(session, { route, recipe = [] }, { withThumbnails = true, withHtml = true, withFigmaTree = true } = {}) {
   if (!withThumbnails) return { thumbnail: null, snapshot: null, reached: true };
   await session.reset?.();
-  let reached = await session.goto(route, { patient: true });
-  for (const step of recipe) {
-    if (!reached) break;
-    reached = await session.click(step.locator, { patient: true });
-  }
+  const reached = await reachState(session, { route, recipe }, { patient: true });
   // A page that could not be reached again is the other way to arrive with no
   // layers, and it used to say nothing at all — the export then reported the
   // absence and not the cause.
@@ -305,7 +301,15 @@ function startPathOf(url, origin) {
 async function scanAppBundle(target, { onStatus, ...options } = {}) {
   return withAppSession(target, { onStatus }, async (session, { bundle, origin, window }) => {
     onStatus?.({ phase: "starting", detail: `${bundle.name} is open — reading ${window.title || bundle.name}` });
-    const result = await runScan(session, origin, startPathOf(window.url, origin), { ...options, onStatus });
+    // An app hides its screens behind its own controls rather than behind
+    // addresses: there is no sitemap to seed from and nothing to crawl, so the
+    // walk is given room to click further and try more of what it finds.
+    const result = await runScan(session, origin, startPathOf(window.url, origin), {
+      maxDepth: 2,
+      maxActionsPerState: 24,
+      ...options,
+      onStatus
+    });
     return result.ok
       ? {
         ...result,
