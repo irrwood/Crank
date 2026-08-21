@@ -179,7 +179,7 @@ async function downsampleEmbeddedPngs(source, options = {}) {
   let output = String(source || "");
   if (Buffer.byteLength(output, "utf8") <= maximumByteLength) return output;
 
-  const densities = options.pixelDensities || [2, 1.5, 1];
+  const densities = options.pixelDensities || [2, 1.5, 1, 0.75, 0.5];
   const temporaryDirectory = options.imageResizer ? null : await mkdtemp(path.join(os.tmpdir(), "ui-sync-svg-images-"));
   let resizeIndex = 0;
   try {

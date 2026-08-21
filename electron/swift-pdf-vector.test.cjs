@@ -167,6 +167,37 @@ test("downsamples oversized PDF images to their rendered SVG size before syncing
   assert.ok(Buffer.byteLength(await readFile(svgPath, "utf8"), "utf8") <= 1_500);
 });
 
+test("keeps shrinking below one-to-one when a page's images still overflow the sync limit", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ui-sync-pdf-image-density-"));
+  const rawSvgPath = path.join(directory, "raw.svg");
+  const svgPath = path.join(directory, "page.svg");
+  const noisyPng = (width, height) => {
+    const png = new PNG({ width, height });
+    for (let index = 0; index < png.data.length; index += 4) {
+      png.data[index] = (index * 7) % 251;
+      png.data[index + 1] = (index * 13) % 239;
+      png.data[index + 2] = (index * 29) % 227;
+      png.data[index + 3] = 255;
+    }
+    return PNG.sync.write(png);
+  };
+  const rawSvg = `<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg"><defs><image id="large" width="400" height="400" href="data:image/png;base64,${noisyPng(400, 400).toString("base64")}"/></defs><use href="#large" transform="matrix(0.5,0,0,0.5,0,0)"/></svg>`;
+  await writeFile(rawSvgPath, rawSvg);
+  const command = path.join(directory, "fake-pdftocairo.sh");
+  await writeFile(command, `#!/bin/sh\ncp '${rawSvgPath}' "$7"\n`, { mode: 0o755 });
+  const densities = [];
+  await convertPdfToFigmaSvg("unused.pdf", svgPath, {
+    command,
+    maximumByteLength: 60_000,
+    imageResizer: async (_buffer, resize) => {
+      densities.push(resize.density);
+      return noisyPng(resize.width, resize.height);
+    }
+  });
+  assert.ok(densities.some((density) => density < 1), `expected a sub-1x pass, saw ${densities.join(", ")}`);
+  assert.ok(Buffer.byteLength(await readFile(svgPath, "utf8"), "utf8") <= 60_000);
+});
+
 test("rejects non-SVG converter output", () => {
   assert.throws(() => prepareFigmaVectorSvg("not svg"), /valid SVG/);
 });
