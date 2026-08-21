@@ -4,7 +4,7 @@
 
 Not screenshots — real text, vectors, images and layout you can select and edit. Scan the same project again and it updates the frames it made last time instead of drawing another set beside them.
 
-Crank does not rebuild your interface. It runs the real one in Chromium and reads what the browser actually laid out, so what arrives is what the page renders.
+Crank does not rebuild your interface. A web app runs in Chromium and Crank reads what the browser actually laid out; a SwiftUI app is built, launched and asked to render itself. Either way what arrives is what the application draws.
 
 **[crank website →](https://irrwood.github.io/Crank/)** · [中文说明 →](README.zh-CN.md)
 
@@ -12,7 +12,7 @@ Crank does not rebuild your interface. It runs the real one in Chromium and read
 
 ## Download
 
-**[Crank 0.1.0 · macOS (Apple Silicon)](https://github.com/irrwood/Crank/releases/latest)** · 126MB
+**[Crank 0.3.0 · macOS (Apple Silicon)](https://github.com/irrwood/Crank/releases/latest)** · 126MB
 
 Early build for testing. No Intel build yet.
 
@@ -43,6 +43,20 @@ Take the result as a self-contained HTML handoff page, or push the layers straig
 - **Scan an address.** If the app is already running, give it the URL. Discovery only ever talks HTTP, so what the project is written in does not come into it.
 - **Attach to the app you are using.** Serving an interface on its own usually gets an empty shell; the screens worth handing to a designer are the ones with real data in them, and those live in the copy you are actually running. Start it with a debugging port and Crank reads that window.
 - **Click through it once and let Crank record.** For pages behind a login or a form.
+
+### SwiftUI apps — iPhone and Mac (beta)
+
+An Xcode project has no address to serve and no page to walk, so it takes a different road to the same place. Drop the folder and Crank copies the project into a workspace of its own, instruments the views in that copy, builds it with `xcodebuild`, and runs it — on the Simulator for an iPhone project, on this Mac for a desktop app. Each screen is exported through SwiftUI's own renderer as vectors, and arrives in Figma with text that is still text. Your project is never touched.
+
+The folder you drop does not have to be the one the `.xcodeproj` sits in: the app's source folder, or a repository with the project in a subfolder, finds it either way.
+
+It is beta because it asks more of the machine than the web path does:
+
+- The full Xcode app, not the Command Line Tools, and an iOS Simulator runtime for iPhone projects
+- Poppler, for turning exported pages into vectors: `brew install poppler`
+- A first scan builds the whole project, so it takes minutes rather than seconds
+
+Screens are found from the SwiftUI in the project — tabs, navigation destinations, sheets. An app that assembles its screens somewhere that cannot be read statically will export fewer than it has.
 
 ---
 
@@ -80,10 +94,10 @@ Those are checkable claims rather than assurances: the files that enforce them a
 ## Current limits
 
 - Apple Silicon only
-- Aimed at web and Electron applications; a native macOS app with no web runtime inside cannot be scanned, and Crank says so rather than trying
+- Web, Electron and SwiftUI applications. A native Mac app that is neither built on a web runtime nor written in SwiftUI cannot be scanned, and Crank says so rather than trying
 - A large project takes minutes to scan
 - The interface follows the system language; both English and Chinese are still being polished
-- The Swift parts — the SwiftUI scanner and its embeddable SDK — are not published yet, so the legacy SwiftUI import path cannot be built from this repository
+- The Swift parts — the SwiftUI scanner and the PDF compositor — are closed and kept in a private repository. They ship compiled inside the app, so scanning works; they cannot be built from this repository
 
 ---
 
@@ -91,7 +105,7 @@ Those are checkable claims rather than assurances: the files that enforce them a
 
 ```sh
 npm install
-npm test        # 332 tests, no network, no Electron window
+npm test        # 373 tests, no network, no Electron window
 npm run dev     # the app, from source
 npm run package # a .app in release/
 ```
