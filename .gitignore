@@ -12,5 +12,6 @@ tmp
 release
 .claude
 
-# The Swift tools are compiled into the build; the binaries are not source.
-swift-tools/prebuilt
+# The Swift tools are the closed part of this app and live in their own private
+# repository, cloned into swift-tools/. See github.com/irrwood/crank-swift-tools.
+swift-tools

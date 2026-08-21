@@ -39,7 +39,7 @@ Rules here are decisions, not axioms. Where evidence contradicts one, change it 
 | `shared/` | Plain ESM `.js` with a hand-written `.d.ts` | The few decisions both sides must agree on. Loaded by `await import()` in the main process and bundled by Vite in the renderer, so it may use neither Node nor the DOM. |
 | `figma-plugin/` | Plain JS against the Figma Plugin API | The other half of a sync. No build step — `code.js` ships as written, typechecked by `npm run typecheck:plugin`. |
 | `figma-plugin/listing/` | — | The Community submission: the copy and the artwork it is published with. |
-| `swift-tools/`, `swift-sdk/` | Swift | The iOS path: the SwiftSyntax scanner and the PDF compositor Crank compiles on demand, and the design SDK a project can adopt. |
+| `swift-tools/`, `swift-sdk/` | Swift | The iOS path: the SwiftSyntax scanner and the PDF compositor Crank compiles on demand, and the design SDK a project can adopt. `swift-tools/` is closed and lives in its own private repository (`irrwood/crank-swift-tools`), cloned into place; it is not tracked here. |
 | `public/`, `assets/` | — | `public/app-icon.png` is the icon; `assets/` holds the macOS `.icns` variants built from it. |
 
 Read the docblock at the top of a module before reading the module. Nearly every
