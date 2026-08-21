@@ -4,7 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { mkdtemp, mkdir, writeFile } = require("node:fs/promises");
 const { PNG } = require("pngjs");
-const { looksLikeXcodeProject, scanSwiftUiFolder } = require("./swiftui-inventory.cjs");
+const { looksLikeXcodeProject, resolveXcodeProjectRoot, scanSwiftUiFolder } = require("./swiftui-inventory.cjs");
 
 async function projectFolder({ xcode = true } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "ui-sync-ios-"));
@@ -37,6 +37,31 @@ const converterFound = async () => "/opt/homebrew/bin/pdftocairo";
 test("claims a folder that holds an Xcode project", async () => {
   assert.equal(await looksLikeXcodeProject(await projectFolder()), true);
   assert.equal(await looksLikeXcodeProject(await projectFolder({ xcode: false })), false);
+});
+
+test("finds the project file above the source folder that was handed over", async () => {
+  const root = await projectFolder();
+  const sources = path.join(root, "FocusFlow");
+  await mkdir(path.join(sources, "Views"), { recursive: true });
+  await writeFile(path.join(sources, "FocusFlowApp.swift"), "import SwiftUI\n");
+  assert.equal(await resolveXcodeProjectRoot(sources), root);
+  assert.equal(await resolveXcodeProjectRoot(path.join(sources, "Views")), null);
+  await writeFile(path.join(sources, "Views", "HomeView.swift"), "import SwiftUI\n");
+  assert.equal(await resolveXcodeProjectRoot(path.join(sources, "Views")), root);
+});
+
+test("finds the project file in the one subfolder that has it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ui-sync-ios-repo-"));
+  const app = path.join(root, "ios");
+  await mkdir(path.join(app, "FocusFlow.xcodeproj"), { recursive: true });
+  assert.equal(await resolveXcodeProjectRoot(root), app);
+});
+
+test("leaves a web project alone even when an app sits beside it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ui-sync-web-"));
+  await writeFile(path.join(root, "package.json"), "{}\n");
+  await mkdir(path.join(root, "ios", "App.xcodeproj"), { recursive: true });
+  assert.equal(await resolveXcodeProjectRoot(root), null);
 });
 
 test("turns exported pages into an inventory the rest of the app already reads", async () => {

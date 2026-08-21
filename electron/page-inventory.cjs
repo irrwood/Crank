@@ -13,7 +13,7 @@ const { readdir } = require("node:fs/promises");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 const { createAttachedSession, listTargets } = require("./cdp-session.cjs");
 const { describeAppBundle, launchAppBundle, looksLikeAppBundle, readAppIcon } = require("./app-bundle.cjs");
-const { looksLikeXcodeProject, scanSwiftUiFolder } = require("./swiftui-inventory.cjs");
+const { resolveXcodeProjectRoot, scanSwiftUiFolder } = require("./swiftui-inventory.cjs");
 const { isAppOrigin, originOf, routeWithin } = require("./page-origin.cjs");
 
 /**
@@ -751,7 +751,10 @@ async function scanFolder(root, options = {}) {
   // built, launched on a Simulator, and its screens are exported there. Claimed
   // before anything tries to serve it, or it would be turned away for having no
   // package.json.
-  if (await looksLikeXcodeProject(root)) return scanSwiftUiFolder(root, { ...(swift ?? {}), onStatus });
+  // The project file is not always at the folder that was handed over — the
+  // app's source folder and the repository around it are the same app.
+  const xcodeRoot = await resolveXcodeProjectRoot(root);
+  if (xcodeRoot) return scanSwiftUiFolder(root, { ...(swift ?? {}), projectRoot: xcodeRoot, onStatus });
   return withProjectServer(root, options, (url, served) => scanUrl(url, {
     ...forward,
     onStatus,

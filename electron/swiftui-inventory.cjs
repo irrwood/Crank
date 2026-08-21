@@ -17,6 +17,52 @@ async function looksLikeXcodeProject(root) {
   return entries.some((entry) => entry.isDirectory() && entry.name.endsWith(".xcodeproj"));
 }
 
+async function holdsSwiftSources(directory) {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  return entries.some((entry) => entry.isFile() && entry.name.endsWith(".swift"))
+    || entries.some((entry) => entry.isDirectory() && entry.name.endsWith(".xcassets"));
+}
+
+/**
+ * Finds the folder Xcode can actually build, given the folder someone handed
+ * over.
+ *
+ * A project is rarely dropped at exactly the level the `.xcodeproj` sits at:
+ * the app's own source folder is one level below it, and a repository often
+ * keeps the project in a subfolder of its own. Both are the same app, and
+ * turning either away for having no `package.json` is what the folder looks
+ * like to everything downstream if it is not claimed here.
+ *
+ * Returns null when nothing nearby can be built, which is the answer for every
+ * project that is not an iOS one.
+ */
+async function resolveXcodeProjectRoot(root) {
+  if (await looksLikeXcodeProject(root)) return root;
+  // Only a folder that is itself Swift follows its parents up: a web project
+  // that happens to live beside an app must stay a web project.
+  if (await holdsSwiftSources(root)) {
+    let directory = root;
+    // Two levels covers `App.xcodeproj` beside `App/` and beside `App/Sources/`.
+    for (let step = 0; step < 2; step += 1) {
+      const parent = path.dirname(directory);
+      if (parent === directory) break;
+      if (await looksLikeXcodeProject(parent)) return parent;
+      directory = parent;
+    }
+    return null;
+  }
+  // A repository with the app in a subfolder — but never one that is a project
+  // in its own right, which is what a manifest at the top means.
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  if (entries.some((entry) => entry.isFile() && entry.name === "package.json")) return null;
+  const candidates = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name.endsWith(".xcodeproj")) continue;
+    if (await looksLikeXcodeProject(path.join(root, entry.name))) candidates.push(path.join(root, entry.name));
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 async function pageThumbnail(page) {
   const preview = await readFile(page.previewPath).catch(() => null);
   if (!preview) return null;
@@ -133,4 +179,4 @@ async function scanSwiftUiFolder(root, {
   };
 }
 
-module.exports = { looksLikeXcodeProject, scanSwiftUiFolder };
+module.exports = { looksLikeXcodeProject, resolveXcodeProjectRoot, scanSwiftUiFolder };
