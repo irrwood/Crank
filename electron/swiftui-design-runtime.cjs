@@ -10,6 +10,8 @@ const { scanWithSwiftSyntax } = require("./swift-syntax-backend.cjs");
 const { requireXcodePaths } = require("./xcode-paths.cjs");
 const { convertPdfToFigmaSvg, indexPdfPages, isSwiftUiUnsupportedRendererSvg } = require("./swift-pdf-vector.cjs");
 const { sourceVectorEffectSchema } = require("./swift-vector-effects.cjs");
+const { appleDesignKitForMacOs, detectSchemePlatform, platformBuildArguments } = require("./xcode-platform.cjs");
+const { launchMacApp } = require("./macos-app-host.cjs");
 
 const DEFAULT_RUNTIME_PORT = 38458;
 const runtimeFrameSchema = z.object({
@@ -859,6 +861,8 @@ function runtimeHelperSource(suffix, endpoint, vectorEndpoint, includeVectorCapt
 
 #if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
 #endif
 
 #if DEBUG
@@ -1355,6 +1359,18 @@ private func _uiSyncEmit_${suffix}(id: String, sourceFile: String, sourceName: S
     "dynamicTypeSize": dynamicTypeSize,
     "layoutDirection": layoutDirection
   ]
+#elseif canImport(AppKit)
+  // A Mac window is whatever size it opened at, so the viewport is read from
+  // the window itself rather than from a screen the app does not fill.
+  let contentBounds = NSApplication.shared.windows.first(where: { $0.isVisible })?.contentView?.bounds
+  let viewport = contentBounds ?? CGRect(x: 0, y: 0, width: max(frame.maxX, 1), height: max(frame.maxY, 1))
+  let environment: [String: Any] = [
+    "viewport": ["x": 0, "y": 0, "width": max(viewport.width, 1), "height": max(viewport.height, 1)],
+    "displayScale": NSScreen.main?.backingScaleFactor ?? 2,
+    "colorScheme": colorScheme,
+    "dynamicTypeSize": dynamicTypeSize,
+    "layoutDirection": layoutDirection
+  ]
 #else
   let environment: [String: Any] = [
     "viewport": ["x": 0, "y": 0, "width": max(frame.maxX, 1), "height": max(frame.maxY, 1)],
@@ -1832,7 +1848,7 @@ async function writeVectorPdf(target, contents) {
 }
 
 async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simulatorPreference = {} }) {
-  const xcode = await requireXcodePaths("Install the full Xcode app before exporting an iOS project");
+  const xcode = await requireXcodePaths("Install the full Xcode app before exporting an Xcode project");
   const xcodeDeveloper = xcode.developerDirectory;
   const xcodebuild = xcode.xcodebuild;
   const simctl = xcode.simctl;
@@ -1865,6 +1881,9 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
       : null;
   };
   const session = runtimeServer.beginSession(root);
+  // Held outside the run so a build that fails halfway still leaves no app of
+  // ours running on the user's Mac.
+  const macHost = { app: null };
   return (async () => {
   // One workspace per project, reused across runs, with Xcode's DerivedData
   // inside it. A second export is then an incremental build rather than a full
@@ -1919,63 +1938,83 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
   if (!scheme) throw new Error("No runnable application scheme was found");
   const environment = { ...process.env, DEVELOPER_DIR: xcodeDeveloper };
   const copiedProjectPath = path.join(copiedRoot, projectRelative);
-  const simulator = await newestInstalledIPhone(simctl, simulatorPreference);
-  appleDesignKit = appleDesignKitForRuntime(simulator.runtimeId);
+  // A Mac app has no Simulator to run on, no device to pick, and no status bar
+  // to dress: it is built for this machine and launched on it.
+  const platform = await detectSchemePlatform(
+    (args, options) => run(xcodebuild, args, options),
+    { projectPath: copiedProjectPath, scheme, env: environment }
+  );
+  const onMac = platform === "macos";
+  const simulator = onMac ? null : await newestInstalledIPhone(simctl, simulatorPreference);
+  appleDesignKit = onMac
+    ? appleDesignKitForMacOs(await run("/usr/bin/sw_vers", ["-productVersion"]).catch(() => ""))
+    : appleDesignKitForRuntime(simulator.runtimeId);
   const derivedData = path.join(workspaceRoot, "DerivedData");
-  // Xcode may reject a slightly older installed runtime as a destination
-  // (for example SDK 26.5 with Runtime 26.4.1). Selecting the simulator SDK
-  // directly builds the same deployment-compatible app without that check.
+  const platformArguments = platformBuildArguments(platform);
   const baseArguments = [
     "-project", copiedProjectPath,
     "-scheme", scheme,
     "-configuration", "Debug",
-    "-sdk", "iphonesimulator",
-    "-destination", "generic/platform=iOS Simulator",
+    ...platformArguments.destination,
     "-derivedDataPath", derivedData
   ];
   await runSimulatorBuild(xcodebuild, [
     ...baseArguments,
-    "CODE_SIGNING_ALLOWED=NO",
+    ...platformArguments.settings,
     "INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking=YES",
     "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG UI_SYNC_DESIGN",
     "build"
   ], { env: environment });
-  await bootSimulator(simctl, simulator);
-  const productsDirectory = path.join(derivedData, "Build", "Products", "Debug-iphonesimulator");
+  if (!onMac) await bootSimulator(simctl, simulator);
+  const productsDirectory = path.join(derivedData, "Build", "Products", platformArguments.productsDirectory);
   const productEntries = await readdir(productsDirectory, { withFileTypes: true });
   const appEntry = productEntries.find((entry) => entry.isDirectory() && entry.name.endsWith(".app") && !/(Tests|UITests)\.app$/i.test(entry.name));
   if (!appEntry) throw new Error("Design Build succeeded, but its Simulator app product could not be found");
   const appPath = path.join(productsDirectory, appEntry.name);
-  const bundleIdentifier = (await run("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", path.join(appPath, "Info.plist")])).trim();
+  const infoPlistPath = onMac ? path.join(appPath, "Contents", "Info.plist") : path.join(appPath, "Info.plist");
+  const bundleIdentifier = (await run("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPlistPath])).trim();
   if (!bundleIdentifier) throw new Error("Design Build app has no bundle identifier");
-  await run(simctl, ["install", simulator.udid, appPath]);
-  await Promise.all([
-    run(simctl, ["status_bar", simulator.udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100"]).catch(() => ""),
-    run(simctl, ["ui", simulator.udid, "appearance", "light"]).catch(() => ""),
-    run(simctl, ["ui", simulator.udid, "content_size", "large"]).catch(() => ""),
-    run(simctl, ["privacy", simulator.udid, "grant", "all", bundleIdentifier]).catch(() => "")
-  ]);
+  if (!onMac) {
+    await run(simctl, ["install", simulator.udid, appPath]);
+    await Promise.all([
+      run(simctl, ["status_bar", simulator.udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100"]).catch(() => ""),
+      run(simctl, ["ui", simulator.udid, "appearance", "light"]).catch(() => ""),
+      run(simctl, ["ui", simulator.udid, "content_size", "large"]).catch(() => ""),
+      run(simctl, ["privacy", simulator.udid, "grant", "all", bundleIdentifier]).catch(() => "")
+    ]);
+  }
+
   const launchPages = usesSwiftUi && swiftPages.length > 0 ? swiftPages : [null];
   for (let pageIndex = 0; pageIndex < launchPages.length; pageIndex += 1) {
     const page = launchPages[pageIndex];
-    const launchArguments = [
-      "launch", "--terminate-running-process", simulator.udid, bundleIdentifier, "--args",
-      "-designMode", "YES", "-mockData", "fixture-v1"
-    ];
-    if (page) launchArguments.push(
+    // The same arguments either way: they are read from UserDefaults, which
+    // an app on this Mac and an app on the Simulator both fill from argv.
+    const appArguments = ["-designMode", "YES", "-mockData", "fixture-v1"];
+    if (page) appArguments.push(
       "-uiSyncPageIndex", String(pageIndex),
       "-uiSyncPageSourceName", page.sourceName,
       "-uiSyncPageName", page.pageName
     );
-    await run(simctl, launchArguments, {
-      env: {
-        ...environment,
-        ...(page ? {
-          SIMCTL_CHILD_UI_SYNC_PAGE_INDEX: String(pageIndex),
-          SIMCTL_CHILD_UI_SYNC_PAGE_SOURCE_NAME: page.sourceName
-        } : {})
-      }
-    });
+    const pageEnvironment = page
+      ? { UI_SYNC_PAGE_INDEX: String(pageIndex), UI_SYNC_PAGE_SOURCE_NAME: page.sourceName }
+      : {};
+    if (onMac) {
+      // One page at a time, as on the Simulator: the previous copy is stopped
+      // rather than left behind, or the next launch would be a second window
+      // of the same app and the capture would name the wrong page.
+      await macHost.app?.stop();
+      macHost.app = await launchMacApp({ appPath, args: appArguments, env: pageEnvironment });
+    } else {
+      await run(simctl, [
+        "launch", "--terminate-running-process", simulator.udid, bundleIdentifier, "--args",
+        ...appArguments
+      ], {
+        env: {
+          ...environment,
+          ...Object.fromEntries(Object.entries(pageEnvironment).map(([key, value]) => [`SIMCTL_CHILD_${key}`, value]))
+        }
+      });
+    }
     if (page && runtimeServer.waitForVectorSource) {
       await runtimeServer.waitForVectorSource(session.token, {
         sourceName: page.sourceName,
@@ -1996,6 +2035,9 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
   const screenshotPath = path.join(screenshotDirectory, `${createHash("sha256").update(root).digest("hex").slice(0, 24)}.png`);
   const appScreenshot = await runtimeServer.waitForScreenshot(session.token);
   if (appScreenshot) await writeFile(screenshotPath, appScreenshot);
+  // A Mac app that sent no picture of itself is photographed where it stands.
+  // `-o` leaves out the shadow, `-x` the shutter sound.
+  else if (onMac) await run("/usr/sbin/screencapture", ["-x", "-o", screenshotPath]).catch(() => "");
   else await run(simctl, ["io", simulator.udid, "screenshot", "--type=png", screenshotPath]);
   const vectorPdfs = runtimeServer.waitForVectors
     ? await runtimeServer.waitForVectors(session.token)
@@ -2198,7 +2240,13 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
           }
         }));
       } else {
-        const preferredPdfs = pagePdfs.length > 0 ? pagePdfs : [rootPdf ?? legacyPdf];
+        // One page per view, not one per render. A SwiftUI view renders itself
+        // more than once — on a Mac, where there is no window capture to fall
+        // back to, every one of those renders would otherwise become a page of
+        // its own, all showing the same screen.
+        const preferredPdfs = pagePdfs.length > 0
+          ? [...largestCaptureBySourceName(pagePdfs).values()]
+          : [rootPdf ?? legacyPdf];
         pages = [];
         for (let index = 0; index < preferredPdfs.length; index += 1) {
           const candidate = preferredPdfs[index];
@@ -2207,7 +2255,13 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
             : cleanPagePdfs[index] ?? cleanRootPdfs[index] ?? null;
           const pagePdfPath = index === 0 ? pdfPath : path.join(vectorDirectory, `${vectorStem}-pdf-page-${index + 1}-image-renderer.pdf`);
           if (index > 0) await writeFile(pagePdfPath, candidate);
-          const [page] = await indexPdfPages(pagePdfPath, path.join(vectorDirectory, `${vectorStem}-pdf-page-${index + 1}-pages`));
+          const [page] = await indexPdfPages(
+            pagePdfPath,
+            path.join(vectorDirectory, `${vectorStem}-pdf-page-${index + 1}-pages`),
+            // Named after the view it was rendered from, so a page arrives as
+            // "Content" rather than as "Page 1".
+            candidate.sourceName ? { pageNames: [humanizeSwiftViewName(candidate.sourceName)] } : {}
+          );
           if (page) pages.push({
             ...page,
             id: `pdf-page-${index + 1}`,
@@ -2239,7 +2293,7 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
       vectorMessage = error instanceof Error ? error.message : "PDF page indexing failed";
     }
   } else {
-    vectorMessage = "The app ran, but no iOS window produced a PDF capture.";
+    vectorMessage = "The app ran, but no window produced a PDF capture.";
   }
   if (!usesSwiftUi && pdfDocument) {
     const firstPage = pdfDocument.pages[0];
@@ -2259,10 +2313,16 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
     pdfDocument.viewport = environment.viewport;
   }
   const capturedAt = new Date().toISOString();
+  // The app stays up for the capture and no longer: an app left running behind
+  // an export is one nobody asked for and would have to go and find.
+  await macHost.app?.stop();
+  const deviceName = simulator?.name ?? "This Mac";
   return {
     warnings: scanDiagnostics.map((diagnostic) => diagnostic.message),
-    simulator: { udid: simulator.udid, name: simulator.name, runtimeId: simulator.runtimeId ?? null },
-    snapshot: { ...snapshot, deviceName: simulator.name, scheme },
+    simulator: simulator
+      ? { udid: simulator.udid, name: simulator.name, runtimeId: simulator.runtimeId ?? null }
+      : null,
+    snapshot: { ...snapshot, deviceName, scheme },
     screenshot: {
       path: screenshotPath,
       capturedAt,
@@ -2274,7 +2334,10 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
     instrumentedNodeCount,
     workspaceRoot
   };
-  })().finally(() => runtimeServer.endSession(session.token));
+  })().finally(async () => {
+    await macHost.app?.stop();
+    runtimeServer.endSession(session.token);
+  });
 }
 
 module.exports = {

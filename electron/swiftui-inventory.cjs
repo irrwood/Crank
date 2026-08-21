@@ -4,11 +4,12 @@ const { runSwiftUiDesignBuild } = require("./swiftui-design-runtime.cjs");
 const { resolvePdfToCairo } = require("./swift-pdf-vector.cjs");
 
 /**
- * An iOS project cannot be served and crawled: it has no address, and its
- * screens exist only once the app is running on a Simulator. So it is scanned
- * by building it, launching it, and exporting each of its top-level states as a
- * vector PDF page — the same pipeline UI Sync has always used for SwiftUI,
- * producing the same inventory shape a served project produces.
+ * An Xcode project cannot be served and crawled: it has no address, and its
+ * screens exist only once the app is running — on a Simulator for iOS, on this
+ * Mac for a desktop app. So it is scanned by building it, launching it, and
+ * exporting each of its top-level states as a vector PDF page — the same
+ * pipeline UI Sync has always used for SwiftUI, producing the same inventory
+ * shape a served project produces.
  */
 async function looksLikeXcodeProject(root) {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
@@ -83,6 +84,8 @@ async function scanSwiftUiFolder(root, {
   cacheDirectory,
   runtimeServer,
   preferredUdid = null,
+  /** Where the `.xcodeproj` lives, when that is not the folder being scanned. */
+  projectRoot = null,
   onStatus,
   runDesignBuild = runSwiftUiDesignBuild,
   resolveConverter = resolvePdfToCairo
@@ -96,14 +99,14 @@ async function scanSwiftUiFolder(root, {
     return {
       ok: false,
       reason: "poppler",
-      message: "Scanning an iOS project needs Poppler to turn its exported pages into vectors. Install it with `brew install poppler`, then scan again."
+      message: "Scanning an Xcode project needs Poppler to turn its exported pages into vectors. Install it with `brew install poppler`, then scan again."
     };
   }
-  onStatus?.({ phase: "starting", detail: "Building this iOS project for the Simulator" });
+  onStatus?.({ phase: "starting", detail: "Building this Xcode project and running it" });
   let result;
   try {
     result = await runDesignBuild({
-      root,
+      root: projectRoot ?? root,
       cacheDirectory,
       runtimeServer,
       simulatorPreference: preferredUdid ? { preferredUdid } : {}
@@ -112,16 +115,18 @@ async function scanSwiftUiFolder(root, {
     return {
       ok: false,
       reason: "swiftui-build",
-      message: error instanceof Error ? error.message : "This iOS project could not be built for the Simulator."
+      message: error instanceof Error ? error.message : "This Xcode project could not be built."
     };
   }
 
   const deviceName = result.snapshot?.deviceName ?? "iPhone Simulator";
+  // A Mac app was run here, not on a device that had to be booted first.
+  const ranOnThisMac = result.simulator === null;
   if (!result.pdfDocument || result.pdfDocument.pages.length === 0) {
     return {
       ok: false,
       reason: "swiftui-no-pages",
-      message: result.vectorMessage || "The app ran on the Simulator, but no screen could be exported as a PDF page."
+      message: result.vectorMessage || "The app ran, but no screen could be exported as a PDF page."
     };
   }
 
@@ -164,7 +169,7 @@ async function scanSwiftUiFolder(root, {
     filtered: [],
     inert: [],
     sources: { sitemap: 0, seeds: 0, crawled: 0 },
-    servedBy: `the iOS Simulator (${deviceName})`,
+    servedBy: ranOnThisMac ? `${deviceName}` : `the iOS Simulator (${deviceName})`,
     attached: false,
     // Persisted by the caller, not by the renderer: this is the capture the
     // Figma import reads from.
