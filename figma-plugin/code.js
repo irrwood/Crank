@@ -1806,8 +1806,9 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
     vector.y = 0;
   }
 
+  let textGroup = null;
   if (screen.vectorTextMode !== "pdf-glyphs") {
-    const textGroup = figma.createFrame();
+    textGroup = figma.createFrame();
     textGroup.name = "Editable Text";
     textGroup.layoutMode = "NONE";
     textGroup.resize(viewport.width, viewport.height);
@@ -1832,11 +1833,14 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
     }
   }
 
+  const systemPage = frame.parent?.type === "PAGE" ? frame.parent : figma.currentPage;
+  await placeSystemGlassButtons(screen, root, vector, textGroup, systemPage);
+
   const systemTabBar = await createSystemTabBar(
     screen,
     fonts,
     viewport.width,
-    frame.parent?.type === "PAGE" ? frame.parent : figma.currentPage
+    systemPage
   );
   if (systemTabBar) {
     root.appendChild(systemTabBar);
@@ -1849,6 +1853,78 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
   root.x = 0;
   root.y = 0;
   return "rendered";
+}
+
+/**
+ * Puts Apple's own button where the export drew a picture of one.
+ *
+ * A `.buttonStyle(.glass)` button is not a shape somebody designed — it is the
+ * system's, and a file that has the system's component should get that
+ * component carrying this button's words. The same bargain the Tab Bar strikes.
+ *
+ * What the export drew in that spot is taken out first: the vector shapes
+ * inside the button's frame, and the editable text run of its own label. Glass
+ * is translucent, so leaving them would show one button through the other, with
+ * the label written twice.
+ */
+async function placeSystemGlassButtons(screen, root, vector, textGroup, page) {
+  const buttons = screen.systemButtons || [];
+  if (buttons.length === 0) return 0;
+  if (!(await markedSystemTemplate("Button", page))) return 0;
+
+  let placed = 0;
+  for (const button of buttons) {
+    const instance = await createMarkedAppleButton(
+      {
+        material: button.material,
+        text: button.label,
+        controlSize: button.controlSize,
+        isEnabled: button.isEnabled,
+        destructive: button.destructive,
+        runtimeFrame: button.frame,
+        runtimeEnvironment: screen.uiTree?.runtimeEnvironment
+      },
+      {},
+      page
+    );
+    if (!instance) continue;
+    clearVectorRegion(vector, button.frame);
+    clearTextRegion(textGroup, button.frame);
+    root.appendChild(instance);
+    // Placed at its own size rather than stretched to the captured frame: the
+    // component carries Apple's metrics, and the frame only says where.
+    instance.x = button.frame.x + (button.frame.width - instance.width) / 2;
+    instance.y = button.frame.y + (button.frame.height - instance.height) / 2;
+    instance.setSharedPluginData(NAMESPACE, "swift_sync_id", String(button.syncId || ""));
+    placed += 1;
+  }
+  return placed;
+}
+
+/** Whether a node sits wholly inside a region, give or take a hairline. */
+function withinRegion(bounds, region, tolerance = 1.5) {
+  return bounds.width > 0 && bounds.height > 0
+    && bounds.x >= region.x - tolerance
+    && bounds.y >= region.y - tolerance
+    && bounds.x + bounds.width <= region.x + region.width + tolerance
+    && bounds.y + bounds.height <= region.y + region.height + tolerance;
+}
+
+function clearVectorRegion(vector, region) {
+  if (!vector || vector.removed) return;
+  for (const node of vector.findAll(() => true)) {
+    if (node.removed || node.parent === null) continue;
+    if (withinRegion(boundsRelativeToVector(node, vector), region)) node.remove();
+  }
+}
+
+function clearTextRegion(textGroup, region) {
+  if (!textGroup || textGroup.removed) return;
+  for (const node of [...textGroup.children]) {
+    if (node.removed) continue;
+    const bounds = { x: Number(node.x || 0), y: Number(node.y || 0), width: node.width, height: node.height };
+    if (withinRegion(bounds, region, 3)) node.remove();
+  }
 }
 
 function vectorViewport(screen) {

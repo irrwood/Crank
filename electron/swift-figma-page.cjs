@@ -8,6 +8,7 @@ const { extractPdfTextRuns } = require("./swift-pdf-text.cjs");
 const { prepareNativeSvgShadows } = require("./svg-native-shadows.cjs");
 const { resolveCapturedSwiftVectorEffects } = require("./swift-vector-effects.cjs");
 const { resolveSwiftSourceImages } = require("./swift-source-images.cjs");
+const { resolveCapturedSwiftGlassButtons } = require("./swift-glass-buttons.cjs");
 const { normalizeSwiftTreeForPdfPage } = require("./swift-page-coordinate.cjs");
 const { buildSwiftVisualPayload } = require("./swift-visual-assets.cjs");
 
@@ -143,6 +144,11 @@ async function buildSwiftFigmaPageVector({ root, metadata, page, sourceScreen, s
   const sourceImages = metadata.swiftRuntimeSnapshot
     ? await resolveSwiftSourceImages(root, metadata.swiftRuntimeSnapshot, page.sourceName, coordinateSpace)
     : [];
+  // Apple's own buttons, to be drawn from Apple's own component rather than
+  // left as the shapes the export made of them.
+  const glassButtons = metadata.swiftRuntimeSnapshot
+    ? resolveCapturedSwiftGlassButtons(sourceScreen.uiTree, metadata.swiftRuntimeSnapshot, page.sourceName, coordinateSpace)
+    : [];
 
   const vectorPdfPath = hasCapturedRuntimeText
     ? page.textCleanPdfPath
@@ -182,6 +188,7 @@ async function buildSwiftFigmaPageVector({ root, metadata, page, sourceScreen, s
       svgPath: preparedSvgPath,
       textMode: hasCapturedRuntimeText ? "editable-runtime" : hasCompleteEditableText ? "editable-pdf" : "pdf-glyphs",
       textRuns: hasCompleteEditableText ? extractedText.runs : [],
+      glassButtons,
       fallbackSvg: semanticFallbackSvg ?? nativeShadowPlan.fallbackSvg,
       nativeShadows: nativeShadowPlan.shadows,
       vectorEffects
@@ -258,6 +265,7 @@ async function buildSwiftFigmaScreens({ root, metadata, screens, pages, frames =
       vectorEffects: payload.vectorEffects ?? [],
       vectorTextMode: payload.vectorTextMode ?? null,
       vectorTextRuns: payload.vectorTextRuns ?? [],
+      systemButtons: pageVector.glassButtons ?? [],
       systemTabBar: systemTabBarPayload(page),
       semanticAutoLayout: false
     });

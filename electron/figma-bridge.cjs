@@ -2,6 +2,7 @@ const http = require("node:http");
 const { randomInt } = require("node:crypto");
 const { z } = require("zod");
 const { uiNodeSchema } = require("./swiftui-ir.cjs");
+const { glassButtonSchema } = require("./swift-glass-buttons.cjs");
 const { pdfTextRunSchema } = require("./swift-pdf-text.cjs");
 const { nativeShadowSchema } = require("./svg-native-shadows.cjs");
 const { vectorEffectSchema } = require("./swift-vector-effects.cjs");
@@ -109,6 +110,7 @@ const screenSchema = z.discriminatedUnion("renderMode", [
     vectorEffects: z.array(vectorEffectSchema).max(2000).optional(),
     vectorTextMode: z.enum(["pdf-glyphs", "editable-pdf", "editable-runtime"]).nullable().optional(),
     vectorTextRuns: z.array(pdfTextRunSchema).max(2000).optional(),
+    systemButtons: z.array(glassButtonSchema).max(200).optional(),
     systemTabBar: z.object({
       designKit: z.string().regex(/^iOS \d+$/).optional(),
       appearance: z.enum(["classic", "liquid-glass"]).optional(),
