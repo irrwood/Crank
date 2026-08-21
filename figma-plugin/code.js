@@ -657,11 +657,14 @@ function appleButtonSize(ir) {
   return "Large";
 }
 
-async function createMarkedAppleButton(ir, context = {}, page = figma.currentPage) {
+async function createMarkedAppleButton(ir, context = {}, page = figma.currentPage, known = null) {
   if (!["glass", "glassProminent"].includes(ir.material)) return null;
   const label = firstButtonText(ir);
   if (!label) return null;
-  const template = await markedSystemTemplate("Button", page);
+  // Looked up once per render when the caller already has it. Each lookup makes
+  // the template's page current, and switching pages under a render that is
+  // holding nodes is how a handle goes stale.
+  const template = known ?? await markedSystemTemplate("Button", page);
   if (!template) return null;
   const instance = template.clone();
   if (instance.type !== "INSTANCE") {
@@ -1870,7 +1873,8 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
 async function placeSystemGlassButtons(screen, root, vector, textGroup, page) {
   const buttons = screen.systemButtons || [];
   if (buttons.length === 0) return 0;
-  if (!(await markedSystemTemplate("Button", page))) return 0;
+  const template = await markedSystemTemplate("Button", page);
+  if (!template) return 0;
 
   let placed = 0;
   for (const button of buttons) {
@@ -1885,7 +1889,8 @@ async function placeSystemGlassButtons(screen, root, vector, textGroup, page) {
         runtimeEnvironment: screen.uiTree?.runtimeEnvironment
       },
       {},
-      page
+      page,
+      template
     );
     if (!instance) continue;
     clearVectorRegion(vector, button.frame);
@@ -1910,20 +1915,41 @@ function withinRegion(bounds, region, tolerance = 1.5) {
     && bounds.y + bounds.height <= region.y + region.height + tolerance;
 }
 
+function contains(ancestor, node) {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (parent === ancestor) return true;
+  }
+  return false;
+}
+
 function clearVectorRegion(vector, region) {
   if (!vector || vector.removed) return;
+  // Measured before anything is removed. Taking a container out mid-walk leaves
+  // every node below it invalid, and reading one of those is what makes Figma
+  // report a callback with an invalid id.
+  const targets = [];
   for (const node of vector.findAll(() => true)) {
-    if (node.removed || node.parent === null) continue;
-    if (withinRegion(boundsRelativeToVector(node, vector), region)) node.remove();
+    try {
+      if (withinRegion(boundsRelativeToVector(node, vector), region)) targets.push(node);
+    } catch {
+      // A node that cannot be measured is not one this can judge.
+    }
+  }
+  for (const node of targets) {
+    if (targets.some((other) => other !== node && contains(other, node))) continue;
+    try { node.remove(); } catch { /* already gone with the parent that held it */ }
   }
 }
 
 function clearTextRegion(textGroup, region) {
   if (!textGroup || textGroup.removed) return;
   for (const node of [...textGroup.children]) {
-    if (node.removed) continue;
-    const bounds = { x: Number(node.x || 0), y: Number(node.y || 0), width: node.width, height: node.height };
-    if (withinRegion(bounds, region, 3)) node.remove();
+    try {
+      const bounds = { x: Number(node.x || 0), y: Number(node.y || 0), width: node.width, height: node.height };
+      if (withinRegion(bounds, region, 3)) node.remove();
+    } catch {
+      // Already gone.
+    }
   }
 }
 
