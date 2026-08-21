@@ -11,3 +11,6 @@ tmp
 # Build output: the packaged app and the archive that goes to a release.
 release
 .claude
+
+# The Swift tools are compiled into the build; the binaries are not source.
+swift-tools/prebuilt
