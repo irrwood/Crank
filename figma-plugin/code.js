@@ -342,7 +342,11 @@ function createTextNode(value, fonts, options = {}) {
   const text = figma.createText();
   const weight = options.weight || "regular";
   const content = parseInlineMarkdown(value);
-  text.name = options.name || "Text";
+  // Named only when the layer is something other than what it says. Figma
+  // names an untouched text layer after its own content and keeps the two in
+  // step as it is edited, which is what a designer expects to find in the
+  // layer list — setting any name at all turns that off for good.
+  if (options.name) text.name = options.name;
   text.fontName = fontForText(fonts, content.characters, weight);
   text.fontSize = options.size || 17;
   text.characters = content.characters;
@@ -1580,12 +1584,11 @@ function createRuntimeTextLayer(ir, frame, fonts, suffix = "") {
   return text;
 }
 
-function createPdfTextLayer(run, fonts, index, pageWidth = null) {
+function createPdfTextLayer(run, fonts, pageWidth = null) {
   const text = createTextNode(run.text, fonts, {
     size: run.fontSize,
     weight: run.fontWeight,
-    color: run.color,
-    name: `Editable PDF Text ${index + 1}`
+    color: run.color
   });
   // Poppler reports the visual glyph bounds from the embedded PDF font. The
   // locally available editable font can be wider (notably PingFang), which
@@ -1815,8 +1818,8 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
     textGroup.y = 0;
 
     if (screen.vectorTextMode === "editable-pdf") {
-      for (const [index, run] of (screen.vectorTextRuns || []).entries()) {
-        textGroup.appendChild(createPdfTextLayer(run, fonts, index, viewport.width));
+      for (const run of screen.vectorTextRuns || []) {
+        textGroup.appendChild(createPdfTextLayer(run, fonts, viewport.width));
       }
     } else {
       for (const ir of runtimeTextRuns(screen.uiTree)) {
