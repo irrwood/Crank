@@ -4,7 +4,7 @@ import { AppWindowMac, Check, ChevronRight, Download, Figma, FolderGit2, Globe2,
 import { FigmaPluginPanel } from "./FigmaPluginPanel";
 import { FigmaSyncDialog } from "./FigmaSyncDialog";
 import { PageLayers } from "./PageLayers";
-import type { AutomaticMappingStatus, DiscoveredPage, FigmaConnection, FigmaTree, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
+import type { AutomaticMappingStatus, DiscoveredPage, FigmaBuildProgress, FigmaConnection, FigmaTree, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 import { useLocale, useT, type Translate } from "./lib/locale";
 
 /**
@@ -728,6 +728,9 @@ export default function PageInventoryView() {
   const [busyPage, setBusyPage] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [figmaSession, setFigmaSession] = useState<FigmaExportSession | null>(null);
+  // Rendering a scan into vectors takes minutes on a picture-heavy app, and
+  // until the pairing code arrives there is nothing else on screen to say so.
+  const [preparing, setPreparing] = useState<FigmaBuildProgress | null>(null);
   const [figmaStatus, setFigmaStatus] = useState<AutomaticMappingStatus>({ state: "waiting" });
   const [connection, setConnection] = useState<FigmaConnection | null>(null);
   const [pluginOpen, setPluginOpen] = useState(false);
@@ -960,8 +963,9 @@ export default function PageInventoryView() {
   };
 
   const sendToFigma = async (only?: DiscoveredPage[]) => {
-    if (!result?.ok || !window.uiSync?.sendInventoryToFigma) return;
-        try {
+    if (!result?.ok || !window.uiSync?.sendInventoryToFigma || preparing) return;
+    setPreparing({ name: "", done: 0, total: (only ?? result.pages).length });
+    try {
       const outcome = await window.uiSync.sendInventoryToFigma(
         { origin: result.origin, source: result.source, pages: only ?? result.pages },
         figmaUrl.trim()
@@ -981,8 +985,17 @@ export default function PageInventoryView() {
       });
     } catch (cause) {
       notify("error", cause instanceof Error ? cause.message : t("figma.exportFailed"));
+    } finally {
+      setPreparing(null);
     }
   };
+
+  // Each page reaches Figma only after its vectors are rendered, which the main
+  // process reports one page at a time.
+  useEffect(() => {
+    const off = window.uiSync?.onFigmaBuildProgress?.((value) => setPreparing((current) => (current ? value : current)));
+    return () => off?.();
+  }, []);
 
   // A send only queues the job; the plugin does the work minutes later. Without
   // this the window said nothing at all — not even the code needed to pair.
@@ -1510,8 +1523,12 @@ export default function PageInventoryView() {
                 placeholder={t("inventory.figmaUrlPlaceholder")}
                 value={figmaUrl}
               />
-              <button className="secondary-button" disabled={!figmaUrl.trim()} onClick={() => void sendToFigma()} type="button">
-                {t("inventory.sendCount", { count: pages.length })}
+              <button className="secondary-button" disabled={!figmaUrl.trim() || preparing !== null} onClick={() => void sendToFigma()} type="button">
+                {preparing
+                  ? <><LoaderCircle className="spin" size={14} /> {preparing.name
+                    ? t("inventory.sendProgress", { done: preparing.done + 1, total: preparing.total, name: preparing.name })
+                    : t("inventory.sendPreparing")}</>
+                  : t("inventory.sendCount", { count: pages.length })}
               </button>
             </div>
           )}

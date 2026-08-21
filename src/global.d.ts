@@ -1,4 +1,4 @@
-import type { DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryGroup, InventoryTarget, ScanLifecycle, ScanProgress, ScanStatus, AutomaticMappingSession, AutomaticMappingStatus, FigmaConnection, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
+import type { DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryGroup, InventoryTarget, ScanLifecycle, ScanProgress, ScanStatus, FigmaBuildProgress, AutomaticMappingSession, AutomaticMappingStatus, FigmaConnection, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
 
 declare global {
   interface Window {
@@ -59,6 +59,7 @@ declare global {
       exportHandoffPage: (inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] }, title?: string) => Promise<{ saved: boolean; filePath?: string }>;
       revealFile: (filePath: string) => Promise<void>;
       onScanProgress: (callback: (value: ScanProgress) => void) => () => void;
+      onFigmaBuildProgress: (callback: (value: FigmaBuildProgress) => void) => () => void;
       getDroppedPath: (file: File) => string;
       connectFigmaProject: (root: string, figmaUrl: string) => Promise<ProjectInfo>;
       mapProjectScreen: (root: string, screenId: string, figmaUrl: string) => Promise<ProjectInfo>;

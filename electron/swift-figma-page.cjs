@@ -212,7 +212,7 @@ function withoutSourceExpressions(node) {
  * reaches Figma is the rendered PDF with reliably matched native layers on top
  * — never a re-drawn approximation of the source.
  */
-async function buildSwiftFigmaScreens({ root, metadata, screens, pages, frames = {} }) {
+async function buildSwiftFigmaScreens({ root, metadata, screens, pages, frames = {}, onProgress }) {
   const sourceScreens = screens.filter((screen) => screen.sourceType !== "component");
   const runtimeScreen = sourceScreens.find((screen) => screen.runtimeCapture?.isVisualReference);
   const svgDirectory = swiftPageSvgDirectory(root, metadata);
@@ -221,6 +221,9 @@ async function buildSwiftFigmaScreens({ root, metadata, screens, pages, frames =
   const built = [];
 
   for (const page of pages) {
+    // Rendering a picture-heavy page takes tens of seconds, so the window is
+    // told which page is being worked on rather than left silent for minutes.
+    onProgress?.({ name: page.name, done: built.length, total: pages.length });
     const baseScreen = sourceScreens.find((screen) => screen.id === page.sourceScreenId) ?? runtimeScreen ?? sourceScreens[0] ?? null;
     if (!baseScreen) throw new Error(`No SwiftUI view matches ${page.name}. Scan the project again.`);
     const sourceScreen = alignSourceScreenToPage(baseScreen, page);

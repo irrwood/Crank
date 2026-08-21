@@ -159,6 +159,13 @@ export type SyncDirection = "to-figma" | "to-local";
 export type AppView = "connections";
 export type ReviewState = "idle" | "checking" | "review" | "syncing" | "complete";
 
+/** Which page of a Figma send is being rendered, while the send is in flight. */
+export type FigmaBuildProgress = {
+  name: string;
+  done: number;
+  total: number;
+};
+
 export type AutomaticMappingSession = {
   pairingCode: string;
   expiresAt: string;

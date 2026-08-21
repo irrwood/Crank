@@ -48,6 +48,11 @@ contextBridge.exposeInMainWorld("uiSync", {
   },
   exportHandoffPage: (inventory, title) => ipcRenderer.invoke("inventory:export", inventory, title),
   revealFile: (filePath) => ipcRenderer.invoke("inventory:reveal", filePath),
+  onFigmaBuildProgress: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("inventory:figma-progress", listener);
+    return () => ipcRenderer.removeListener("inventory:figma-progress", listener);
+  },
   onScanProgress: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("inventory:progress", listener);

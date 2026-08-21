@@ -903,7 +903,7 @@ async function rememberSwiftCapture(root, capture) {
  * disk, so what is drawn is the capture UI Sync actually took rather than
  * anything a payload could have carried or altered.
  */
-async function buildSwiftInventoryJob(parsed, { kind, target, figmaFileName, frames }) {
+async function buildSwiftInventoryJob(parsed, { kind, target, figmaFileName, frames, onProgress }) {
   const registry = await readRegistry();
   const metadata = registry.find((item) => item.root === target);
   if (!metadata?.swiftRuntimePdf) {
@@ -923,7 +923,8 @@ async function buildSwiftInventoryJob(parsed, { kind, target, figmaFileName, fra
     metadata,
     screens: project.screens,
     pages,
-    frames
+    frames,
+    onProgress
   });
   return {
     ok: true,
@@ -1766,7 +1767,7 @@ function registerIpc() {
     return outcome;
   });
 
-  ipcMain.handle("inventory:send-to-figma", async (_event, inventory, figmaUrl) => {
+  ipcMain.handle("inventory:send-to-figma", async (event, inventory, figmaUrl) => {
     if (!figmaBridge) throw new Error("The local Figma bridge is not running");
     const link = parseFigmaDesignUrl(z.string().min(1).max(2000).parse(figmaUrl));
     if (!link) return { ok: false, message: "That is not a Figma design URL." };
@@ -1790,7 +1791,15 @@ function registerIpc() {
     // vectors, with only reliably matched native layers restored on top —
     // rather than as a captured layer tree.
     const built = parsed.pages.some((page) => page.vector?.pageId)
-      ? await buildSwiftInventoryJob(parsed, { kind, target, figmaFileName: link.fileName, frames: known })
+      ? await buildSwiftInventoryJob(parsed, {
+        kind,
+        target,
+        figmaFileName: link.fileName,
+        frames: known,
+        onProgress: (state) => {
+          if (!event.sender.isDestroyed()) event.sender.send("inventory:figma-progress", state);
+        }
+      })
       : buildFigmaJob(parsed, {
         identity: `${kind}:${target}`,
         projectName: nameFor(kind, target),
