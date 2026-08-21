@@ -4,8 +4,9 @@ Crank walks a running application, finds every screen it can reach, and hands
 you those screens as editable Figma layers — with identity stable enough that a
 second run updates the same frames instead of drawing new ones beside them.
 
-It does not rebuild your interface. It runs the real one in Chromium and reads
-what the browser laid out, so what arrives is what the page actually renders.
+It does not rebuild your interface. A web app runs in Chromium and Crank reads
+what the browser laid out; a SwiftUI app is built, launched and asked to render
+itself. Either way what arrives is what the application actually draws.
 
 ## What it does
 
@@ -21,6 +22,9 @@ what the browser laid out, so what arrives is what the page actually renders.
 - **Attaches to what is already running.** An app started with a debugging port
   can be scanned as it is, with the data actually in it — which is the only way
   to capture screens that live behind a login or a bridge.
+- **Scans SwiftUI apps too (beta).** An Xcode project has no address to serve
+  and no page to walk, so it is built, run — on the Simulator for iPhone, on
+  this Mac for a desktop app — and each screen is exported as vectors.
 - **Hands the result over.** A self-contained HTML handoff page, or editable
   layers pushed straight into a Figma file.
 
@@ -127,7 +131,7 @@ npm run build
 npm audit --omit=dev
 ```
 
-## iOS projects
+## SwiftUI apps — iPhone and Mac (beta)
 
 An Xcode project is scanned like everything else — drop the folder, and it
 appears in the sidebar — but nothing about it can be served, so the scan takes
@@ -136,8 +140,11 @@ a different road:
 1. The project is copied into a workspace of its own, its views are
    instrumented in that copy, and it is built with `xcodebuild`. The originals
    are never touched.
-2. It launches on a Simulator device the project keeps, and each top-level
-   navigation state is opened in turn.
+2. Xcode is asked which destinations the scheme has. One that can run on the
+   Simulator launches on a device the project keeps; a Mac-only one is built for
+   this machine, signed to run locally, and launched here — one screen at a
+   time, and stopped again afterwards. Each top-level navigation state is opened
+   in turn.
 3. Each state is exported through SwiftUI's `ImageRenderer` as a vector PDF
    page, with a UIKit window capture standing in for genuinely opaque content.
 4. Those pages become the project's inventory: the same cards, the same
@@ -152,8 +159,16 @@ from the source.
 An exported page has no address, so it cannot be reopened live, recaptured, or
 explored one level further. Its card says which view it came from instead.
 
+The folder handed over does not have to be the one the `.xcodeproj` sits in:
+the app's own source folder, or a repository with the project in a subfolder,
+finds it either way. A repository with a manifest of its own is left alone, so a
+React Native project is not claimed by the `ios/` folder inside it.
+
 Needs the full Xcode app (found through `DEVELOPER_DIR`, `xcode-select -p`, or
-the default install), an installed iOS Simulator runtime, and Poppler
+the default install), an iOS Simulator runtime for iPhone projects, and Poppler
 (`brew install poppler`), which is checked before a build starts rather than
-after.
+after. Called beta because it asks that much of the machine, because a first
+scan builds the whole project, and because screens are found from the SwiftUI in
+the project — an app that assembles its screens somewhere that cannot be read
+statically exports fewer than it has.
 
