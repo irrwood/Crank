@@ -221,15 +221,33 @@ function ScaledLayers({ layerTree, lazy = false, selectable = false, fallback }:
 
 function PageDocument({ page }: { page: DiscoveredPage }) {
   const t = useT();
-  return (
-    <ScaledLayers
-      fallback={page.thumbnail
-        ? <img alt="" src={page.thumbnail.dataUrl} />
-        : <span className="inventory-shot-empty">{t("inventory.previewUnavailable")}</span>}
-      layerTree={page.layerTree}
-      lazy
-    />
-  );
+  // A page without layers is only ever its picture, and the picture keeps its
+  // own proportions rather than the ones a layer drawing would have asked for.
+  if (!page.layerTree?.tree) {
+    return page.thumbnail
+      ? <img alt="" src={page.thumbnail.dataUrl} />
+      : <span className="inventory-shot-empty">{t("inventory.previewUnavailable")}</span>;
+  }
+  return <ScaledLayers fallback={null} layerTree={page.layerTree} lazy />;
+}
+
+/**
+ * Whether a page is shaped like a phone held upright. An exported iOS page says
+ * so in its own size; a captured web page is judged by the picture taken of it.
+ */
+function isPhonePortrait(page: DiscoveredPage) {
+  const size = page.vector ?? page.thumbnail;
+  return size ? size.height > size.width * 1.3 : false;
+}
+
+/**
+ * The shape to hold a phone page in: the page's own, never a stand-in for it.
+ * A frame even slightly off the picture's proportions shows as white bars along
+ * the edges of every card.
+ */
+function phonePortraitShape(page: DiscoveredPage, picture?: { width: number; height: number } | null) {
+  const size = page.vector ?? picture ?? page.thumbnail;
+  return isPhonePortrait(page) && size ? { aspectRatio: `${size.width} / ${size.height}` } : null;
 }
 
 function PageCard({ page, index, busy, single, onOpen, onMenu }: {
@@ -246,16 +264,22 @@ function PageCard({ page, index, busy, single, onOpen, onMenu }: {
   const looks = [{ id: page.id, name: t("inventory.defaultLook"), thumbnail: page.thumbnail }, ...(page.variants ?? [])];
   const [shown, setShown] = useState(0);
   const current = looks[Math.min(shown, looks.length - 1)];
+  const portrait = single ? null : phonePortraitShape(page, current.thumbnail);
 
   return (
     <article
-      className={`inventory-card${busy ? " is-busy" : ""}`}
+      className={`inventory-card${busy ? " is-busy" : ""}${portrait ? " is-portrait" : ""}`}
       onContextMenu={(event) => {
         event.preventDefault();
         onMenu(page, { x: event.clientX, y: event.clientY });
       }}
     >
-      <button className="inventory-shot" onClick={() => onOpen(page)} type="button">
+      <button
+        className={`inventory-shot${portrait ? " is-portrait" : ""}`}
+        onClick={() => onOpen(page)}
+        style={portrait ?? undefined}
+        type="button"
+      >
         {busy && <span className="inventory-shot-busy"><LoaderCircle className="spin" size={18} /></span>}
         {single
           ? <PageDocument page={page} />
@@ -567,6 +591,9 @@ function PageOverlay({ page, targetId, onClose }: {
   // An exported iOS page cannot be opened live either: there is no address to
   // load and no browser to load it in.
   const liveWanted = shown === 0 && targetId !== null && !page.vector;
+  // Opened, a phone page keeps its own proportions rather than being poured
+  // into a landscape frame that leaves it a stripe down the middle.
+  const portrait = phonePortraitShape(page, current.thumbnail);
 
   useEffect(() => {
     if (!liveWanted) {
@@ -634,29 +661,42 @@ function PageOverlay({ page, targetId, onClose }: {
         {live.state !== "unavailable" ? (
           // Left empty on purpose: the real page is a native view sitting over
           // this hole, so anything drawn here would be behind it.
-          <div className="inventory-frame is-live" ref={stage}>
+          <div className={`inventory-frame is-live${portrait ? " is-portrait" : ""}`} ref={stage} style={portrait ?? undefined}>
             {live.state === "opening" && <p className="inventory-shot-empty">{t("inventory.livePlaceholder")}</p>}
           </div>
         ) : current.snapshot?.html
           ? (
             <iframe
-              className="inventory-frame"
+              className={`inventory-frame${portrait ? " is-portrait" : ""}`}
               sandbox=""
               srcDoc={current.snapshot.html}
+              style={portrait ?? undefined}
               title={page.name}
             />
           )
-          : (
-            <div className="inventory-frame">
-              <ScaledLayers
-                fallback={current.thumbnail
-                  ? <img alt="" src={current.thumbnail.dataUrl} />
-                  : <p className="inventory-shot-empty">{t("inventory.unavailable")}</p>}
-                layerTree={current.layerTree}
-                selectable
-              />
-            </div>
-          )}
+          : current.layerTree?.tree
+            ? (
+              <div className={`inventory-frame${portrait ? " is-portrait" : ""}`} style={portrait ?? undefined}>
+                <ScaledLayers fallback={null} layerTree={current.layerTree} selectable />
+              </div>
+            )
+            // Without layers there is only the picture, and it is the whole
+            // frame: wrapping it in a drawing holder sized for layers left it a
+            // stamp in the corner of an empty sheet.
+            : current.thumbnail
+              ? (
+                <img
+                  alt=""
+                  className={`inventory-frame${portrait ? " is-portrait" : ""}`}
+                  src={current.thumbnail.dataUrl}
+                  style={portrait ?? undefined}
+                />
+              )
+              : (
+                <div className={`inventory-frame${portrait ? " is-portrait" : ""}`} style={portrait ?? undefined}>
+                  <p className="inventory-shot-empty">{t("inventory.unavailable")}</p>
+                </div>
+              )}
         {/* Which of the three is on screen, said rather than left to be guessed:
             they differ, and knowing which one you are looking at is the whole
             point of having more than one. */}
@@ -1232,6 +1272,25 @@ export default function PageInventoryView() {
   };
 
   const pages = result?.ok ? result.pages : [];
+
+  // Opened, a page is being looked at rather than managed, so the keyboard
+  // works the way a viewer's does: leave with Escape, walk the set with the
+  // arrows instead of closing and aiming at the next card.
+  useEffect(() => {
+    if (!focused) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "Escape") { setFocused(null); return; }
+      const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (step === 0 || pages.length < 2) return;
+      const at = pages.findIndex((page) => page.id === focused.id);
+      if (at < 0) return;
+      event.preventDefault();
+      setFocused(pages[(at + step + pages.length) % pages.length]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focused, pages]);
   const reskins = pages.reduce((total, page) => total + (page.variants?.length ?? 0), 0);
   // Where the project lives, when it is a folder. A scanned address stays an
   // address — that one is the user's own server and is still up.
@@ -1624,7 +1683,7 @@ export default function PageInventoryView() {
               ))}
             </ul>
           ) : (
-            <div className={`inventory-grid${view === "compact" ? " is-compact" : ""}${view === "single" ? " is-single" : ""}`}>
+            <div className={`inventory-grid${view === "compact" ? " is-compact" : ""}${view === "single" ? " is-single" : ""}${view !== "single" && pages.length > 0 && pages.every(isPhonePortrait) ? " is-portrait" : ""}`}>
               {pages.map((page, index) => (
                 <PageCard
                   busy={busyPage === page.id}

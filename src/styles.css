@@ -3660,6 +3660,22 @@ div.inventory-frame.is-live {
   height: 78vh; max-height: 78vh; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
 }
+/* A phone page opened full size: as tall as the window allows, as wide as its
+   own shape asks for, and rounded like the device it was drawn on. */
+div.inventory-frame.is-portrait,
+iframe.inventory-frame.is-portrait,
+img.inventory-frame.is-portrait {
+  width: auto; height: 78vh; max-width: 92vw; max-height: 78vh;
+  border-radius: 34px; overflow: hidden;
+  /* The overlay stacks caption, page and notes in a column, which would
+     otherwise stretch the page to the width of the longest note and shrink it
+     to whatever height was left — both of which lose the phone's shape. */
+  align-self: center; flex: none;
+}
+.inventory-frame.is-portrait .page-document { width: 100%; }
+img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78vh; object-fit: contain; object-position: top center; background: #fff; display: block; }
+.inventory-overlay img.inventory-frame { max-height: 78vh; border-radius: 34px; }
+
 .inventory-frame-note { margin: 0; color: rgba(255, 255, 255, 0.68); font-size: 11.5px; max-width: 92vw; }
 .inventory-overlay figcaption .inventory-variants button { color: rgba(255, 255, 255, 0.72); border-color: rgba(255, 255, 255, 0.3); }
 .inventory-overlay figcaption .inventory-variants button[aria-pressed="true"] { color: #fff; border-color: #fff; }
@@ -3847,6 +3863,16 @@ div.inventory-frame.is-live {
 }
 
 .inventory-grid.is-compact { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 18px 14px; }
+
+/* A phone screen is tall and its corners are round, so its card is too:
+   cropping one to a landscape rectangle would throw away most of the page. */
+.inventory-grid.is-portrait { grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); }
+.inventory-grid.is-portrait.is-compact { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+.inventory-shot.is-portrait { border-radius: 26px; }
+.inventory-grid.is-compact .inventory-shot.is-portrait { border-radius: 20px; }
+/* The card is cut to the picture's own proportions, so filling it crops
+   nothing — and it leaves no hairline of card showing along the edges. */
+.inventory-shot.is-portrait img { object-fit: cover; object-position: center; background: #fff; }
 
 /* One page per row, at whatever width the window gives. For looking at a page
    rather than at the set of them: the thumbnail keeps its own proportions
