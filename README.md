@@ -62,13 +62,12 @@ Screens are found from the SwiftUI in the project — tabs, navigation destinati
 
 ## The Figma plugin
 
-Crank draws nothing in Figma by itself. The other half is a plugin, and it is not on the Figma Community yet — it ships inside the app and is imported by hand. This is a one-time setup.
+Crank draws nothing in Figma by itself. The other half is a plugin, and it lives on the Figma Community.
 
-**You need the Figma desktop app.** Figma in a browser cannot import a local plugin.
+1. **Install it.** [Crank on the Figma Community →](https://www.figma.com/community/plugin/1671468393066911617/crank)
+2. **Pair once.** Open the Figma file you want the pages in, run the Crank plugin, then back in Crank click **Get a pairing code** and type the six digits into the plugin. This Mac is remembered from then on — no code next time.
 
-1. **Find the plugin.** In Crank, click **Figma plugin** at the bottom of the sidebar, then **Show plugin in Finder**. A `manifest.json` is revealed — it lives inside the app bundle, which is why the button exists.
-2. **Import it.** In Figma: menu **Plugins → Development → Import plugin from manifest…**. In the dialog that opens, drag the revealed `manifest.json` onto it (or press ⌘⇧G and paste the path).
-3. **Pair once.** Open the Figma file you want the pages in, run **Plugins → Development → Crank**, then back in Crank click **Get a pairing code** and type the six digits into the plugin. This Mac is remembered from then on — no code next time.
+Developing the plugin instead? A checkout can run its own copy: **Plugins → Development → Import plugin from manifest…**, pointed at `figma-plugin/manifest.json`. Crank's **Figma plugin** panel reveals the packaged copy in the Finder.
 
 ### Sending pages
 
@@ -77,7 +76,7 @@ Crank draws nothing in Figma by itself. The other half is a plugin, and it is no
 3. Open that same file in Figma and run the Crank plugin — it only writes to the file you named. If a different file is open, the plugin says which one it expected.
 4. Press send. Frames are created the first time and updated on every run after, rather than drawn again beside the old ones.
 
-If the plugin says something that does not match what Crank shows, re-import the manifest — Figma caches plugin code, and an old copy of the plugin talking to a new copy of Crank is the usual cause.
+If the plugin says something that does not match what Crank shows, update it from the Community page — an old copy of the plugin talking to a new copy of Crank is the usual cause.
 
 ---
 
