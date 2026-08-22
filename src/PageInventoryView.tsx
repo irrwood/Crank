@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AppWindowMac, Check, ChevronRight, Download, Figma, FolderGit2, Globe2, Languages, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
+import { AppWindowMac, Check, ChevronRight, Download, Figma, FolderGit2, Globe2, Languages, LoaderCircle, Plus, RefreshCw, Smartphone, X } from "lucide-react";
 import { FigmaPluginPanel } from "./FigmaPluginPanel";
 import { FigmaSyncDialog } from "./FigmaSyncDialog";
 import { PageLayers } from "./PageLayers";
@@ -350,7 +350,11 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
             ? <LoaderCircle className="spin" size={14} />
             : target.kind !== "folder"
               ? <Globe2 size={14} />
-              : isAppBundle(target.target) ? <AppWindowMac size={14} /> : <FolderGit2 size={14} />}
+              // An app that was built and run rather than served: a phone says
+              // that much even before its own icon has been read.
+              : target.platform === "swiftui"
+                ? <Smartphone size={14} />
+                : isAppBundle(target.target) ? <AppWindowMac size={14} /> : <FolderGit2 size={14} />}
       </span>
       <span className="project-copy">
         <strong>{target.name}</strong>
@@ -760,6 +764,9 @@ export default function PageInventoryView() {
   const [copied, setCopied] = useState<string | null>(null);
   const [recording, setRecording] = useState<DiscoveredPage[] | null>(null);
   const [figmaUrl, setFigmaUrl] = useState("");
+  // Which project the address field was last filled in for, so switching
+  // projects offers that project's file and typing is never overwritten.
+  const filledFor = useRef<string | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [view, setView] = useState<"gallery" | "compact" | "list" | "single">("gallery");
@@ -1272,6 +1279,17 @@ export default function PageInventoryView() {
   };
 
   const pages = result?.ok ? result.pages : [];
+
+  // Typed once per project, not once per send: the file a project's pages go to
+  // is the same file every time, and it was recorded the last time they went.
+  useEffect(() => {
+    if (!activeId || filledFor.current === activeId) return;
+    filledFor.current = activeId;
+    const remembered = entries
+      .flatMap((entry) => (isGroup(entry) ? [...(entry.root ? [entry.root] : []), ...entry.children] : [entry]))
+      .find((target) => target.id === activeId)?.figmaUrl;
+    setFigmaUrl(remembered ?? "");
+  }, [activeId, entries]);
 
   // Opened, a page is being looked at rather than managed, so the keyboard
   // works the way a viewer's does: leave with Escape, walk the set with the

@@ -135,7 +135,7 @@ function createInventoryRegistry(directory) {
     list: read,
     grouped: async () => groupTargets(await read()),
 
-    async remember(kind, target, { pageCount = null, scannedAt = null, parent = null, icon = null } = {}) {
+    async remember(kind, target, { pageCount = null, scannedAt = null, parent = null, icon = null, figmaUrl = null, platform = null } = {}) {
       const targets = await read();
       const id = targetId(kind, target);
       const existing = targets.find((entry) => entry.id === id);
@@ -145,6 +145,13 @@ function createInventoryRegistry(directory) {
         existing.pageCount = pageCount ?? existing.pageCount;
         existing.parent = parent ?? existing.parent;
         existing.icon = icon ?? existing.icon;
+        // The file this project's pages go to. Kept because it is the same file
+        // every time, and typing it again on every send is a question already
+        // answered.
+        existing.figmaUrl = figmaUrl ?? existing.figmaUrl ?? null;
+        // What kind of application this turned out to be, so the row can say so
+        // before its scan is loaded.
+        existing.platform = platform ?? existing.platform ?? null;
       } else {
         targets.push({
           id, kind, target,
@@ -153,7 +160,9 @@ function createInventoryRegistry(directory) {
           lastScannedAt: scannedAt,
           pageCount,
           parent,
-          icon
+          icon,
+          figmaUrl,
+          platform
         });
       }
       await write(targets);
@@ -242,7 +251,8 @@ function createInventoryRegistry(directory) {
         parent,
         // Kept on the entry, not only inside the inventory, so the list can
         // draw it without loading a scan that runs to tens of megabytes.
-        icon: lifted?.icon ?? null
+        icon: lifted?.icon ?? null,
+        platform: lifted?.platform ?? null
       });
       return id;
     },

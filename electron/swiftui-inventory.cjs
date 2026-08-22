@@ -2,6 +2,7 @@ const { readFile, readdir } = require("node:fs/promises");
 const path = require("node:path");
 const { runSwiftUiDesignBuild } = require("./swiftui-design-runtime.cjs");
 const { resolvePdfToCairo } = require("./swift-pdf-vector.cjs");
+const { readXcodeAppIcon } = require("./xcode-app-icon.cjs");
 
 /**
  * An Xcode project cannot be served and crawled: it has no address, and its
@@ -163,7 +164,9 @@ async function scanSwiftUiFolder(root, {
     ok: true,
     platform: "swiftui",
     origin: root,
-    icon: null,
+    // The project's own icon, out of its asset catalog: a scanned app wears its
+    // own face in the sidebar rather than the folder glyph everything shares.
+    icon: await readXcodeAppIcon(projectRoot ?? root),
     pages,
     skipped: [],
     filtered: [],

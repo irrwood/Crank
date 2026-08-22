@@ -400,6 +400,10 @@ export type InventoryTarget = {
   pageCount: number | null;
   /** The workspace this was picked out of, when it was. */
   parent: string | null;
+  /** The Figma file this project's pages were last sent to. */
+  figmaUrl?: string | null;
+  /** What the last scan found this to be. */
+  platform?: "web" | "swiftui" | null;
 };
 
 /** A folder holding several scanned packages, shown as one expandable entry. */
