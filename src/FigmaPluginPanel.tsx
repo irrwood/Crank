@@ -23,7 +23,6 @@ export function FigmaPluginPanel({
   pairingStalled,
   onClose,
   onShowPlugin,
-  onCopyPath,
   onCopyCode,
   onStartPairing,
   onForget
@@ -34,7 +33,6 @@ export function FigmaPluginPanel({
   pairingStalled: boolean;
   onClose: () => void;
   onShowPlugin: () => void;
-  onCopyPath: () => void;
   onCopyCode: () => void;
   onStartPairing: () => void;
   onForget: () => void;
@@ -72,9 +70,12 @@ export function FigmaPluginPanel({
             <li>
               <strong>{t("figma.plugin.steps.install")}</strong>
               <span>{t("figma.plugin.steps.installBody")}</span>
-              <button className="plugin-path" onClick={onCopyPath} title={t("figma.plugin.copyPath")} type="button">
-                <code>{connection.manifestPath}</code>
-                <Copy size={13} />
+              <button
+                className="secondary-button plugin-community"
+                onClick={() => void window.uiSync?.openFigmaPluginPage?.()}
+                type="button"
+              >
+                <ExternalLink size={13} /> {t("figma.plugin.openCommunity")}
               </button>
             </li>
             <li>

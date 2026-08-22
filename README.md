@@ -97,9 +97,11 @@ The plugin uses Figma's official Plugin API to:
   of each mapped layer, which is how a later run finds the same frames and how
   Crank can tell what changed in Figma.
 
-Import it once from `figma-plugin/manifest.json` via **Plugins → Development →
-Import plugin from manifest…**. It can reach `localhost:38457` and nothing else;
-a sync sends normalized visual structure, never your source code.
+Install it once from the [Figma Community](https://www.figma.com/community/plugin/1671468393066911617/crank).
+A checkout can run its own copy instead — **Plugins → Development → Import plugin
+from manifest…**, pointed at `figma-plugin/manifest.json`. Either way it can
+reach `localhost:38457` and nothing else; a sync sends normalized visual
+structure, never your source code.
 
 Nothing about a project leaves the machine except during an explicit sync.
 

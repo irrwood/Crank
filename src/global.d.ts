@@ -82,6 +82,7 @@ declare global {
       forgetFigmaConnection: () => Promise<FigmaConnection>;
       copyText: (value: string) => Promise<void>;
       openFigma: (fileKey: string, nodeId: string | null) => Promise<void>;
+      openFigmaPluginPage: () => Promise<void>;
       startLivePreview: (root: string, capturePath: string, bounds: LivePreviewBounds) => Promise<LivePreviewSession>;
       setLivePreviewBounds: (bounds: LivePreviewBounds) => Promise<boolean>;
       navigateLivePreview: (capturePath: string) => Promise<{ url: string; blockedHosts: string[] }>;

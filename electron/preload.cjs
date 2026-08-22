@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   forgetFigmaConnection: () => ipcRenderer.invoke("figma:forget-connection"),
   copyText: (value) => ipcRenderer.invoke("clipboard:write", value),
   openFigma: (fileKey, nodeId) => ipcRenderer.invoke("figma:open", fileKey, nodeId),
+  openFigmaPluginPage: () => ipcRenderer.invoke("figma:open-plugin-page"),
   startLivePreview: (root, capturePath, bounds) => ipcRenderer.invoke("preview:start", root, capturePath, bounds),
   setLivePreviewBounds: (bounds) => ipcRenderer.invoke("preview:set-bounds", bounds),
   navigateLivePreview: (capturePath) => ipcRenderer.invoke("preview:navigate", capturePath),

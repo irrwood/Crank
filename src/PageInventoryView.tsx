@@ -1327,7 +1327,6 @@ export default function PageInventoryView() {
           pairing={pairing}
           pairingCode={pairingCode}
           pairingStalled={pairingStalled}
-          onCopyPath={() => { void window.uiSync?.copyText?.(connection.manifestPath); notify("done", t("toast.pluginPathCopied")); }}
           onForget={async () => {
             const next = await window.uiSync?.forgetFigmaConnection?.();
             if (next) setConnection(next);

@@ -2683,6 +2683,13 @@ function registerIpc() {
     clipboard.writeText(z.string().max(2048).parse(value));
   });
 
+  // The plugin's own page on the Figma Community. The destination is named
+  // here rather than passed in: the renderer asks to open the plugin page, and
+  // that is the only page this can open.
+  ipcMain.handle("figma:open-plugin-page", async () => {
+    await shell.openExternal("https://www.figma.com/community/plugin/1671468393066911617/crank");
+  });
+
   ipcMain.handle("figma:open", async (_event, fileKey, nodeId) => {
     const safeFileKey = z.string().regex(/^[A-Za-z0-9_-]+$/).parse(fileKey);
     const safeNodeId = z.string().regex(/^\d+[:\-]\d+$/).nullable().parse(nodeId);
