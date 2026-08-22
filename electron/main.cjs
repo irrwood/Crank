@@ -2683,6 +2683,35 @@ function registerIpc() {
     clipboard.writeText(z.string().max(2048).parse(value));
   });
 
+  /**
+   * Starts a project and opens it, without scanning it.
+   *
+   * A scan already starts the project and stops it again afterwards, which is
+   * right for a scan and useless for looking at the thing. This leaves it up:
+   * the same command the project declares, the same server a scan would have
+   * used, and the address opened in the browser.
+   */
+  ipcMain.handle("projects:run", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    try {
+      const server = await ensureDevServer(safeRoot);
+      await shell.openExternal(server.url);
+      return { ok: true, url: server.url, command: server.command ?? null, attached: Boolean(server.attached) };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "This project could not be started." };
+    }
+  });
+
+  // Stopped only when Crank started it: a server that was already up belongs to
+  // whoever started it.
+  ipcMain.handle("projects:stop-run", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const running = devServers.get(safeRoot);
+    running?.stop?.();
+    devServers.delete(safeRoot);
+    return { ok: true };
+  });
+
   // The plugin's own page on the Figma Community. The destination is named
   // here rather than passed in: the renderer asks to open the plugin page, and
   // that is the only page this can open.

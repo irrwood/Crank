@@ -435,6 +435,8 @@ export type PageInventory =
       origin: string;
       /** What was scanned: the folder, or the address as typed. Stable. */
       source?: { kind: "folder" | "url"; target: string };
+      /** What this turned out to be — an app that is built and run, or a served one. */
+      platform?: "web" | "swiftui";
       pages: DiscoveredPage[];
       /** Controls skipped because their label reads as destructive. */
       skipped: Array<{ label: string; reason: string }>;

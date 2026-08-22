@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AppWindowMac, Check, ChevronRight, Download, Figma, FolderGit2, Globe2, Languages, LoaderCircle, Plus, RefreshCw, Smartphone, X } from "lucide-react";
+import { AppWindowMac, Check, ChevronRight, Download, Figma, FolderGit2, Globe2, Languages, LoaderCircle, Play, Plus, RefreshCw, Smartphone, Square, X } from "lucide-react";
 import { FigmaPluginPanel } from "./FigmaPluginPanel";
 import { FigmaSyncDialog } from "./FigmaSyncDialog";
 import { PageLayers } from "./PageLayers";
@@ -1310,6 +1310,28 @@ export default function PageInventoryView() {
     return () => window.removeEventListener("keydown", onKey);
   }, [focused, pages]);
   const reskins = pages.reduce((total, page) => total + (page.variants?.length ?? 0), 0);
+  // A project the window started and left up, so it can be looked at rather
+  // than only scanned. A scan starts one too and stops it again afterwards.
+  const [runState, setRunState] = useState<{ state: "idle" | "starting" | "running"; root?: string }>({ state: "idle" });
+
+  const toggleRun = async (root: string) => {
+    if (runState.state === "running" && runState.root === root) {
+      await window.uiSync?.stopProjectRun?.(root);
+      setRunState({ state: "idle" });
+      notify("done", t("inventory.runStopped"));
+      return;
+    }
+    setRunState({ state: "starting", root });
+    const outcome = await window.uiSync?.runProject?.(root);
+    if (!outcome?.ok) {
+      setRunState({ state: "idle" });
+      notify("error", outcome?.message ?? t("inventory.runFailed"));
+      return;
+    }
+    setRunState({ state: "running", root });
+    notify("done", t("inventory.runOpened", { url: outcome.url ?? "" }));
+  };
+
   // Where the project lives, when it is a folder. A scanned address stays an
   // address — that one is the user's own server and is still up.
   const scannedFolder = result?.ok
@@ -1581,6 +1603,20 @@ export default function PageInventoryView() {
               >
                 <RefreshCw size={14} />
               </button>
+              {scannedFolder && !isAppBundle(scannedFolder) && result.platform !== "swiftui" && (
+                <button
+                  className="secondary-button"
+                  disabled={runState.state === "starting"}
+                  onClick={() => void toggleRun(scannedFolder)}
+                  type="button"
+                >
+                  {runState.state === "starting"
+                    ? <><LoaderCircle className="spin" size={14} /> {t("inventory.runStarting")}</>
+                    : runState.state === "running"
+                      ? <><Square size={13} /> {t("inventory.stopRun")}</>
+                      : <><Play size={14} /> {t("inventory.run")}</>}
+                </button>
+              )}
               <button className="secondary-button" onClick={() => void exportPage()} type="button">
                 <Download size={14} /> {t("inventory.saveHandoff")}
               </button>
