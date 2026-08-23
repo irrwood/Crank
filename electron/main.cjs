@@ -5,7 +5,7 @@ const { createServer } = require("node:http");
 const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
-const { exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, recaptureInApp, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer } = require("./page-inventory.cjs");
+const { exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, recaptureInApp, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, startProjectServer, withProjectServer } = require("./page-inventory.cjs");
 const { readAppIcon } = require("./app-bundle.cjs");
 const { shippedPath } = require("./packaged-path.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
@@ -2693,13 +2693,29 @@ function registerIpc() {
    */
   ipcMain.handle("projects:run", async (_event, root) => {
     const safeRoot = projectRootSchema.parse(root);
-    try {
-      const server = await ensureDevServer(safeRoot);
-      await shell.openExternal(server.url);
-      return { ok: true, url: server.url, command: server.command ?? null, attached: Boolean(server.attached) };
-    } catch (error) {
-      return { ok: false, message: error instanceof Error ? error.message : "This project could not be started." };
+    const running = devServers.get(safeRoot);
+    if (running && await probeUrl(running.url)) {
+      await shell.openExternal(running.url);
+      return { ok: true, url: running.url, command: running.command ?? null, attached: Boolean(running.attached) };
     }
+    devServers.delete(safeRoot);
+    // The same chain a scan uses, not only the Node half of it: a project with
+    // no package.json still says how it is run, in a Dockerfile, a Procfile or
+    // its README.
+    const started = await startProjectServer(safeRoot).catch((error) => ({
+      ok: false,
+      message: error instanceof Error ? error.message : "This project could not be started."
+    }));
+    if (!started.ok) return { ok: false, message: started.message ?? "This project could not be started." };
+    devServers.set(safeRoot, {
+      url: started.url,
+      origin: started.origin,
+      command: started.command,
+      attached: started.attached,
+      stop: started.stop ?? null
+    });
+    await shell.openExternal(started.url);
+    return { ok: true, url: started.url, command: started.command ?? null, attached: Boolean(started.attached) };
   });
 
   // Stopped only when Crank started it: a server that was already up belongs to

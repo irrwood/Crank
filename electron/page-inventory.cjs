@@ -746,6 +746,54 @@ async function withProjectServer(root, { onStatus, allowWorkspaceRoot = false, .
   }
 }
 
+/**
+ * Starts a project and leaves it running.
+ *
+ * A scan starts one too, and stops it again the moment it is done — right for a
+ * scan, useless for looking at the thing. This tries the same things in the same
+ * order, and hands back what is running: the Electron renderer, the project's
+ * own dev script, the command the project declares for itself in a Dockerfile,
+ * Procfile or README, or a folder of static pages served as they are.
+ */
+async function startProjectServer(root, { onStatus, startTimeoutMs = 90_000 } = {}) {
+  if (looksLikeAppBundle(root)) {
+    return { ok: false, reason: "app-bundle", message: "An installed app is opened rather than served." };
+  }
+  if (await detectElectronRenderer(root)) {
+    onStatus?.({ phase: "starting", detail: "Serving the Electron renderer" });
+    const renderer = await startRendererServer(root);
+    if (renderer.ok) return renderer;
+  }
+  onStatus?.({ phase: "starting", detail: "Starting the project's dev server" });
+  const started = await startDevServer(root, { startTimeoutMs });
+  if (started.ok) return started;
+  if (started.reason !== "no-manifest" && started.reason !== "no-dev-script") return started;
+
+  // Not a Node project. What it declares about itself is the next best thing to
+  // a dev script, and is what the scan already runs.
+  const foreign = await describeForeignProject(root);
+  if (foreign?.commands?.length) {
+    onStatus?.({ phase: "starting", detail: `Running this ${foreign.kind} project's own command` });
+    const ran = await startForeignServer(root, foreign, { startTimeoutMs });
+    if (ran.ok) return ran;
+    return { ok: false, reason: "foreign", message: ran.message, foreign };
+  }
+  const staticSite = await findStaticSite(root);
+  if (staticSite) {
+    onStatus?.({ phase: "starting", detail: `Serving ${staticSite.pages.length} static pages` });
+    const server = await startLocalRendererServer(path.join(root, staticSite.entry));
+    return {
+      ok: true,
+      url: server.origin,
+      origin: server.origin,
+      command: `static files (${staticSite.pages.length} pages)`,
+      attached: false,
+      stop: () => { void server.close(); }
+    };
+  }
+  return started;
+}
+
 async function scanFolder(root, options = {}) {
   const { onStatus, allowWorkspaceRoot, swift, ...forward } = options;
   // An installed app is a folder too, and dropping one means the app, not its
@@ -767,4 +815,4 @@ async function scanFolder(root, options = {}) {
   }));
 }
 
-module.exports = { declaresWorkspace, exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, parseSitemapPaths, recaptureInApp, recapturePage, scanAppBundle, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer };
+module.exports = { declaresWorkspace, exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, parseSitemapPaths, recaptureInApp, recapturePage, scanAppBundle, scanAttached, scanFolder, scanSelf, scanUrl, startProjectServer, withProjectServer };
