@@ -46,7 +46,13 @@ async function readBody(request, limit) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function createDisplayListServer({ port = 38459 } = {}) {
+// 38457 is the Figma bridge, 38458 the SwiftUI runtime bridge, and 38459 the MCP
+// relay. Taking 38459 here started this server first and left the relay unable
+// to bind, which surfaced only as a line in the log and an MCP feature that
+// quietly did nothing.
+const DEFAULT_PORT = 38460;
+
+function createDisplayListServer({ port = DEFAULT_PORT } = {}) {
   // Reassigned by `start()` when the caller asked for any free port.
   const sessions = new Map();
   let server = null;
@@ -180,4 +186,4 @@ function createDisplayListServer({ port = 38459 } = {}) {
   };
 }
 
-module.exports = { createDisplayListServer };
+module.exports = { DEFAULT_PORT, createDisplayListServer };

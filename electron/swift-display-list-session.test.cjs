@@ -126,3 +126,11 @@ test("a screen with no picture is a page without one, not a page without layers"
     assert.ok(screen.layerTree);
   });
 });
+
+test("this server does not sit on a port another bridge already claims", () => {
+  const { DEFAULT_PORT } = require("./swift-display-list-session.cjs");
+  const { DEFAULT_RUNTIME_PORT } = require("./swiftui-design-runtime.cjs");
+  // 38457 is the Figma bridge and 38459 the MCP relay; both are taken.
+  assert.notEqual(DEFAULT_PORT, DEFAULT_RUNTIME_PORT);
+  assert.ok(![38457, 38458, 38459].includes(DEFAULT_PORT));
+});
