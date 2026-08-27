@@ -11,6 +11,12 @@
 - **GitHub 链接**：`https://github.com/irrwood/Crank`。
 - **品牌图标**：`icon.svg` 来自 `public/app-icon.svg`。
 
+## 版块
+
+- **支持什么**：能扫什么（Web / Electron / SwiftUI / 本地优先）。
+- **图层去哪里**：扫完之后送到哪（Figma / Paper / HTML 交接页）。三栏用
+  `.supports-grid--three`，Paper 标题后面那个「新」是 `.tag-new`。
+
 ## 中英文
 
 页面文案以 `data-zh` / `data-en`（标签列表用 `data-zh-html` / `data-en-html`）
