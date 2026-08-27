@@ -134,3 +134,142 @@ test("checks for the vector converter before spending minutes on a build", async
   assert.equal(outcome.reason, "poppler");
   assert.match(outcome.message, /brew install poppler/);
 });
+
+/**
+ * The two capture paths, from the scan's side. `runDesignBuild` and the
+ * display-list server are both injected, so what a page ends up carrying can be
+ * checked without Xcode, a Simulator, or several minutes of building.
+ */
+const exportedPage = (id, sourceName) => ({
+  id, name: sourceName, width: 390, height: 844,
+  previewPath: "/nonexistent.png", renderSource: "image-renderer", sourceName
+});
+
+const buildStub = (pages) => async ({ displayListSession }) => ({
+  snapshot: { deviceName: "iPhone 17" },
+  screenshot: null,
+  simulator: { udid: "x" },
+  pdfDocument: { pages },
+  displayListSession
+});
+
+function fakeDisplayListServer(screensByToken) {
+  return {
+    beginSession: () => ({ token: "t", endpoint: "http://127.0.0.1:1/x", unavailable() {} }),
+    waitForScreens: async () => screensByToken,
+    endSession() {}
+  };
+}
+
+const layerTree = { width: 390, height: 844, tree: { kind: "element", name: "Screen", children: [] } };
+
+test("a page carries the layers captured for the view it came from", async () => {
+  const result = await scanSwiftUiFolder("/tmp/app", {
+    runtimeServer: {},
+    displayListServer: fakeDisplayListServer([{ name: "HomeView", ok: true, reason: null, layerTree, warnings: [] }]),
+    capturePipeline: "both",
+    runDesignBuild: buildStub([exportedPage("pdf-page-1", "HomeView")]),
+    resolveConverter: async () => "/usr/bin/pdftocairo"
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.pages[0].layerTree.width, 390);
+  // `both` keeps the exported vectors beside them, which is what makes the two
+  // comparable on the same page.
+  assert.ok(result.pages[0].vector);
+});
+
+test("asking for the render tree alone drops the exported vectors", async () => {
+  const result = await scanSwiftUiFolder("/tmp/app", {
+    runtimeServer: {},
+    displayListServer: fakeDisplayListServer([{ name: "HomeView", ok: true, reason: null, layerTree, warnings: [] }]),
+    capturePipeline: "display-list",
+    runDesignBuild: buildStub([exportedPage("pdf-page-1", "HomeView")]),
+    resolveConverter: async () => "/usr/bin/pdftocairo"
+  });
+  assert.equal(result.pages[0].vector, null);
+  assert.ok(result.pages[0].layerTree);
+});
+
+test("a page whose layers did not come back keeps its vectors rather than being empty", async () => {
+  const result = await scanSwiftUiFolder("/tmp/app", {
+    runtimeServer: {},
+    displayListServer: fakeDisplayListServer([]),
+    capturePipeline: "display-list",
+    runDesignBuild: buildStub([exportedPage("pdf-page-1", "HomeView")]),
+    resolveConverter: async () => "/usr/bin/pdftocairo"
+  });
+  assert.equal(result.pages[0].layerTree, null);
+  assert.ok(result.pages[0].vector);
+  assert.match(result.capture.warnings.join(" "), /kept its exported vectors/);
+});
+
+test("a screen the agent could not read is reported on the page it belongs to", async () => {
+  const result = await scanSwiftUiFolder("/tmp/app", {
+    runtimeServer: {},
+    displayListServer: fakeDisplayListServer([
+      { name: "HomeView", ok: false, reason: "the renderer has drawn no display list yet", layerTree: null, warnings: [] }
+    ]),
+    capturePipeline: "both",
+    runDesignBuild: buildStub([exportedPage("pdf-page-1", "HomeView")]),
+    resolveConverter: async () => "/usr/bin/pdftocairo"
+  });
+  assert.match(result.pages[0].layerError, /no display list/);
+  assert.match(result.capture.warnings.join(" "), /no display list/);
+});
+
+test("without a display-list server a scan is exactly what it was before", async () => {
+  const result = await scanSwiftUiFolder("/tmp/app", {
+    runtimeServer: {},
+    runDesignBuild: buildStub([exportedPage("pdf-page-1", "HomeView")]),
+    resolveConverter: async () => "/usr/bin/pdftocairo"
+  });
+  assert.equal(result.pages[0].layerTree, null);
+  assert.ok(result.pages[0].vector);
+});
+
+test("a render-tree scan stands on its own when nothing was exported", async () => {
+  const result = await scanSwiftUiFolder("/tmp/app", {
+    runtimeServer: {},
+    displayListServer: fakeDisplayListServer([
+      { name: "HomeView", ok: true, reason: null, layerTree, thumbnail: { dataUrl: "data:image/png;base64,iVBORw0KGgo=", width: 390, height: 844 }, warnings: [] },
+      { name: "OrdersView", ok: true, reason: null, layerTree, thumbnail: null, warnings: ["an image had no pixels"] }
+    ]),
+    capturePipeline: "display-list",
+    runDesignBuild: async () => ({ snapshot: {}, screenshot: null, pdfDocument: null, vectorMessage: "no pages exported" }),
+    // Poppler is not part of this answer, so it must not be asked for.
+    resolveConverter: async () => { throw new Error("the converter must not be looked for"); }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.platform, "swiftui");
+  assert.deepEqual(result.pages.map((page) => page.name), ["HomeView", "OrdersView"]);
+  assert.ok(result.pages[0].layerTree);
+  assert.equal(result.pages[0].vector, null);
+  assert.match(result.capture.warnings.join(" "), /OrdersView: an image had no pixels/);
+  // The sidebar has something to show for a page that has no exported PDF.
+  assert.match(result.pages[0].thumbnail.dataUrl, /^data:image\/png;base64,/);
+  assert.equal(result.pages[1].thumbnail, null);
+});
+
+test("nothing exported and nothing captured is still a scan that failed", async () => {
+  const result = await scanSwiftUiFolder("/tmp/app", {
+    runtimeServer: {},
+    displayListServer: fakeDisplayListServer([]),
+    capturePipeline: "display-list",
+    runDesignBuild: async () => ({ snapshot: {}, pdfDocument: null, vectorMessage: "the app drew nothing" }),
+    resolveConverter: async () => "/usr/bin/pdftocairo"
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "swiftui-no-pages");
+  assert.match(result.message, /drew nothing/);
+});
+
+test("the exported path still needs its converter", async () => {
+  const result = await scanSwiftUiFolder("/tmp/app", {
+    runtimeServer: {},
+    capturePipeline: "vector-pdf",
+    runDesignBuild: buildStub([exportedPage("pdf-page-1", "HomeView")]),
+    resolveConverter: async () => null
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "poppler");
+});

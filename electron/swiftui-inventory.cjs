@@ -3,6 +3,7 @@ const path = require("node:path");
 const { runSwiftUiDesignBuild } = require("./swiftui-design-runtime.cjs");
 const { resolvePdfToCairo } = require("./swift-pdf-vector.cjs");
 const { readXcodeAppIcon } = require("./xcode-app-icon.cjs");
+const { usesVectorPdf } = require("./capture-pipeline.cjs");
 
 /**
  * An Xcode project cannot be served and crawled: it has no address, and its
@@ -87,6 +88,18 @@ async function scanSwiftUiFolder(root, {
   preferredUdid = null,
   /** Where the `.xcodeproj` lives, when that is not the folder being scanned. */
   projectRoot = null,
+  /**
+   * The second capture path, when it is turned on. Given a server, the same
+   * launch of the app also reports the render tree SwiftUI drew, and each page
+   * carries the layers that produced rather than only its exported vectors.
+   */
+  displayListServer = null,
+  /**
+   * Which capture a page should carry when both are available. `display-list`
+   * hands over the render tree alone, so the Figma step builds from layers
+   * rather than from an exported drawing of the same screen.
+   */
+  capturePipeline = "vector-pdf",
   onStatus,
   runDesignBuild = runSwiftUiDesignBuild,
   resolveConverter = resolvePdfToCairo
@@ -96,7 +109,11 @@ async function scanSwiftUiFolder(root, {
   }
   // Checked before the build rather than after it: the pages are worth nothing
   // without the converter, and xcodebuild plus the Simulator take minutes.
-  if (!(await resolveConverter())) {
+  //
+  // Only when this scan is going to export vectors at all. Asked for the render
+  // tree alone, Poppler is not part of the answer, and refusing to scan for the
+  // want of it would be refusing over a step this scan does not take.
+  if (usesVectorPdf(capturePipeline) && !(await resolveConverter())) {
     return {
       ok: false,
       reason: "poppler",
@@ -104,15 +121,18 @@ async function scanSwiftUiFolder(root, {
     };
   }
   onStatus?.({ phase: "starting", detail: "Building this Xcode project and running it" });
+  const displayListSession = displayListServer ? displayListServer.beginSession(root) : null;
   let result;
   try {
     result = await runDesignBuild({
       root: projectRoot ?? root,
       cacheDirectory,
       runtimeServer,
-      simulatorPreference: preferredUdid ? { preferredUdid } : {}
+      simulatorPreference: preferredUdid ? { preferredUdid } : {},
+      displayListSession
     });
   } catch (error) {
+    if (displayListSession) displayListServer.endSession(displayListSession.token);
     return {
       ok: false,
       reason: "swiftui-build",
@@ -123,18 +143,102 @@ async function scanSwiftUiFolder(root, {
   const deviceName = result.snapshot?.deviceName ?? "iPhone Simulator";
   // A Mac app was run here, not on a device that had to be booted first.
   const ranOnThisMac = result.simulator === null;
-  if (!result.pdfDocument || result.pdfDocument.pages.length === 0) {
+  const exported = result.pdfDocument?.pages ?? [];
+  // Collected after the build, because the app posts them while it runs. A
+  // screen is matched to its page by the view it was captured from — the same
+  // name the exported page carries — rather than by order, which two capture
+  // paths that skip different screens would not agree on.
+  const displayListScreens = displayListSession
+    ? await displayListServer.waitForScreens(displayListSession.token, { timeoutMs: 3_000, settleMs: 500 }).catch(() => [])
+    : [];
+  if (displayListSession) displayListServer.endSession(displayListSession.token);
+  const capturedByName = new Map();
+  for (const screen of displayListScreens) {
+    if (!capturedByName.has(screen.name)) capturedByName.set(screen.name, screen);
+  }
+  const onlyScreen = displayListScreens.length === 1 ? displayListScreens[0] : null;
+  const displayListWarnings = [];
+  const capturedScreens = displayListScreens.filter((screen) => screen.layerTree);
+
+  /**
+   * Everything an iOS inventory is except its pages, which the two capture
+   * paths fill in differently. Written once so the sidebar, the Figma step and
+   * the registry cannot tell the two apart.
+   */
+  const inventoryShell = async () => ({
+    ok: true,
+    platform: "swiftui",
+    origin: root,
+    // The project's own icon, out of its asset catalog: a scanned app wears its
+    // own face in the sidebar rather than the folder glyph everything shares.
+    icon: await readXcodeAppIcon(projectRoot ?? root),
+    skipped: [],
+    filtered: [],
+    inert: [],
+    sources: { sitemap: 0, seeds: 0, crawled: 0 },
+    servedBy: ranOnThisMac ? `${deviceName}` : `the iOS Simulator (${deviceName})`,
+    attached: false
+  });
+
+  if (exported.length === 0) {
+    // Nothing was exported. That used to end the scan, and it still does when
+    // nothing else came back — but a run that read the render tree has the
+    // screens, and refusing them because the other path produced no PDF would
+    // throw away the result this scan was asked for.
+    if (capturedScreens.length === 0) {
+      return {
+        ok: false,
+        reason: "swiftui-no-pages",
+        message: result.vectorMessage || "The app ran, but no screen could be exported as a PDF page."
+      };
+    }
+    onStatus?.({ phase: "capturing", detail: `Reading ${capturedScreens.length} ${capturedScreens.length === 1 ? "screen" : "screens"} from ${deviceName}` });
     return {
-      ok: false,
-      reason: "swiftui-no-pages",
-      message: result.vectorMessage || "The app ran, but no screen could be exported as a PDF page."
+      ...(await inventoryShell()),
+      pages: capturedScreens.map((screen, index) => ({
+        id: `display-list-${index}`,
+        name: screen.name,
+        route: "",
+        recipe: [],
+        depth: 0,
+        thumbnail: screen.thumbnail ?? null,
+        snapshot: null,
+        layerTree: screen.layerTree,
+        layerError: null,
+        vector: null,
+        variants: []
+      })),
+      capture: {
+        snapshot: result.snapshot,
+        screenshot: result.screenshot,
+        pdfDocument: null,
+        simulator: result.simulator ?? null,
+        vectorMessage: result.vectorMessage ?? null,
+        warnings: [
+          ...(result.warnings ?? []),
+          ...capturedScreens.flatMap((screen) => screen.warnings.map((warning) => `${screen.name}: ${warning}`))
+        ]
+      }
     };
   }
 
-  const exported = result.pdfDocument.pages;
   onStatus?.({ phase: "capturing", detail: `Exporting ${exported.length} ${exported.length === 1 ? "screen" : "screens"} from ${deviceName}` });
+
   const pages = [];
   for (const page of exported) {
+    // One screen and one page is not ambiguous, whatever either is called.
+    const captured = capturedByName.get(page.sourceName) ?? (exported.length === 1 ? onlyScreen : null);
+    if (captured && !captured.ok && captured.reason) {
+      displayListWarnings.push(`${page.name}: ${captured.reason}`);
+    }
+    for (const warning of captured?.warnings ?? []) displayListWarnings.push(`${page.name}: ${warning}`);
+    const capturedLayers = Boolean(captured?.layerTree);
+    // Kept whenever this pipeline wants them, and kept anyway when the render
+    // tree came back empty for this page — a page with neither is not there.
+    const keepsVector = usesVectorPdf(capturePipeline) || !capturedLayers;
+    if (!usesVectorPdf(capturePipeline) && !capturedLayers) {
+      displayListWarnings.push(`${page.name}: kept its exported vectors, because no layers came back.`);
+    }
     pages.push({
       id: page.id,
       name: page.name,
@@ -145,35 +249,33 @@ async function scanSwiftUiFolder(root, {
       depth: 0,
       thumbnail: await pageThumbnail(page),
       snapshot: null,
-      layerTree: null,
+      // The render tree when this scan read one, and null when it did not —
+      // which is what every iOS page looked like before this path existed, and
+      // what the Figma step already knows how to fall back from.
+      layerTree: captured?.layerTree ?? null,
+      layerError: captured && !captured.ok ? captured.reason : null,
       // What the Figma side needs to find this page's exported PDF again. The
       // PDF, its clean variants, and the runtime snapshot stay on disk; sending
       // them through the renderer would put a whole capture in every payload.
-      vector: {
+      // Dropped only when this page really did come back with layers. Asked for
+      // the render tree and given nothing for a page, keeping the exported
+      // vectors is the difference between a page that looks different and a
+      // page that is not there — and the warning above already says which
+      // happened.
+      vector: keepsVector ? {
         pageId: page.id,
         width: page.width,
         height: page.height,
         renderSource: page.renderSource ?? null,
         sourceName: page.sourceName ?? null
-      },
+      } : null,
       variants: []
     });
   }
 
   return {
-    ok: true,
-    platform: "swiftui",
-    origin: root,
-    // The project's own icon, out of its asset catalog: a scanned app wears its
-    // own face in the sidebar rather than the folder glyph everything shares.
-    icon: await readXcodeAppIcon(projectRoot ?? root),
+    ...(await inventoryShell()),
     pages,
-    skipped: [],
-    filtered: [],
-    inert: [],
-    sources: { sitemap: 0, seeds: 0, crawled: 0 },
-    servedBy: ranOnThisMac ? `${deviceName}` : `the iOS Simulator (${deviceName})`,
-    attached: false,
     // Persisted by the caller, not by the renderer: this is the capture the
     // Figma import reads from.
     capture: {
@@ -182,7 +284,7 @@ async function scanSwiftUiFolder(root, {
       pdfDocument: result.pdfDocument,
       simulator: result.simulator ?? null,
       vectorMessage: result.vectorMessage ?? null,
-      warnings: result.warnings ?? []
+      warnings: [...(result.warnings ?? []), ...displayListWarnings]
     }
   };
 }

@@ -12,6 +12,7 @@ const { convertPdfToFigmaSvg, indexPdfPages, isSwiftUiUnsupportedRendererSvg } =
 const { sourceVectorEffectSchema } = require("./swift-vector-effects.cjs");
 const { appleDesignKitForMacOs, detectSchemePlatform, platformBuildArguments } = require("./xcode-platform.cjs");
 const { launchMacApp } = require("./macos-app-host.cjs");
+const { attachDisplayListAgent, startDisplayListCapture } = require("./swift-display-list-agent.cjs");
 
 const DEFAULT_RUNTIME_PORT = 38458;
 const runtimeFrameSchema = z.object({
@@ -1847,7 +1848,13 @@ async function writeVectorPdf(target, contents) {
   return target;
 }
 
-async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simulatorPreference = {} }) {
+/**
+ * `displayListSession` turns on the second capture path. When it is given, the
+ * app also reports the render tree SwiftUI drew, to the separate server that
+ * session belongs to — the same build, the same launch, captured twice, so the
+ * two results can be compared without the runs differing for other reasons.
+ */
+async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simulatorPreference = {}, displayListSession = null }) {
   const xcode = await requireXcodePaths("Install the full Xcode app before exporting an Xcode project");
   const xcodeDeveloper = xcode.developerDirectory;
   const xcodebuild = xcode.xcodebuild;
@@ -1929,6 +1936,30 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
     }
   }
   if (instrumentedNodeCount === 0) throw new Error("No runtime-instrumentable SwiftUI nodes were found");
+
+  if (displayListSession) {
+    // Appended to the app's entry point and nowhere else: the agent is one set
+    // of types, and putting it in every file is a duplicate-symbol error on the
+    // second one. The file is read back from the copy rather than from the
+    // project, so whatever instrumentation already went into it is kept.
+    const entryFile = (discovered || []).find((view) => view.isAppEntry)?.relativeFile ?? null;
+    if (!entryFile) {
+      displayListSession.unavailable?.("This project has no SwiftUI App entry point to capture from.");
+    } else {
+      const target = path.join(copiedRoot, entryFile);
+      const suffix = helperName(entryFile);
+      const started = startDisplayListCapture(await readFile(target, "utf8"), suffix);
+      if (!started.started) {
+        displayListSession.unavailable?.("The app's entry point could not be started from.");
+      } else {
+        await writeFile(target, await attachDisplayListAgent(started.source, {
+          endpoint: displayListSession.endpoint,
+          suffix,
+          screenName: path.basename(root)
+        }));
+      }
+    }
+  }
 
   const projectPath = await findXcodeProject(copiedRoot);
   const projectRelative = path.relative(copiedRoot, projectPath);
@@ -2342,6 +2373,7 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
 
 module.exports = {
   DEFAULT_RUNTIME_PORT,
+  helperName,
   appleDesignKitForRuntime,
   createSwiftUiRuntimeServer,
   discoverSwiftUiPages,
