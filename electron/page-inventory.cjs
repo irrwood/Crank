@@ -117,6 +117,28 @@ async function captureThumbnail(session, width = 1220) {
   return { dataUrl: scaled.toDataURL(), width: scaled.getSize().width, height: scaled.getSize().height };
 }
 
+/** Captures the state already visible, without trying to navigate back to it. */
+async function captureReachedPage(session, { withThumbnails = true, withHtml = true, withFigmaTree = true } = {}) {
+  if (!withThumbnails) return { thumbnail: null, snapshot: null, reached: true };
+  // Discovery normally reads as soon as the DOM settles enough to compare.
+  // A saved screen needs the slower pass so data, fonts, and lazy assets have
+  // the same opportunity to arrive as they do during an ordinary recapture.
+  await session.look({ patient: true });
+  const thumbnail = await captureThumbnail(session);
+  const captured = withHtml ? await session.captureHtml() : null;
+  const snapshot = captured?.html
+    ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
+    : null;
+  const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
+  return {
+    thumbnail,
+    snapshot,
+    layerTree: figma?.tree ? figma : null,
+    layerError: figma?.tree ? null : figma?.error ?? null,
+    reached: true
+  };
+}
+
 /**
  * Replays one page — load its route, then click its recipe — and captures it.
  *
@@ -143,30 +165,7 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
       reached: false
     };
   }
-  // Three views of one visit, each for a different distance. The thumbnail
-  // keeps a grid quick to draw. The layer tree is what a card draws and what
-  // reaches Figma. The markup is the page itself, for opening one and reading
-  // it — the only one of the three that is not an approximation.
-  //
-  // Keeping all three used to mean keeping every picture three times, which is
-  // what made a thirty-page scan 350MB. It does not any more: the pictures are
-  // stored once by content, and all three point at the same ones.
-  const thumbnail = await captureThumbnail(session);
-  const captured = withHtml ? await session.captureHtml() : null;
-  const snapshot = captured?.html
-    ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
-    : null;
-  const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
-  // The capture already says why it came back without a tree, and that reason
-  // was being dropped here — leaving the export to report "no page has captured
-  // layers" about pages whose failure it could have named.
-  return {
-    thumbnail,
-    snapshot,
-    layerTree: figma?.tree ? figma : null,
-    layerError: figma?.tree ? null : figma?.error ?? null,
-    reached: true
-  };
+  return captureReachedPage(session, { withThumbnails, withHtml, withFigmaTree });
 }
 
 /**
@@ -332,17 +331,17 @@ async function scanAppBundle(target, { onStatus, ...options } = {}) {
  * photographed — so it says which page it is on. Without that the window goes
  * silent for minutes once discovery finishes, which reads as having hung.
  */
-async function captureStates(session, states, options, onStatus) {
+async function captureStates(session, states, options, onStatus, observed = new Map()) {
   const pages = [];
   for (const [index, state] of states.entries()) {
     onStatus?.({
       phase: "capturing",
       detail: `Capturing page ${index + 1} of ${states.length} — ${state.name}`
     });
-    const { reached, ...shot } = await capturePage(session, state, options);
+    const { reached, ...shot } = observed.get(state.id) ?? await capturePage(session, state, options);
     const variants = [];
     for (const variant of state.variants ?? []) {
-      const { reached: found, ...look } = await capturePage(session, variant, options);
+      const { reached: found, ...look } = observed.get(variant.id) ?? await capturePage(session, variant, options);
       variants.push({ ...variant, ...look });
     }
     pages.push({ ...state, ...shot, variants });
@@ -493,16 +492,31 @@ async function runScan(session, origin, startPath, {
     const sitemapPaths = await readSitemap(origin);
     const routes = [...new Set([startPath, ...seedPaths, ...sitemapPaths])];
 
+    // A browser page can always be loaded again by address. An installed app
+    // cannot: after discovery Cursor may be sitting in a terminal or an open
+    // menu, and a root-level control no longer exists there. Keep the complete
+    // capture while each discovered state is actually on screen instead of
+    // pretending its click recipe is an address.
+    const observed = new Map();
+    const captureOptions = { withThumbnails, withHtml, withFigmaTree };
+    const onRecord = session.navigable === false
+      ? async (state) => {
+          onStatus?.({ phase: "capturing", detail: `Capturing ${state.name}` });
+          observed.set(state.id, await captureReachedPage(session, captureOptions));
+        }
+      : undefined;
+
     const { states, skipped, filtered, inert } = await discoverStates(session, {
       routes,
       maxStates,
       maxDepth,
       maxActionsPerState,
       keepAnyway: new Set(keepAnyway),
-      onProgress
+      onProgress,
+      onRecord
     });
 
-    const pages = await captureStates(session, states, { withThumbnails, withHtml, withFigmaTree }, onStatus);
+    const pages = await captureStates(session, states, captureOptions, onStatus, observed);
     // Taken once for the project, not per page: it is the same icon on all of
     // them, and it is what tells one project from another in the list.
     const icon = await session.captureIcon?.().catch(() => null) ?? null;

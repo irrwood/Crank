@@ -693,6 +693,51 @@ test("reaches a state by clicking when the app cannot be navigated", async () =>
   assert.ok(snapshot);
 });
 
+test("waits for an installed app to mount before discovering its controls", async () => {
+  const observations = [];
+  const session = {
+    navigable: false,
+    look: async (options) => {
+      observations.push(options);
+      return {
+        contentType: "text/html",
+        title: "Cursor Agents",
+        heading: "",
+        url: "/workbench.html",
+        fingerprint: ["main|ready||120x90"],
+        skeleton: ["main@0"],
+        candidates: []
+      };
+    }
+  };
+
+  const { states } = await discoverStates(session);
+  assert.deepEqual(observations, [{ patient: true }]);
+  assert.equal(states.length, 1);
+  assert.equal(states[0].name, "Cursor Agents");
+});
+
+test("hands each state over while it is still visible", async () => {
+  const session = fakeSession({
+    "/": {
+      title: "Home",
+      url: "/",
+      fingerprint: ["home"],
+      controls: [{ locator: "#settings", label: "Settings", to: "settings" }]
+    },
+    settings: { title: "Settings", url: "/", fingerprint: ["settings"], controls: [] }
+  });
+  const recorded = [];
+
+  await discoverStates(session, {
+    routes: ["/"],
+    maxDepth: 1,
+    onRecord: async (state) => recorded.push(state.name)
+  });
+
+  assert.deepEqual(recorded, ["Home", "Settings"]);
+});
+
 test("still loads the address when the app has one", async () => {
   const visited = [];
   const session = {

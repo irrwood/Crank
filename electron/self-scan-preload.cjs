@@ -24,6 +24,7 @@ const readable = new Set([
   "projects:previews",
   "inventory:targets",
   "inventory:open",
+  "inventory:figma-links",
   "figma:plugin-path"
 ]);
 
@@ -43,6 +44,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   getProjectPreviews: forward("projects:previews"),
   listInventoryTargets: forward("inventory:targets"),
   openInventory: forward("inventory:open"),
+  getInventoryFigmaLinks: forward("inventory:figma-links"),
   openPagePreview: inert({ ok: false, message: "Crank 正在扫描自己，这份副本不能开预览。" }),
   restoreFilteredPage: inert({ ok: false, message: "Crank 正在扫描自己，这份副本不能改扫描结果。" }),
   setPagePreviewBounds: inert(false),

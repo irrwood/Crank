@@ -48,8 +48,29 @@ const [built] = await packager({
   // ships. A first attempt at this shipped 67 browser console logs from a
   // debugging session. This is everything the app actually runs from.
   ignore: (file) => {
+    // node_modules is the exception to the rule below, and the reason for the
+    // rule does not apply to it: it holds nobody's work but its authors', so a
+    // list of what to leave out cannot one day leak something of the user's.
+    // What it can do is ship sixty megabytes nothing runs.
+    //
+    // Three things are in there that the packaged app never loads. Vite's
+    // pre-bundle cache and the dev tools' shims are build leftovers. And every
+    // package the *renderer* imports is already inside `dist` — Vite bundled
+    // it — so a second copy travels along as source for no one.
+    if (/^\/node_modules\/\.(vite|bin)(\/|$)/.test(file)) return true;
+    const bundledIntoDist = [
+      "lucide-react", "react", "react-dom", "scheduler",
+      "@xyflow/react", "@xyflow/system", "zustand",
+      "@dagrejs/dagre", "@dagrejs/graphlib"
+    ];
+    if (bundledIntoDist.some((name) => file === `/node_modules/${name}` || file.startsWith(`/node_modules/${name}/`))) {
+      return true;
+    }
     if (file === "") return false;
-    const shipped = ["/package.json", "/electron", "/dist", "/assets", "/figma-plugin", "/swift-tools", "/shared", "/node_modules"];
+    // `/swift-sdk` holds the capture agent that is appended into a copy of a
+    // SwiftUI project at scan time. Left out, a packaged build could open an
+    // iOS project and never read a display list from it.
+    const shipped = ["/package.json", "/electron", "/dist", "/assets", "/figma-plugin", "/swift-sdk", "/swift-tools", "/shared", "/node_modules"];
     if (/\.test\.cjs$/.test(file)) return true;
     // Compiled above and shipped from swift-tools/prebuilt instead.
     if (/^\/swift-tools\/.*\.swift$/.test(file)) return true;

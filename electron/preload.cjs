@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   chooseFolder: () => ipcRenderer.invoke("inventory:choose-folder"),
   listInventoryTargets: () => ipcRenderer.invoke("inventory:targets"),
   openInventory: (id) => ipcRenderer.invoke("inventory:open", id),
+  getInventoryFigmaLinks: (id) => ipcRenderer.invoke("inventory:figma-links", id),
   restoreFilteredPage: (source, item) => ipcRenderer.invoke("inventory:restore-filtered", source, item),
   // The project's own page, served and shown where a capture would have been.
   openPagePreview: (id, page, bounds) => ipcRenderer.invoke("inventory:preview-open", id, page, bounds),
@@ -47,6 +48,11 @@ contextBridge.exposeInMainWorld("uiSync", {
     };
   },
   exportHandoffPage: (inventory, title) => ipcRenderer.invoke("inventory:export", inventory, title),
+  readPageSnapshot: (reference) => ipcRenderer.invoke("inventory:snapshot", reference),
+  copyForPaper: (inventory, options) => ipcRenderer.invoke("inventory:copy-for-paper", inventory, options),
+  pushToPaper: (inventory, options) => ipcRenderer.invoke("inventory:push-to-paper", inventory, options),
+  getCapturePipeline: () => ipcRenderer.invoke("settings:capture-pipeline"),
+  setCapturePipeline: (pipeline) => ipcRenderer.invoke("settings:set-capture-pipeline", pipeline),
   revealFile: (filePath) => ipcRenderer.invoke("inventory:reveal", filePath),
   onFigmaBuildProgress: (callback) => {
     const listener = (_event, value) => callback(value);

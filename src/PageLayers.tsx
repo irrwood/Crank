@@ -34,24 +34,32 @@ type Layer = {
   children?: Layer[];
 };
 
-function Node({ layer }: { layer: Layer }) {
+function Node({ allowOverflow, hiddenLayerId, layer }: { allowOverflow: boolean; hiddenLayerId?: string | null; layer: Layer }) {
   const painted = paintLayer(layer);
-  const style = painted.style as CSSProperties;
+  const style = {
+    ...(painted.style as CSSProperties),
+    // A captured page must preserve clipping in previews and exports, but the
+    // scene editor is a workspace rather than the page at runtime. Leaving a
+    // captured overflow mask active there made a layer disappear the moment it
+    // crossed its old parent, so it could neither be detached nor dragged back.
+    ...(allowOverflow ? { overflow: "visible" } : {}),
+    visibility: layer.id === hiddenLayerId ? "hidden" : (painted.style as CSSProperties).visibility
+  } as CSSProperties;
 
   if (painted.tag === "img") return <img alt="" src={painted.src} style={style} />;
 
   return (
     <div style={style}>
-      {painted.text ?? (painted.children as Layer[]).map((child) => <Node key={child.id} layer={child} />)}
+      {painted.text ?? (painted.children as Layer[]).map((child) => <Node allowOverflow={allowOverflow} hiddenLayerId={hiddenLayerId} key={child.id} layer={child} />)}
     </div>
   );
 }
 
-export function PageLayers({ tree, width, height }: { tree: unknown; width: number; height: number }) {
+export function PageLayers({ tree, width, height, allowOverflow = false, hiddenLayerId = null }: { tree: unknown; width: number; height: number; allowOverflow?: boolean; hiddenLayerId?: string | null }) {
   if (!tree) return null;
   return (
     <div className="page-layers" style={{ width, height }}>
-      <Node layer={tree as Layer} />
+      <Node allowOverflow={allowOverflow} hiddenLayerId={hiddenLayerId} layer={tree as Layer} />
     </div>
   );
 }

@@ -259,7 +259,7 @@ function planNextStep(frontier, { maxDepth }) {
  * Runs inside the page. Returns a structural fingerprint plus the controls
  * worth trying. Kept dependency-free because it is serialized into the page.
  */
-function collectUiState(options) {
+function collectUiState(options, stableDomId, makeSemanticLocator) {
   // An app draws its whole interface inside one box that is itself sized by its
   // children, so the reader is told how deep to look. A web page's structure is
   // near the top; a desktop app's is a dozen layers further in.
@@ -272,10 +272,40 @@ function collectUiState(options) {
     return rect.width > 1 && rect.height > 1;
   };
 
+  const isStableId = typeof stableDomId === "function"
+    ? stableDomId
+    : (id) => Boolean(id) && !/^[0-9]/.test(id) && !/(?:^|[-_:])_?r_[a-z0-9]+_?$/i.test(id) && !/:r[a-z0-9]+:$/i.test(id);
+  const semanticLocator = typeof makeSemanticLocator === "function"
+    ? makeSemanticLocator
+    : (role, tag, name, index = 0) => `crank:a11y:${JSON.stringify({ role, tag, name, index })}`;
+
+  // The order the accessible name is actually computed in: a title is the last
+  // resort, after the element's own content, not the first thing tried.
+  const accessibleName = (element) => (
+    element.getAttribute("aria-label")
+    || (element.innerText || element.textContent || "").trim()
+    || element.getAttribute("title")
+    || ""
+  ).replace(/\s+/g, " ").slice(0, 60);
+  const roleOf = (element) => (
+    element.getAttribute("role")
+    || (element.tagName === "A" ? "link" : element.tagName === "BUTTON" ? "button" : "")
+  ).toLowerCase();
+
   const locatorFor = (element) => {
-    if (element.id && !/^[0-9]/.test(element.id)) return `#${CSS.escape(element.id)}`;
     const testId = element.getAttribute("data-testid") || element.getAttribute("data-test-id");
     if (testId) return `[data-testid="${CSS.escape(testId)}"]`;
+    if (isStableId(element.id)) return `#${CSS.escape(element.id)}`;
+
+    const name = accessibleName(element);
+    const role = roleOf(element);
+    const tag = element.tagName.toLowerCase();
+    if (name) {
+      const peers = Array.from(document.querySelectorAll("button,a[href],[role],[aria-label],[title],nav [class*=item],[class*=tab]:not([role])"))
+        .filter((candidate) => roleOf(candidate) === role && candidate.tagName.toLowerCase() === tag && accessibleName(candidate) === name);
+      return semanticLocator(role, tag, name, Math.max(0, peers.indexOf(element)));
+    }
+
     const parts = [];
     let node = element;
     let depth = 0;
@@ -326,19 +356,6 @@ function collectUiState(options) {
     for (const child of element.children) walk(child, depth + 1);
   };
   walk(root, 0);
-
-  // The order the accessible name is actually computed in: a title is the last
-  // resort, after the element's own content, not the first thing tried. Taking
-  // it first named pages after tooltips — this app's sidebar puts the project's
-  // full path in a title and its name in the text, so every page it reached was
-  // named "/Users/someone/Documents/…", which then travelled into Figma frame
-  // names and the exported handoff page.
-  const accessibleName = (element) => (
-    element.getAttribute("aria-label")
-    || (element.innerText || element.textContent || "").trim()
-    || element.getAttribute("title")
-    || ""
-  ).replace(/\s+/g, " ").slice(0, 60);
 
   const interactiveSelector = [
     "[role=tab]", "[role=menuitem]", "[role=menuitemradio]", "[role=option]",
@@ -431,7 +448,8 @@ async function discoverStates(session, {
   // clear the threshold. The judgement is the user's; the measurement only
   // decides the default.
   keepAnyway = new Set(),
-  onProgress
+  onProgress,
+  onRecord
 } = {}) {
   const states = [];
   const bySignature = new Map();
@@ -521,6 +539,7 @@ async function discoverStates(session, {
       };
       existing.variants.push(variant);
       bySignature.set(signature, existing);
+      await onRecord?.(variant);
       return null;
     }
     const name = chooseStateName({
@@ -545,6 +564,7 @@ async function discoverStates(session, {
     bySkeleton.set(skeleton, state);
     states.push(state);
     onProgress?.(state);
+    await onRecord?.(state);
     remember(state.route);
     remember(snapshot.url);
 
@@ -577,8 +597,11 @@ async function discoverStates(session, {
     if (!snapshot) return { states, skipped, filtered, inert, start: null, reached: false };
     start = await record(snapshot, from.recipe ?? [], from.route);
   } else if (session.navigable === false) {
-    // One screen to start from: the one the app is already showing.
-    const snapshot = await session.look();
+    // An installed app exposes its debugging window before React has mounted
+    // the controls inside it. Reading immediately turned Cursor into one empty
+    // "State" even though the later screenshot showed the complete Agents UI.
+    // Give only this first observation the same patient settle as capture.
+    const snapshot = await session.look({ patient: true });
     if (snapshot) await record(snapshot, [], routes[0] ?? "/");
   } else {
     for (const route of routes) {

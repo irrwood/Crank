@@ -1,7 +1,10 @@
 const path = require("node:path");
 const { createHash } = require("node:crypto");
-const { readFile, writeFile, mkdir, readdir, rm } = require("node:fs/promises");
+const { readFile, writeFile, mkdir, readdir, rename, rm } = require("node:fs/promises");
+const { randomBytes } = require("node:crypto");
 const { createAssetStore, externalise, referencesIn } = require("./asset-store.cjs");
+const { createSnapshotStore } = require("./snapshot-store.cjs");
+const { lighten, snapshotReferencesIn } = require("./inventory-lite.cjs");
 
 /**
  * Remembers what has been scanned, and keeps the result.
@@ -12,7 +15,7 @@ const { createAssetStore, externalise, referencesIn } = require("./asset-store.c
  * rescanning is a deliberate act rather than the price of looking.
  */
 
-const targetSchemaKeys = ["id", "kind", "target", "name", "addedAt", "lastScannedAt", "pageCount", "parent", "icon"];
+const targetSchemaKeys = ["id", "kind", "target", "name", "addedAt", "lastScannedAt", "pageCount", "parent", "icon", "figmaUrl", "platform"];
 
 function targetId(kind, target) {
   return createHash("sha256").update(`${kind}:${target}`).digest("hex").slice(0, 16);
@@ -105,11 +108,35 @@ function carryOldNames(inventory) {
   return { ...inventory, pages: inventory.pages.map(carryPage) };
 }
 
+/**
+ * Writes a file in a way that cannot leave half of one behind.
+ *
+ * `writeFile` empties the file before it writes, so a process that stops in
+ * between — a crash, a quit, a kill — leaves nothing where a scan used to be.
+ * That is not theoretical: a 167MB scan of an app with sixty pages was found
+ * at zero bytes, with its entry still saying sixty pages. Writing beside the
+ * file and renaming over it makes the swap atomic: the reader sees the old
+ * scan or the new one, never a truncated one.
+ */
+async function writeAtomic(target, data) {
+  const temporary = `${target}.writing-${randomBytes(6).toString("hex")}`;
+  try {
+    await writeFile(temporary, data);
+    await rename(temporary, target);
+  } catch (cause) {
+    await rm(temporary, { force: true }).catch(() => {});
+    throw cause;
+  }
+}
+
 function createInventoryRegistry(directory) {
   const listPath = path.join(directory, "inventory-targets.json");
   // Pictures are written once under the hash of their bytes and referred to
   // from the scan, rather than inlined into it wherever they appear.
   const assets = createAssetStore(directory);
+  // The markup of every captured page, kept out of the scan itself: it is most
+  // of a scan's weight and almost none of what opening one needs.
+  const snapshots = createSnapshotStore(directory);
   const cachePath = (id) => path.join(directory, "inventories", `${id}.json`);
 
   const read = async () => {
@@ -128,7 +155,7 @@ function createInventoryRegistry(directory) {
 
   const write = async (targets) => {
     await mkdir(directory, { recursive: true });
-    await writeFile(listPath, `${JSON.stringify(targets, null, 2)}\n`);
+    await writeAtomic(listPath, `${JSON.stringify(targets, null, 2)}\n`);
   };
 
   return {
@@ -192,13 +219,13 @@ function createInventoryRegistry(directory) {
       // crawled out of the threshold on every scan only to be discarded again.
       const kept = await this.kept(id);
       if (kept.includes(pageId)) {
-        await writeFile(path.join(directory, "kept", `${id}.json`), JSON.stringify(kept.filter((entry) => entry !== pageId)));
+        await writeAtomic(path.join(directory, "kept", `${id}.json`), JSON.stringify(kept.filter((entry) => entry !== pageId)));
       }
       const current = await this.dropped(id);
       if (current.includes(pageId)) return current;
       const next = [...current, pageId];
       await mkdir(path.join(directory, "dropped"), { recursive: true });
-      await writeFile(path.join(directory, "dropped", `${id}.json`), JSON.stringify(next));
+      await writeAtomic(path.join(directory, "dropped", `${id}.json`), JSON.stringify(next));
       return next;
     },
 
@@ -216,7 +243,7 @@ function createInventoryRegistry(directory) {
       if (current.includes(pageId)) return current;
       const next = [...current, pageId];
       await mkdir(path.join(directory, "kept"), { recursive: true });
-      await writeFile(path.join(directory, "kept", `${id}.json`), JSON.stringify(next));
+      await writeAtomic(path.join(directory, "kept", `${id}.json`), JSON.stringify(next));
       return next;
     },
 
@@ -243,8 +270,8 @@ function createInventoryRegistry(directory) {
     async saveInventory(kind, target, inventory, { parent = null } = {}) {
       const id = targetId(kind, target);
       await mkdir(path.join(directory, "inventories"), { recursive: true });
-      const lifted = await externalise(inventory, assets);
-      await writeFile(cachePath(id), JSON.stringify(lifted));
+      const lifted = await lighten(await externalise(inventory, assets), snapshots);
+      await writeAtomic(cachePath(id), JSON.stringify(lifted));
       await this.remember(kind, target, {
         pageCount: inventory?.pages?.length ?? null,
         scannedAt: new Date().toISOString(),
@@ -254,7 +281,9 @@ function createInventoryRegistry(directory) {
         icon: lifted?.icon ?? null,
         platform: lifted?.platform ?? null
       });
-      return id;
+      // The stored shape, not the one that came in: the caller is about to
+      // hand this to the window, and the window wants what was stored.
+      return { id, inventory: lifted };
     },
 
     /**
@@ -266,8 +295,9 @@ function createInventoryRegistry(directory) {
      */
     async updateInventory(id, inventory) {
       await mkdir(path.join(directory, "inventories"), { recursive: true });
-      await writeFile(cachePath(id), JSON.stringify(await externalise(inventory, assets)));
-      return id;
+      const lifted = await lighten(await externalise(inventory, assets), snapshots);
+      await writeAtomic(cachePath(id), JSON.stringify(lifted));
+      return { id, inventory: lifted };
     },
 
     /**
@@ -281,7 +311,7 @@ function createInventoryRegistry(directory) {
     async saveFigmaBaseline(kind, target, baselines, { fileKey = null } = {}) {
       const id = targetId(kind, target);
       await mkdir(path.join(directory, "baselines"), { recursive: true });
-      await writeFile(
+      await writeAtomic(
         path.join(directory, "baselines", `${id}.json`),
         // The frames outlive the baseline they were drawn from: a page pushed
         // again belongs in the frame it already has, whether or not this push
@@ -309,7 +339,7 @@ function createInventoryRegistry(directory) {
     async recordFigmaPush(id, { frames = {}, screens = {} } = {}) {
       const current = (await this.loadFigmaBaseline(id)) ?? { pushedAt: null, fileKey: null, screens: {} };
       await mkdir(path.join(directory, "baselines"), { recursive: true });
-      await writeFile(
+      await writeAtomic(
         path.join(directory, "baselines", `${id}.json`),
         JSON.stringify({
           ...current,
@@ -342,14 +372,24 @@ function createInventoryRegistry(directory) {
       } catch {
         return null;
       }
-      // Scans taken before pictures were stored separately carry them inline,
-      // many times over. Opening one is the moment its images are in hand, so
-      // it is also the moment to lift them out — once, not on every open.
-      if (!text.includes("data:image/")) return inventory;
-      const lifted = await externalise(inventory, assets);
-      await writeFile(cachePath(id), JSON.stringify(lifted)).catch(() => null);
+      // Scans taken before pictures and documents were stored separately
+      // carry them inline. Opening one is the moment they are in hand, so it
+      // is also the moment to lift them out — once, not on every open. The
+      // scan of one editor was 293MB, 272MB of it markup; after this it is
+      // read, parsed and carried across to the window as 21MB.
+      const inline = text.includes("data:image/") || /"snapshot":\s*{[^{}]*"html":/.test(text);
+      if (!inline) return inventory;
+      const lifted = await lighten(await externalise(inventory, assets), snapshots);
+      await writeAtomic(cachePath(id), JSON.stringify(lifted)).catch(() => null);
       return lifted;
     },
+
+    /** One captured page's markup, fetched when something actually wants it. */
+    async readSnapshot(reference) {
+      return snapshots.read(reference);
+    },
+
+    snapshots,
 
     /**
      * Removes stored pictures that no scan on this machine points at any more.
@@ -360,6 +400,13 @@ function createInventoryRegistry(directory) {
      */
     async sweepAssets() {
       const referenced = new Set();
+      const liveSnapshots = new Set();
+      // A save that was interrupted leaves its half-written file beside the
+      // real one, under a name nothing reads. Harmless, and worth clearing so
+      // they do not collect.
+      for (const name of await readdir(path.join(directory, "inventories")).catch(() => [])) {
+        if (name.includes(".writing-")) await rm(path.join(directory, "inventories", name), { force: true }).catch(() => {});
+      }
       let unread = 0;
 
       // Every scan on disk, not every scan in the list. An inventory whose list
@@ -374,8 +421,10 @@ function createInventoryRegistry(directory) {
       }
       for (const file of files) {
         const stored = await this.loadInventory(file.slice(0, -".json".length));
-        if (stored) referencesIn(stored, referenced);
-        else unread += 1;
+        if (stored) {
+          referencesIn(stored, referenced);
+          snapshotReferencesIn(stored, liveSnapshots);
+        } else unread += 1;
       }
       for (const entry of await read()) referencesIn(entry, referenced);
 
@@ -384,7 +433,9 @@ function createInventoryRegistry(directory) {
       // file is corrupt, too large to parse, or simply new in a shape this
       // version does not know — and there is no getting them back.
       if (unread > 0) return { removed: 0, skipped: true, unread };
-      return { ...await assets.collect(referenced), skipped: false };
+      const pictures = await assets.collect(referenced);
+      const documents = await snapshots.collect(liveSnapshots);
+      return { ...pictures, removedSnapshots: documents.removed, skipped: false };
     }
   };
 }

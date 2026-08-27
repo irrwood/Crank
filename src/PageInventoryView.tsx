@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AppWindowMac, Check, ChevronRight, Download, Figma, FolderGit2, Globe2, Languages, LoaderCircle, Play, Plus, RefreshCw, Smartphone, Square, X } from "lucide-react";
+import type { CapturePipeline } from "./types";
+import { AppWindowMac, Check, ChevronRight, ClipboardCopy, Download, Ellipsis, Figma, FolderGit2, Globe2, Languages, LoaderCircle, PenLine, Play, Plus, RefreshCw, Smartphone, Square, X } from "lucide-react";
 import { FigmaPluginPanel } from "./FigmaPluginPanel";
 import { FigmaSyncDialog } from "./FigmaSyncDialog";
 import { PageLayers } from "./PageLayers";
-import type { AutomaticMappingStatus, DiscoveredPage, FigmaBuildProgress, FigmaConnection, FigmaTree, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
+import { SceneEditor } from "./SceneEditor";
+import { ScreenFlow } from "./ScreenFlow";
+import type { AutomaticMappingStatus, DiscoveredPage, FigmaBuildProgress, FigmaConnection, FigmaTree, InventoryFigmaLinks, InventoryGroup, InventoryTarget, PageInventory, ScanLifecycle, ScanProgress, ScanStatus, WorkspacePackage, ForeignProject } from "./types";
 import { useLocale, useT, type Translate } from "./lib/locale";
 
 /**
@@ -69,7 +72,7 @@ function shortfall(session: FigmaExportSession, t: Translate): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
-type PageAction = "recapture" | "explore" | "figma" | "drop";
+type PageAction = "recapture" | "explore" | "figma" | "paper" | "paper-push" | "drop";
 
 /**
  * The menu a page opens on right-click.
@@ -122,6 +125,8 @@ function PageMenu({ at, busy, exported, onPick, onClose }: {
       { id: "explore" as const, label: t("inventory.menuExplore") }
     ]),
     { id: "figma", label: t("inventory.menuImport") },
+    { id: "paper-push", label: t("inventory.pushToPaper") },
+    { id: "paper", label: t("inventory.copyForPaper") },
     { id: "drop", label: t("inventory.menuDelete"), danger: true }
   ];
 
@@ -132,7 +137,7 @@ function PageMenu({ at, busy, exported, onPick, onClose }: {
       role="menu"
       // Kept inside the window: a card near the right or bottom edge would
       // otherwise open its menu off screen.
-      style={{ left: Math.min(at.x, window.innerWidth - 210), top: Math.min(at.y, window.innerHeight - 130) }}
+      style={{ left: Math.min(at.x, window.innerWidth - 210), top: Math.min(at.y, window.innerHeight - 160) }}
     >
       {items.map((item) => (
         <button
@@ -226,7 +231,11 @@ function PageDocument({ page }: { page: DiscoveredPage }) {
   if (!page.layerTree?.tree) {
     return page.thumbnail
       ? <img alt="" src={page.thumbnail.dataUrl} />
-      : <span className="inventory-shot-empty">{t("inventory.previewUnavailable")}</span>;
+      : (
+        <span className={`inventory-shot-empty${page.layerError ? " is-error" : ""}`} title={page.layerError ?? undefined}>
+          {page.layerError ? t("inventory.captureFailed") : t("inventory.previewUnavailable")}
+        </span>
+      );
   }
   return <ScaledLayers fallback={null} layerTree={page.layerTree} lazy />;
 }
@@ -259,12 +268,7 @@ function PageCard({ page, index, busy, single, onOpen, onMenu }: {
   onMenu: (page: DiscoveredPage, at: { x: number; y: number }) => void;
 }) {
   const t = useT();
-  // Variants are the same page re-skinned — dark mode, another language — so
-  // they share one card and swap the preview rather than taking a slot each.
-  const looks = [{ id: page.id, name: t("inventory.defaultLook"), thumbnail: page.thumbnail }, ...(page.variants ?? [])];
-  const [shown, setShown] = useState(0);
-  const current = looks[Math.min(shown, looks.length - 1)];
-  const portrait = single ? null : phonePortraitShape(page, current.thumbnail);
+  const portrait = single ? null : phonePortraitShape(page, page.thumbnail);
 
   return (
     <article
@@ -274,7 +278,12 @@ function PageCard({ page, index, busy, single, onOpen, onMenu }: {
         onMenu(page, { x: event.clientX, y: event.clientY });
       }}
     >
+      <div className="inventory-meta">
+        <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
+        <h3 title={page.name}>{page.name}</h3>
+      </div>
       <button
+        aria-label={page.name}
         className={`inventory-shot${portrait ? " is-portrait" : ""}`}
         onClick={() => onOpen(page)}
         style={portrait ?? undefined}
@@ -283,29 +292,14 @@ function PageCard({ page, index, busy, single, onOpen, onMenu }: {
         {busy && <span className="inventory-shot-busy"><LoaderCircle className="spin" size={18} /></span>}
         {single
           ? <PageDocument page={page} />
-          : current.thumbnail
-            ? <img alt="" src={current.thumbnail.dataUrl} />
-            : <span className="inventory-shot-empty">{t("inventory.previewUnavailable")}</span>}
+          : page.thumbnail
+            ? <img alt="" src={page.thumbnail.dataUrl} />
+            : (
+              <span className={`inventory-shot-empty${page.layerError ? " is-error" : ""}`} title={page.layerError ?? undefined}>
+                {page.layerError ? t("inventory.captureFailed") : t("inventory.previewUnavailable")}
+              </span>
+            )}
       </button>
-      <div className="inventory-meta">
-        <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
-        <h3 title={page.name}>{page.name}</h3>
-      </div>
-      {looks.length > 1 && (
-        <div className="inventory-variants">
-          {looks.map((look, position) => (
-            <button
-              aria-pressed={position === shown}
-              key={look.id}
-              onClick={() => setShown(position)}
-              type="button"
-            >
-              {look.name}
-            </button>
-          ))}
-        </div>
-      )}
-      <p className="inventory-address" title={addressOf(page, t)}>{addressOf(page, t)}</p>
     </article>
   );
 }
@@ -315,12 +309,10 @@ type Entry = InventoryTarget | InventoryGroup;
 
 const isGroup = (entry: Entry): entry is InventoryGroup => entry.kind === "group";
 
-function whenScanned(value: string | null, t: Translate): string {
-  if (!value) return t("inventory.statusNotScanned");
-  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
-  if (days <= 0) return t("inventory.today");
-  if (days === 1) return t("inventory.yesterday");
-  return t("inventory.daysAgo", { days });
+function targetsIn(entries: Entry[]): InventoryTarget[] {
+  return entries.flatMap((entry) => (
+    isGroup(entry) ? [...(entry.root ? [entry.root] : []), ...entry.children] : [entry]
+  ));
 }
 
 /** An installed app is a folder on disk, and the one folder that is not a project. */
@@ -358,17 +350,6 @@ function TargetRow({ target, active, busy, onOpen, onRescan, onForget, nested }:
       </span>
       <span className="project-copy">
         <strong>{target.name}</strong>
-        <small>
-          {busy
-            ? t("inventory.statusScanning")
-            : target.pageCount === null
-              ? t("inventory.statusNotScanned")
-              : t("inventory.rowMeta", {
-                count: target.pageCount,
-                unit: target.pageCount === 1 ? t("common.page") : t("common.pages"),
-                when: whenScanned(target.lastScannedAt, t)
-              })}
-        </small>
       </span>
       <span className="target-actions">
         <span
@@ -503,15 +484,15 @@ function Sidebar({ entries, activeId, busyIds, figmaConnected, onOpen, onRescan,
         {over && <p className="target-drop">{t("sidebar.dropTarget")}</p>}
         {entries.length === 0 && !over && <p className="target-empty">{t("sidebar.empty")}</p>}
         {entries.map((entry) => (isGroup(entry) ? (
-          <div key={entry.id}>
+          <div className="target-group" key={entry.id}>
             <button
+              aria-expanded={!collapsed[entry.id]}
               className="target-group-head"
               onClick={() => setCollapsed((current) => ({ ...current, [entry.id]: !current[entry.id] }))}
               type="button"
             >
               <ChevronRight className={collapsed[entry.id] ? "" : "is-open"} size={13} />
-              {entry.name}
-              <span className="target-count">{entry.children.length}</span>
+              <span className="target-group-name">{entry.name}</span>
             </button>
             {!collapsed[entry.id] && entry.root && (
               <TargetRow
@@ -561,40 +542,180 @@ function Sidebar({ entries, activeId, busyIds, figmaConnected, onOpen, onRescan,
   );
 }
 
+function ProjectMore({ ignoredCount, ignoredOpen, onCopyForPaper, onExport, onPushToPaper, onToggleIgnored, showsCapturePipeline }: {
+  ignoredCount: number;
+  ignoredOpen: boolean;
+  onCopyForPaper: () => void;
+  onExport: () => void;
+  onPushToPaper: () => void;
+  onToggleIgnored: () => void;
+  /** Only iOS projects have two ways to be captured, so only they are asked. */
+  showsCapturePipeline: boolean;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [pipeline, setPipeline] = useState<CapturePipeline | null>(null);
+  const holder = useRef<HTMLDivElement>(null);
+
+  // Read when the menu opens rather than on mount: the setting is shared by
+  // every window, and a menu that has been sitting closed for an hour would
+  // otherwise show what was true an hour ago.
+  useEffect(() => {
+    if (!open || !showsCapturePipeline) return;
+    let live = true;
+    void window.uiSync?.getCapturePipeline?.().then((value) => { if (live) setPipeline(value); });
+    return () => { live = false; };
+  }, [open, showsCapturePipeline]);
+
+  const choose = async (value: CapturePipeline) => {
+    // Shown as chosen straight away, then corrected by what was actually
+    // stored: a setting that lags a click by a round trip reads as broken.
+    setPipeline(value);
+    const stored = await window.uiSync?.setCapturePipeline?.(value).catch(() => null);
+    if (stored) setPipeline(stored);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!holder.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    window.addEventListener("mousedown", close, true);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("mousedown", close, true);
+      window.removeEventListener("keydown", key);
+    };
+  }, [open]);
+
+  return (
+    <div className="project-more" ref={holder}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={t("inventory.more")}
+        className="secondary-button"
+        onClick={() => setOpen((value) => !value)}
+        title={t("inventory.more")}
+        type="button"
+      >
+        <Ellipsis size={16} />
+      </button>
+      {open && (
+        <div className="project-more-menu" role="menu">
+          {ignoredCount > 0 && (
+            <button onClick={() => { setOpen(false); onToggleIgnored(); }} role="menuitem" type="button">
+              {ignoredOpen ? t("inventory.collapse") : t("inventory.showFiltered", { count: ignoredCount })}
+            </button>
+          )}
+          <button onClick={() => { setOpen(false); onExport(); }} role="menuitem" type="button">
+            <Download size={14} /> {t("inventory.saveHandoff")}
+          </button>
+          <button onClick={() => { setOpen(false); onPushToPaper(); }} role="menuitem" type="button">
+            <PenLine size={14} /> {t("inventory.pushToPaper")}
+          </button>
+          <button onClick={() => { setOpen(false); onCopyForPaper(); }} role="menuitem" type="button">
+            <ClipboardCopy size={14} /> {t("inventory.copyForPaper")}
+          </button>
+          {showsCapturePipeline && (
+            <>
+              <div className="project-more-heading">{t("inventory.capturePipeline")}</div>
+              {(["vector-pdf", "display-list", "both"] as const).map((value) => (
+                <button
+                  aria-checked={pipeline === value}
+                  className="project-more-choice"
+                  key={value}
+                  onClick={() => void choose(value)}
+                  role="menuitemradio"
+                  type="button"
+                >
+                  <Check className={pipeline === value ? "" : "is-hidden"} size={14} />
+                  <span>
+                    {t(`inventory.pipeline.${value}`)}
+                    <small>{t(`inventory.pipeline.${value}.hint`)}</small>
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
- * One page, as close to the real thing as this machine can get.
+ * One page, starting with the result Crank actually captured.
  *
- * First choice is the project's own page: it is still on disk, so it can be
- * served and opened, and then the fonts, the ::before, the hover and the
- * animation are simply right rather than approximated. Everything stored about
- * a page is an approximation of some size, and this is the moment those
- * differences show.
- *
- * The capture is what is left when that is impossible — the folder moved, the
- * address is down, or the project is an installed app.
+ * Opening a card should explain what the scan produced, not silently start a
+ * project. The real page remains one explicit action away for comparing fonts,
+ * pseudo-elements, hover, and animation against that stored result.
  */
-function PageOverlay({ page, targetId, onClose }: {
+function PageOverlay({ page, targetId, figmaLinks, onClose, onEdit }: {
   page: DiscoveredPage;
   targetId: string | null;
+  figmaLinks: InventoryFigmaLinks;
   onClose: () => void;
+  onEdit: (page: DiscoveredPage, layerTree: FigmaTree, imageFallback: boolean) => void;
 }) {
   const t = useT();
   const looks = [
-    { id: page.id, layerTree: page.layerTree, name: t("inventory.defaultLook"), snapshot: page.snapshot, thumbnail: page.thumbnail },
+    { id: page.id, layerError: page.layerError, layerTree: page.layerTree, name: t("inventory.defaultLook"), snapshot: page.snapshot, thumbnail: page.thumbnail },
     ...(page.variants ?? [])
   ];
   const [shown, setShown] = useState(0);
+  const [liveRequested, setLiveRequested] = useState(false);
   const current = looks[Math.min(shown, looks.length - 1)];
+  // A stored scan carries a reference to the page's markup rather than the
+  // markup itself — it is most of a scan's weight, and only the page someone
+  // opens needs it. This is that moment.
+  const [fetched, setFetched] = useState<Record<string, string>>({});
+  const snapshotRef = current.snapshot?.ref ?? null;
+  const markup = current.snapshot?.html ?? (snapshotRef ? fetched[snapshotRef] : undefined);
+  useEffect(() => {
+    if (!snapshotRef || fetched[snapshotRef] !== undefined) return;
+    let live = true;
+    void window.uiSync?.readPageSnapshot?.(snapshotRef).then((html) => {
+      // Recorded even when it is missing, so a document that has gone is not
+      // asked for again on every render.
+      if (live) setFetched((held) => ({ ...held, [snapshotRef]: html ?? "" }));
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [snapshotRef, fetched]);
+  const figmaFrame = figmaLinks?.frames[current.id] ?? null;
   const stage = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState<{ state: "opening" | "open" | "unavailable"; missed?: string[]; why?: string }>(
-    { state: "opening" }
+    { state: "unavailable" }
   );
   // Only the page as it was found can be opened live. A re-skinned look is a
   // click away from it, and clicking is exactly what the recipe already does —
   // but the second look has no recipe of its own, so it stays a capture.
   // An exported iOS page cannot be opened live either: there is no address to
   // load and no browser to load it in.
-  const liveWanted = shown === 0 && targetId !== null && !page.vector;
+  const liveWanted = liveRequested && shown === 0 && targetId !== null && !page.vector;
+  // Vector-only iOS exports do not yet carry a scene tree into this renderer.
+  // They still open in the same editor as one explicitly named Image node;
+  // pretending the pixels are editable children would be the silent fallback
+  // that has caused empty or misleading Figma frames before.
+  const editorTree: FigmaTree | null = current.layerTree?.tree
+    ? current.layerTree
+    : current.thumbnail
+      ? {
+          height: current.thumbnail.height,
+          tree: {
+            dataUrl: current.thumbnail.dataUrl,
+            height: current.thumbnail.height,
+            id: `${current.id}:image-fallback`,
+            kind: "image",
+            name: page.name,
+            width: current.thumbnail.width,
+            x: 0,
+            y: 0
+          },
+          width: current.thumbnail.width
+        }
+      : null;
   // Opened, a phone page keeps its own proportions rather than being poured
   // into a landscape frame that leaves it a stripe down the middle.
   const portrait = phonePortraitShape(page, current.thumbnail);
@@ -641,7 +762,7 @@ function PageOverlay({ page, targetId, onClose }: {
   }, [liveWanted, page.id, page.route, page.recipe, targetId]);
 
   return (
-    <div className="inventory-overlay" onClick={onClose} role="presentation">
+    <div aria-label={page.name} aria-modal="true" className="inventory-overlay" onClick={onClose} role="dialog">
       <figure onClick={(event) => event.stopPropagation()} role="presentation">
         <figcaption>
           <strong>{page.name}</strong>
@@ -652,7 +773,7 @@ function PageOverlay({ page, targetId, onClose }: {
                 <button
                   aria-pressed={position === shown}
                   key={look.id}
-                  onClick={() => setShown(position)}
+                  onClick={() => { setShown(position); setLiveRequested(false); }}
                   type="button"
                 >
                   {look.name}
@@ -660,20 +781,43 @@ function PageOverlay({ page, targetId, onClose }: {
               ))}
             </span>
           )}
+          {editorTree && !liveRequested && (
+            <button className="inventory-edit-button" onClick={() => onEdit(page, editorTree, !current.layerTree?.tree)} type="button">
+              {t("editor.open")}
+            </button>
+          )}
+          {figmaLinks && figmaFrame && (
+            <button
+              className="inventory-figma-link"
+              onClick={() => void window.uiSync?.openFigma?.(figmaLinks.fileKey, figmaFrame.nodeId)}
+              type="button"
+            >
+              <Figma size={13} /> {t("inventory.openInFigma")}
+            </button>
+          )}
+          {shown === 0 && targetId && !page.vector && (
+            <button
+              className="inventory-live-toggle"
+              onClick={() => setLiveRequested((value) => !value)}
+              type="button"
+            >
+              {liveRequested ? t("inventory.showCapture") : t("inventory.openLive")}
+            </button>
+          )}
           <button onClick={onClose} type="button">{t("common.close")}</button>
         </figcaption>
-        {live.state !== "unavailable" ? (
+        {liveRequested && live.state !== "unavailable" ? (
           // Left empty on purpose: the real page is a native view sitting over
           // this hole, so anything drawn here would be behind it.
           <div className={`inventory-frame is-live${portrait ? " is-portrait" : ""}`} ref={stage} style={portrait ?? undefined}>
             {live.state === "opening" && <p className="inventory-shot-empty">{t("inventory.livePlaceholder")}</p>}
           </div>
-        ) : current.snapshot?.html
+        ) : markup
           ? (
             <iframe
               className={`inventory-frame${portrait ? " is-portrait" : ""}`}
               sandbox=""
-              srcDoc={current.snapshot.html}
+              srcDoc={markup}
               style={portrait ?? undefined}
               title={page.name}
             />
@@ -698,7 +842,9 @@ function PageOverlay({ page, targetId, onClose }: {
               )
               : (
                 <div className={`inventory-frame${portrait ? " is-portrait" : ""}`} style={portrait ?? undefined}>
-                  <p className="inventory-shot-empty">{t("inventory.unavailable")}</p>
+                  <p className={`inventory-shot-empty${current.layerError ? " is-error" : ""}`}>
+                    {current.layerError ? t("inventory.captureFailed") : t("inventory.unavailable")}
+                  </p>
                 </div>
               )}
         {/* Which of the three is on screen, said rather than left to be guessed:
@@ -709,15 +855,15 @@ function PageOverlay({ page, targetId, onClose }: {
             {t("inventory.liveMissed", { what: live.missed?.join(t("common.separator")) ?? "" })}
           </p>
         )}
-        {live.state === "unavailable" && (
+        {liveRequested && live.state === "unavailable" && (
           <p className="inventory-frame-note">
             {t("inventory.liveShows", {
               why: live.why ?? t("inventory.liveUnavailable"),
-              what: current.snapshot?.html ? t("inventory.liveWhatCaptured") : t("inventory.liveWhatLayers")
+              what: markup ? t("inventory.liveWhatCaptured") : t("inventory.liveWhatLayers")
             })}
           </p>
         )}
-        {(current.snapshot?.stats?.rasterised?.length ?? 0) > 0 && live.state === "unavailable" && (
+        {(current.snapshot?.stats?.rasterised?.length ?? 0) > 0 && !liveRequested && (
           <p className="inventory-frame-note">
             {t("inventory.rasterisedNote", {
               count: current.snapshot?.stats.rasterised.length ?? 0,
@@ -726,8 +872,8 @@ function PageOverlay({ page, targetId, onClose }: {
             })}
           </p>
         )}
-        {current.layerTree?.error && live.state === "unavailable" && !current.snapshot?.html && (
-          <p className="inventory-frame-note">{t("inventory.layerTreeError", { error: current.layerTree.error })}</p>
+        {current.layerError && !liveRequested && !markup && (
+          <p className="inventory-frame-note">{t("inventory.captureError", { error: current.layerError })}</p>
         )}
       </figure>
     </div>
@@ -746,6 +892,7 @@ export default function PageInventoryView() {
   // pushing the header down moves everything the moment you most want it still.
   const [toasts, setToasts] = useState<Array<{ id: number; kind: "error" | "done"; text: string; path?: string }>>([]);
   const [focused, setFocused] = useState<DiscoveredPage | null>(null);
+  const [editing, setEditing] = useState<{ page: DiscoveredPage; layerTree: FigmaTree; imageFallback: boolean } | null>(null);
   const [showFiltered, setShowFiltered] = useState(false);
 
   const t = useT();
@@ -753,6 +900,7 @@ export default function PageInventoryView() {
   const [source, setSource] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showAddress, setShowAddress] = useState(false);
+  const [addressMode, setAddressMode] = useState<"scan" | "record">("scan");
   const [showAttach, setShowAttach] = useState(false);
   const [port, setPort] = useState("9222");
   const [choices, setChoices] = useState<WorkspacePackage[] | null>(null);
@@ -769,7 +917,7 @@ export default function PageInventoryView() {
   const filledFor = useRef<string | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [view, setView] = useState<"gallery" | "compact" | "list" | "single">("gallery");
+  const [view, setView] = useState<"gallery" | "flow">("gallery");
   const [figmaOpen, setFigmaOpen] = useState(false);
   const [menu, setMenu] = useState<{ page: DiscoveredPage; at: { x: number; y: number } } | null>(null);
   const [busyPage, setBusyPage] = useState<string | null>(null);
@@ -779,6 +927,7 @@ export default function PageInventoryView() {
   // until the pairing code arrives there is nothing else on screen to say so.
   const [preparing, setPreparing] = useState<FigmaBuildProgress | null>(null);
   const [figmaStatus, setFigmaStatus] = useState<AutomaticMappingStatus>({ state: "waiting" });
+  const [figmaLinks, setFigmaLinks] = useState<InventoryFigmaLinks>(null);
   const [connection, setConnection] = useState<FigmaConnection | null>(null);
   const [pluginOpen, setPluginOpen] = useState(false);
   const [pairingCode, setPairingCode] = useState<string | null>(null);
@@ -786,6 +935,7 @@ export default function PageInventoryView() {
   // The plugin took the code and then went quiet, which is what an out-of-date
   // plugin looks like from here.
   const [pairingStalled, setPairingStalled] = useState(false);
+  const restoredTarget = useRef(false);
   const progressRef = useRef<HTMLDivElement>(null);
   const toastSeq = useRef(0);
 
@@ -801,6 +951,21 @@ export default function PageInventoryView() {
   useEffect(() => {
     if (figmaStatus.state === "complete") void readConnection();
   }, [figmaStatus.state]);
+
+  // A successful plugin import records the exact frame for every page. Read it
+  // again when a sync changes state so the fullscreen action appears without
+  // reopening the project, and keep it available after an app restart.
+  useEffect(() => {
+    if (!activeId || !window.uiSync?.getInventoryFigmaLinks) {
+      setFigmaLinks(null);
+      return;
+    }
+    let current = true;
+    void window.uiSync.getInventoryFigmaLinks(activeId)
+      .then((links) => { if (current) setFigmaLinks(links); })
+      .catch(() => { if (current) setFigmaLinks(null); });
+    return () => { current = false; };
+  }, [activeId, figmaStatus.state]);
 
   // While a pairing code is out, watch for the plugin taking it. Nothing else
   // tells this window that the connection was made.
@@ -858,8 +1023,27 @@ export default function PageInventoryView() {
   const activeJob = activeId ? jobs[activeId] : undefined;
 
   useEffect(() => {
-    void window.uiSync?.listInventoryTargets?.().then(setEntries);
+    void window.uiSync?.listInventoryTargets?.().then(async (next) => {
+      setEntries(next);
+      if (restoredTarget.current) return;
+      restoredTarget.current = true;
+      const scanned = targetsIn(next).filter((target) => target.pageCount !== null);
+      const remembered = window.localStorage.getItem("crank:last-target");
+      const ordered = [
+        ...scanned.filter((item) => item.id === remembered),
+        ...scanned
+          .filter((item) => item.id !== remembered)
+          .sort((a, b) => (b.lastScannedAt ?? "").localeCompare(a.lastScannedAt ?? ""))
+      ];
+      for (const target of ordered) {
+        if (await openSaved(target, false)) break;
+      }
+    });
   }, []);
+
+  useEffect(() => {
+    if (activeId) window.localStorage.setItem("crank:last-target", activeId);
+  }, [activeId]);
 
   useEffect(() => {
     const offStatus = window.uiSync?.onScanStatus?.((value) => {
@@ -904,6 +1088,7 @@ export default function PageInventoryView() {
   const beginScan = (label: string) => {
         setResult(null);
     setFocused(null);
+    setEditing(null);
     setSource(label);
   };
 
@@ -1222,21 +1407,24 @@ export default function PageInventoryView() {
     notify("done", t("inventory.dropped", { name: `${t("common.quoteOpen")}${page.name}${t("common.quoteClose")}` }));
   };
 
-  const openSaved = async (target: InventoryTarget) => {
+  const openSaved = async (target: InventoryTarget, rescanIfMissing = true) => {
     const saved = await window.uiSync?.openInventory?.(target.id);
     if (!saved) {
       // Never scanned, or a scan that did not finish. Doing it is more useful
-      // than telling the user it has not been done.
-      rescan(target);
-      return;
+      // than telling the user it has not been done — except during startup,
+      // which must never begin work the user did not ask for.
+      if (rescanIfMissing) rescan(target);
+      return false;
     }
         setChoices(null);
     setForeign(null);
     setInstall(null);
     setResult(saved);
+    setEditing(null);
     setActiveId(target.id);
     setSource(target.target);
     setTitle(t("inventory.handoffTitle", { name: target.name }));
+    return true;
   };
 
   const rescan = (target: InventoryTarget) => {
@@ -1248,7 +1436,12 @@ export default function PageInventoryView() {
   const forget = async (target: InventoryTarget) => {
     const next = await window.uiSync?.forgetInventoryTarget?.(target.id);
     if (next) setEntries(next);
-    if (activeId === target.id) { setResult(null); setActiveId(null); }
+    if (activeId === target.id) {
+      setResult(null);
+      setEditing(null);
+      setActiveId(null);
+      window.localStorage.removeItem("crank:last-target");
+    }
   };
 
   const onDrop = (event: React.DragEvent) => {
@@ -1263,6 +1456,65 @@ export default function PageInventoryView() {
   const chooseFolder = async () => {
     const chosen = await window.uiSync?.chooseFolder?.();
     if (chosen) void scanFolder(chosen);
+  };
+
+  /**
+   * Puts the scan on the clipboard as HTML, which is how Paper imports: its
+   * canvas is HTML and CSS, so the layers go across as themselves rather than
+   * being translated into a second design model the way a Figma send is.
+   */
+  const copyForPaper = async (pageId?: string) => {
+    if (!result?.ok) return;
+    if (!window.uiSync?.copyForPaper) {
+      notify("error", t("toast.requiresRestart"));
+      return;
+    }
+    try {
+      const outcome = await window.uiSync.copyForPaper(
+        { filtered: result.filtered, origin: result.origin, pages: result.pages },
+        { pageId: pageId ?? null, title: title.trim() || t("inventory.handoffDefault") }
+      );
+      if (!outcome.ok) notify("error", outcome.message ?? t("toast.paperFailed"));
+      else notify("done", t("toast.copiedForPaper", { count: outcome.screens?.length ?? 0 }));
+    } catch (cause) {
+      notify("error", cause instanceof Error ? cause.message : t("toast.paperFailed"));
+    }
+  };
+
+  /**
+   * Draws the scan into the Paper file that is open, over Paper's own MCP
+   * server. Nothing is set up first: unlike a Figma send there is no plugin
+   * and no pairing, so the only requirement is that Paper is open.
+   */
+  const drawInPaper = async (pageId?: string) => {
+    if (!result?.ok) return;
+    if (!window.uiSync?.pushToPaper) {
+      notify("error", t("toast.requiresRestart"));
+      return;
+    }
+    try {
+      const outcome = await window.uiSync.pushToPaper(
+        { filtered: result.filtered, origin: result.origin, pages: result.pages },
+        { pageId: pageId ?? null }
+      );
+      if (!outcome.ok) {
+        notify("error", outcome.message ?? t("toast.paperPushFailed"));
+        return;
+      }
+      notify("done", t("toast.pushedToPaper", {
+        created: outcome.created?.length ?? 0,
+        file: outcome.fileName ?? "Paper",
+        updated: outcome.updated?.length ?? 0
+      }));
+      // A screen Paper would not take is a fact of the push, not a detail: it
+      // is the difference between what the gallery shows and what the file has.
+      // One notice per reason, though — a quota that stops the whole push stops
+      // every screen for the same reason, and thirty copies of it is noise.
+      const refused = new Map((outcome.failed ?? []).map((one) => [one.reason, one.name]));
+      for (const [reason, name] of refused) notify("error", `${name}: ${reason}`);
+    } catch (cause) {
+      notify("error", cause instanceof Error ? cause.message : t("toast.paperPushFailed"));
+    }
   };
 
   const exportPage = async () => {
@@ -1309,7 +1561,6 @@ export default function PageInventoryView() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [focused, pages]);
-  const reskins = pages.reduce((total, page) => total + (page.variants?.length ?? 0), 0);
   // A project the window started and left up, so it can be looked at rather
   // than only scanned. A scan starts one too and stops it again afterwards.
   const [runState, setRunState] = useState<{ state: "idle" | "starting" | "running"; root?: string }>({ state: "idle" });
@@ -1350,7 +1601,7 @@ export default function PageInventoryView() {
         busyIds={Object.keys(jobs)}
         entries={entries}
         figmaConnected={connection ? connection.connected : null}
-        onAdd={() => { setResult(null); setActiveId(null); setChoices(null); setForeign(null); setInstall(null); }}
+        onAdd={() => { setResult(null); setEditing(null); setActiveId(null); setChoices(null); setForeign(null); setInstall(null); }}
         onDropFolder={onDrop}
         onForget={(target) => void forget(target)}
         onOpen={(target) => void openSaved(target)}
@@ -1375,7 +1626,7 @@ export default function PageInventoryView() {
           onShowPlugin={() => void window.uiSync?.showFigmaPlugin?.()}
         />
       )}
-    <main className="inventory-page">
+    <main className={`inventory-page${view === "flow" && result?.ok && !editing ? " is-flow-view" : ""}${editing ? " is-editor-view" : ""}`}>
       {choices && !activeJob && (
         <section className="inventory-choices">
           <strong>{t("inventory.workspaceTitle", { count: choices.length })}</strong>
@@ -1453,36 +1704,30 @@ export default function PageInventoryView() {
             <FolderGit2 size={26} />
             <h1>{t("inventory.drag")}</h1>
             <p>{t("inventory.dragHint")}</p>
-            <p className="onboarding-alt-line">
-              {t("inventory.dragHintBundle")}
-            </p>
             <button className="primary-button" onClick={() => void chooseFolder()} type="button">{t("inventory.chooseFolderOrApp")}</button>
           </div>
 
-          <ol className="onboarding-steps">
-            <li>
-              <strong>{t("inventory.stepStart")}</strong>
-              <span>{t("inventory.stepStartDesc")}</span>
-            </li>
-            <li>
-              <strong>{t("inventory.stepCrawl")}</strong>
-              <span>{t("inventory.stepCrawlDesc")}</span>
-            </li>
-            <li>
-              <strong>{t("inventory.stepExport")}</strong>
-              <span>{t("inventory.stepExportDesc")}</span>
-            </li>
-          </ol>
-
           <div className="onboarding-alt">
-            <button className="inventory-link" onClick={() => void startRecording()} type="button">
+            <button
+              className="inventory-link"
+              onClick={() => { setAddressMode("record"); setShowAddress(true); setShowAttach(false); }}
+              type="button"
+            >
               {t("inventory.record")}
             </button>
-            <button className="inventory-link" onClick={() => setShowAddress((value) => !value)} type="button">
-              {showAddress ? t("inventory.collapse") : t("inventory.scanAddress")}
+            <button
+              className="inventory-link"
+              onClick={() => { setAddressMode("scan"); setShowAddress(true); setShowAttach(false); }}
+              type="button"
+            >
+              {t("inventory.scanAddress")}
             </button>
             {showAddress && (
-              <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scan(); }}>
+              <form className="inventory-form" onSubmit={(event) => {
+                event.preventDefault();
+                if (addressMode === "record") void startRecording();
+                else void scan();
+              }}>
                 <input
                   aria-label={t("inventory.addressLabel")}
                   onChange={(event) => setAddress(event.target.value)}
@@ -1495,11 +1740,17 @@ export default function PageInventoryView() {
                   placeholder={t("inventory.scanAddressExtraPlaceholder")}
                   value={seeds}
                 />
-                <button disabled={!address.trim()} type="submit">{t("inventory.scanAddressButton")}</button>
+                <button disabled={!address.trim()} type="submit">
+                  {addressMode === "record" ? t("inventory.recordStart") : t("inventory.scanAddressButton")}
+                </button>
               </form>
             )}
-            <button className="inventory-link" onClick={() => setShowAttach((value) => !value)} type="button">
-              {showAttach ? t("inventory.collapse") : t("inventory.attach")}
+            <button
+              className="inventory-link"
+              onClick={() => { setShowAttach(true); setShowAddress(false); }}
+              type="button"
+            >
+              {t("inventory.attach")}
             </button>
             {showAttach && (
               <form className="inventory-form" onSubmit={(event) => { event.preventDefault(); void scanAttached(); }}>
@@ -1565,6 +1816,10 @@ export default function PageInventoryView() {
 
       {result?.ok && (
         <>
+          {editing ? (
+            <SceneEditor imageFallback={editing.imageFallback} layerTree={editing.layerTree} onClose={() => setEditing(null)} page={editing.page} />
+          ) : (
+            <>
           <header className="project-header">
             <div className="project-header-copy">
               <h1>{source?.split("/").filter(Boolean).pop() ?? result.origin}</h1>
@@ -1588,41 +1843,51 @@ export default function PageInventoryView() {
                 )}
                 <span className="header-sep">·</span>
                 <span>{t("inventory.pageCount", { count: pages.length })}</span>
-                {result.sources.sitemap > 0 && <span className="header-sep">· {t("inventory.fromSitemap", { count: result.sources.sitemap })}</span>}
-                {result.sources.crawled > 0 && <span className="header-sep">· {t("inventory.fromClicks", { count: result.sources.crawled })}</span>}
-                {reskins > 0 && <span className="header-sep">· {t("inventory.reskinCount", { count: reskins })}</span>}
               </div>
             </div>
-            <div className="project-header-actions">
-              <button
-                aria-label={t("inventory.actions.rescan")}
-                className="secondary-button project-refresh-button"
-                onClick={() => { if (source) source.startsWith("http") ? void scan(source) : void scanFolder(source); }}
-                title={t("inventory.actions.rescan")}
-                type="button"
-              >
-                <RefreshCw size={14} />
-              </button>
-              {scannedFolder && !isAppBundle(scannedFolder) && result.platform !== "swiftui" && (
+            <div className="project-header-tools">
+              <span className="view-switch">
+                {([["gallery", t("inventory.viewGallery")], ["flow", t("inventory.viewFlow")]] as const).map(([id, label]) => (
+                  <button aria-pressed={view === id} key={id} onClick={() => setView(id)} type="button">{label}</button>
+                ))}
+              </span>
+              <div className="project-header-actions">
                 <button
+                  aria-label={t("inventory.actions.rescan")}
                   className="secondary-button"
-                  disabled={runState.state === "starting"}
-                  onClick={() => void toggleRun(scannedFolder)}
+                  onClick={() => { if (source) source.startsWith("http") ? void scan(source) : void scanFolder(source); }}
+                  title={t("inventory.actions.rescan")}
                   type="button"
                 >
-                  {runState.state === "starting"
-                    ? <><LoaderCircle className="spin" size={14} /> {t("inventory.runStarting")}</>
-                    : runState.state === "running"
-                      ? <><Square size={13} /> {t("inventory.stopRun")}</>
-                      : <><Play size={14} /> {t("inventory.run")}</>}
+                  <RefreshCw size={14} /> {t("inventory.actions.rescan")}
                 </button>
-              )}
-              <button className="secondary-button" onClick={() => void exportPage()} type="button">
-                <Download size={14} /> {t("inventory.saveHandoff")}
-              </button>
-              <button className="secondary-button" onClick={() => setFigmaOpen((value) => !value)} type="button">
-                <Figma size={14} /> {t("inventory.sendToFigma")}
-              </button>
+                {scannedFolder && !isAppBundle(scannedFolder) && result.platform !== "swiftui" && (
+                  <button
+                    className="secondary-button"
+                    disabled={runState.state === "starting"}
+                    onClick={() => void toggleRun(scannedFolder)}
+                    type="button"
+                  >
+                    {runState.state === "starting"
+                      ? <><LoaderCircle className="spin" size={14} /> {t("inventory.runStarting")}</>
+                      : runState.state === "running"
+                        ? <><Square size={13} /> {t("inventory.stopRun")}</>
+                        : <><Play size={14} /> {t("inventory.run")}</>}
+                  </button>
+                )}
+                <button className="primary-button" onClick={() => setFigmaOpen((value) => !value)} type="button">
+                  <Figma size={14} /> {t("inventory.sendToFigma")}
+                </button>
+                <ProjectMore
+                  ignoredCount={leftOut}
+                  ignoredOpen={showFiltered}
+                  onCopyForPaper={() => void copyForPaper()}
+                  onExport={() => void exportPage()}
+                  onPushToPaper={() => void drawInPaper()}
+                  onToggleIgnored={() => setShowFiltered((value) => !value)}
+                  showsCapturePipeline={result?.platform === "swiftui"}
+                />
+              </div>
             </div>
           </header>
 
@@ -1644,19 +1909,6 @@ export default function PageInventoryView() {
               </button>
             </div>
           )}
-
-          <div className="inventory-toolbar">
-            <span className="view-switch">
-              {([["gallery", t("inventory.viewGallery")], ["compact", t("inventory.viewCompact")], ["list", t("inventory.viewList")], ["single", t("inventory.viewSingle")]] as const).map(([id, label]) => (
-                <button aria-pressed={view === id} key={id} onClick={() => setView(id)} type="button">{label}</button>
-              ))}
-            </span>
-            {leftOut > 0 && (
-              <button className="inventory-link" onClick={() => setShowFiltered((value) => !value)} type="button">
-                {showFiltered ? t("inventory.collapse") : t("inventory.showFiltered", { count: leftOut })}
-              </button>
-            )}
-          </div>
 
           {showFiltered && (
             <section className="inventory-filtered">
@@ -1712,31 +1964,10 @@ export default function PageInventoryView() {
             </section>
           )}
 
-          {view === "list" ? (
-            <ul className="inventory-rows">
-              {pages.map((page, index) => (
-                <li
-                  className={busyPage === page.id ? "is-busy" : undefined}
-                  key={page.id}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setMenu({ page, at: { x: event.clientX, y: event.clientY } });
-                  }}
-                >
-                  <button onClick={() => setFocused(page)} type="button">
-                    <span className="inventory-index">{String(index + 1).padStart(2, "0")}</span>
-                    <span className="inventory-row-name">{page.name}</span>
-                    {(page.variants?.length ?? 0) > 0 && (
-                      <span className="inventory-row-variants">{t("inventory.variantCount", { count: page.variants.length })}</span>
-                    )}
-                    <code>{addressOf(page, t)}</code>
-                    {busyPage === page.id && <LoaderCircle className="spin" size={13} />}
-                  </button>
-                </li>
-              ))}
-            </ul>
+          {view === "flow" ? (
+            <ScreenFlow onOpen={setFocused} pages={pages} />
           ) : (
-            <div className={`inventory-grid${view === "compact" ? " is-compact" : ""}${view === "single" ? " is-single" : ""}${view !== "single" && pages.length > 0 && pages.every(isPhonePortrait) ? " is-portrait" : ""}`}>
+            <div className={`inventory-grid${pages.length > 0 && pages.every(isPhonePortrait) ? " is-portrait" : ""}`}>
               {pages.map((page, index) => (
                 <PageCard
                   busy={busyPage === page.id}
@@ -1745,10 +1976,12 @@ export default function PageInventoryView() {
                   onMenu={(target, at) => setMenu({ page: target, at })}
                   onOpen={setFocused}
                   page={page}
-                  single={view === "single"}
+                  single={false}
                 />
               ))}
             </div>
+          )}
+            </>
           )}
         </>
       )}
@@ -1765,12 +1998,20 @@ export default function PageInventoryView() {
             if (action === "recapture") void recapture(page);
             else if (action === "explore") void explore(page);
             else if (action === "figma") void sendOnePage(page);
+            else if (action === "paper-push") void drawInPaper(page.id);
+            else if (action === "paper") void copyForPaper(page.id);
             else void dropPage(page);
           }}
         />
       )}
 
-      {focused && <PageOverlay onClose={() => setFocused(null)} page={focused} targetId={activeId} />}
+      {focused && <PageOverlay
+        figmaLinks={figmaLinks}
+        onClose={() => setFocused(null)}
+        onEdit={(page, layerTree, imageFallback) => { setFocused(null); setEditing({ imageFallback, layerTree, page }); }}
+        page={focused}
+        targetId={activeId}
+      />}
 
       {figmaSession && (
         <FigmaSyncDialog

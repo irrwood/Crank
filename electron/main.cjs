@@ -9,11 +9,17 @@ const { exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normaliz
 const { readAppIcon } = require("./app-bundle.cjs");
 const { shippedPath } = require("./packaged-path.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
+const { renderPaperDocument } = require("./paper-export.cjs");
+const { withSnapshots } = require("./inventory-lite.cjs");
+const { pushToPaper } = require("./paper-mcp.cjs");
 const { holdServer } = require("./held-server.cjs");
 const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob, projectIdFor } = require("./figma-export.cjs");
 const { createInventoryRegistry, nameFor, targetId } = require("./inventory-registry.cjs");
+const { readCapturePipeline, settingsSchema: captureSettingsSchema, usesDisplayList, writeCapturePipeline } = require("./capture-pipeline.cjs");
+const { createDisplayListServer } = require("./swift-display-list-session.cjs");
 const { identityOf } = require("./state-discovery.cjs");
+const { replayClickScript } = require("./replay-locator.cjs");
 const { internalise, mimeFor } = require("./asset-store.cjs");
 const { carryUserData } = require("./user-data-migration.cjs");
 const { parseFigmaDesignUrl } = require("./figma-link.cjs");
@@ -34,6 +40,15 @@ const { buildCodexConnectionPrompt, buildCodexNewThreadUrl, buildCodexSyncPrompt
 const { buildVisualEditPrompt, compareDesignStates, designNodeSnapshotSchema, extractDesignNodes, semanticIntentBatchSchema } = require("./visual-editing.cjs");
 const { abortDesignEditCheckpoint, beginDesignEditCheckpoint, commitDesignEditIteration, resolveDesignEditCheckpoint } = require("./design-edit-checkpoint.cjs");
 const { probeUrl, resolveDevCommand, startDevServer } = require("./dev-server.cjs");
+const { startCrankMcpServer } = require("./mcp-server.cjs");
+const { createMcpRpcClient, createMcpRpcServer } = require("./mcp-rpc.cjs");
+
+// `Crank --mcp` keeps stdout exclusively for MCP JSON-RPC, so every diagnostic
+// goes to stderr in that mode. When the window already owns the capture and
+// Figma ports, MCP relays to it over the authenticated loopback server; without
+// a running window the MCP process owns the same Electron runtime headlessly.
+const mcpMode = process.argv.includes("--mcp");
+const runtimeLog = (...values) => (mcpMode ? console.error(...values) : console.log(...values));
 
 const visualBaselineNodeSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_:/-]{1,500}$/),
@@ -47,6 +62,14 @@ const visualBaselineNodeSchema = z.object({
   fontWeight: z.number().int().min(0).max(1000).nullable(),
   text: z.string().max(4000).nullable()
 });
+
+const inventoryFigmaLinksSchema = z.object({
+  fileKey: z.string().regex(/^[A-Za-z0-9_-]+$/),
+  frames: z.record(z.object({
+    nodeId: z.string().regex(/^\d+:\d+$/),
+    frameName: z.string().min(1).max(200)
+  }).strict())
+}).strict();
 
 const syncStateSchema = z.object({
   version: z.number(),
@@ -200,7 +223,11 @@ const handoffPageSchema = z.object({
   // The page's own document. Held as references to stored pictures, so the
   // length is the markup itself rather than the markup plus every image in it.
   snapshot: z.object({
-    html: z.string().max(60_000_000),
+    // A scan just taken carries the markup; one loaded from disk carries a
+    // reference to the file it was put in.
+    html: z.string().max(60_000_000).optional(),
+    ref: z.string().regex(/^crank-snapshot:\/\/[a-f0-9]{40}\.html$/).nullable().optional(),
+    links: z.array(z.object({ href: z.string().max(4000), label: z.string().max(200) })).max(2000).optional(),
     bytes: z.number().finite(),
     stats: z.object({
       stylesheets: z.number().finite(),
@@ -225,9 +252,21 @@ const handoffPageSchema = z.object({
       height: z.number().finite(),
       tree: z.unknown()
     }).nullable().optional(),
-    snapshot: z.object({ html: z.string().max(60_000_000), bytes: z.number().finite(), stats: z.record(z.unknown()) }).nullable().optional()
+    layerError: z.string().max(400).nullable().optional(),
+    snapshot: z.object({
+      html: z.string().max(60_000_000).optional(),
+      ref: z.string().regex(/^crank-snapshot:\/\/[a-f0-9]{40}\.html$/).nullable().optional(),
+      links: z.array(z.object({ href: z.string().max(4000), label: z.string().max(200) })).max(2000).optional(),
+      bytes: z.number().finite(),
+      stats: z.record(z.unknown())
+    }).nullable().optional()
   })).max(50).optional()
 });
+
+const paperCopySchema = z.object({
+  pageId: z.string().min(1).max(200).nullable().optional(),
+  title: z.string().min(1).max(160).optional()
+}).strict();
 
 const handoffInventorySchema = z.object({
   origin: z.string().max(2000).optional(),
@@ -287,7 +326,10 @@ const appIconPath = path.join(__dirname, "..", "assets", "app-icon.png");
 // so it must be the copy on disk rather than the one inside the archive.
 const figmaPluginManifestPath = shippedPath("figma-plugin", "manifest.json");
 let figmaBridge = null;
+let figmaBridgeRunning = false;
 let swiftUiRuntimeServer = null;
+let displayListServer = null;
+let mcpRpcServer = null;
 const pendingPulls = new Map();
 const pendingDesignEdits = new Map();
 
@@ -298,7 +340,7 @@ const deviceConnectionPath = () => path.join(app.getPath("userData"), "figma-dev
 // ready, and a push completes long after the IPC handler that started it.
 let inventoryStore = null;
 const inventoryRegistry = () => (inventoryStore ??= createInventoryRegistry(app.getPath("userData")));
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const hasSingleInstanceLock = mcpMode ? true : app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
   app.quit();
@@ -436,6 +478,114 @@ async function resetDeviceConnection(token) {
 async function keepWanted(id, pages) {
   const dropped = new Set(await inventoryRegistry().dropped(id));
   return dropped.size === 0 ? pages : pages.filter((page) => !dropped.has(page.id));
+}
+
+/**
+ * The inventory operations used by both IPC and MCP.
+ *
+ * Keeping the workflows here is what makes an agent-triggered scan the same
+ * product operation as a click in the window: the same registry entry appears
+ * immediately, the same dropped-page decisions apply, and the same Swift
+ * capture remains on disk for the later Figma step.
+ */
+async function scanInventoryFolder(root, workspaceRoot = null, { onEvent = () => {}, onProgress = () => {} } = {}) {
+  const safeRoot = projectRootSchema.parse(root);
+  const parent = workspaceRoot ? projectRootSchema.parse(workspaceRoot) : null;
+  const id = targetId("folder", safeRoot);
+  await inventoryRegistry().remember("folder", safeRoot, {
+    parent,
+    icon: looksLikeAppBundle(safeRoot) ? await readAppIcon(safeRoot) : null
+  });
+  onEvent({ channel: "inventory:started", id, kind: "folder", target: safeRoot });
+  const scanning = {
+    keepAnyway: await inventoryRegistry().kept(id),
+    onStatus: (status) => onEvent({ channel: "inventory:status", id, ...status }),
+    onProgress: (state) => {
+      const value = { name: state.name, route: state.route, depth: state.depth };
+      onProgress(value);
+      onEvent({ channel: "inventory:progress", id, ...value });
+    }
+  };
+  const scanned = path.resolve(safeRoot) === path.resolve(app.getAppPath())
+    ? await scanSelf({ appRoot: safeRoot, ...scanning })
+    : await scanFolder(safeRoot, { ...scanning, swift: await swiftScanOptions(safeRoot) });
+  if (scanned.ok && scanned.capture) {
+    await storeSwiftCapture(safeRoot, scanned.capture);
+    delete scanned.capture;
+  }
+  const inventory = scanned.ok
+    ? { ...scanned, source: { kind: "folder", target: safeRoot }, pages: await keepWanted(id, scanned.pages) }
+    : scanned;
+  if (!inventory.ok && inventory.reason === "workspace") {
+    for (const item of inventory.packages ?? []) await inventoryRegistry().remember("folder", item.root, { parent: safeRoot });
+  }
+  // What was stored, not what came back from the scan: storing takes the
+  // captured markup out into files of its own, and the window is better off
+  // with the same light shape it gets when the project is reopened.
+  let carried = inventory;
+  if (inventory.ok) {
+    const saved = await inventoryRegistry().saveInventory("folder", safeRoot, inventory, { parent });
+    carried = saved.inventory ?? inventory;
+    for (const item of inventory.packages ?? []) await inventoryRegistry().remember("folder", item.root, { parent: safeRoot });
+  }
+  onEvent({ channel: "inventory:finished", id, ok: inventory.ok });
+  return { ...carried, id };
+}
+
+async function scanInventoryUrl(url, seedPaths = [], { onEvent = () => {}, onProgress = () => {} } = {}) {
+  const target = z.string().min(1).max(2000).parse(url);
+  const seeds = z.array(z.string().max(2000)).max(200).parse(seedPaths);
+  const id = targetId("url", target);
+  await inventoryRegistry().remember("url", target);
+  onEvent({ channel: "inventory:started", id, kind: "url", target });
+  const scanned = await scanUrl(target, {
+    keepAnyway: await inventoryRegistry().kept(id),
+    seedPaths: seeds,
+    onProgress: (state) => {
+      const value = { name: state.name, route: state.route, depth: state.depth };
+      onProgress(value);
+      onEvent({ channel: "inventory:progress", id, ...value });
+    }
+  });
+  const inventory = scanned.ok
+    ? { ...scanned, source: { kind: "url", target }, pages: await keepWanted(id, scanned.pages) }
+    : scanned;
+  const saved = inventory.ok ? await inventoryRegistry().saveInventory("url", target, inventory) : null;
+  onEvent({ channel: "inventory:finished", id, ok: inventory.ok });
+  return { ...(saved?.inventory ?? inventory), id };
+}
+
+async function scanInventoryAttached(port, { onEvent = () => {}, onProgress = () => {} } = {}) {
+  const safePort = z.number().int().min(1).max(65535).parse(port);
+  let windows = [];
+  try { windows = await listTargets(safePort); } catch {}
+  if (windows.length === 0) {
+    return { ok: false, message: `Nothing is listening for a debugger on port ${safePort}. Start the app with --remote-debugging-port=${safePort}, then try again.` };
+  }
+  let origin;
+  try { origin = new URL(windows[0].url).origin; } catch {
+    return { ok: false, message: `That window is showing ${windows[0].url || "nothing"}, which cannot be scanned.` };
+  }
+  const target = `attached:${origin}`;
+  const id = targetId("url", target);
+  await inventoryRegistry().remember("url", target);
+  onEvent({ channel: "inventory:started", id, kind: "url", target });
+  const scanned = await scanAttached(safePort, {
+    targetId: windows[0].id,
+    keepAnyway: await inventoryRegistry().kept(id),
+    onStatus: (status) => onEvent({ channel: "inventory:status", id, ...status }),
+    onProgress: (state) => {
+      const value = { name: state.name, route: state.route, depth: state.depth };
+      onProgress(value);
+      onEvent({ channel: "inventory:progress", id, ...value });
+    }
+  });
+  const inventory = scanned.ok
+    ? { ...scanned, source: { kind: "url", target }, pages: await keepWanted(id, scanned.pages) }
+    : scanned;
+  const saved = inventory.ok ? await inventoryRegistry().saveInventory("url", target, inventory) : null;
+  onEvent({ channel: "inventory:finished", id, ok: inventory.ok });
+  return { ...(saved?.inventory ?? inventory), id };
 }
 
 /**
@@ -943,14 +1093,78 @@ async function buildSwiftInventoryJob(parsed, { kind, target, figmaFileName, fra
   };
 }
 
+async function sendInventoryToFigma(inventory, figmaUrl, { onProgress = () => {} } = {}) {
+  if (!figmaBridge || !figmaBridgeRunning) {
+    throw new Error(mcpMode
+      ? "Crank could not own the local Figma bridge. Close the Crank window before starting its MCP server, then reconnect."
+      : "The local Figma bridge is not running");
+  }
+  const link = parseFigmaDesignUrl(z.string().min(1).max(2000).parse(figmaUrl));
+  if (!link) return { ok: false, message: "That is not a Figma design URL." };
+
+  const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
+  const kind = parsed.source?.kind ?? (parsed.origin?.startsWith("http") ? "url" : "folder");
+  const target = parsed.source?.target ?? parsed.origin ?? "";
+  const known = (await inventoryRegistry().loadFigmaBaseline(targetId(kind, target)))?.frames ?? {};
+  // The file a project's pages go to is the same file every time. Remembered
+  // here, at the moment it is known to be a real one, so the next send starts
+  // with the answer rather than with the question.
+  await inventoryRegistry().remember(kind, target, { figmaUrl: String(figmaUrl).trim() }).catch(() => null);
+  const built = parsed.pages.some((page) => page.vector?.pageId)
+    ? await buildSwiftInventoryJob(parsed, {
+      kind, target, figmaFileName: link.fileName, frames: known, onProgress
+    })
+    : buildFigmaJob(parsed, {
+      identity: `${kind}:${target}`,
+      projectName: nameFor(kind, target),
+      figmaFileName: link.fileName
+    });
+  if (!built.ok) return built;
+
+  for (const screen of built.job.screens) screen.currentNodeId = screen.currentNodeId ?? known[screen.id]?.nodeId ?? null;
+  const baselines = Object.fromEntries(
+    built.job.screens.filter((screen) => screen.domTree).map((screen) => [screen.id, flattenEditableDom(screen.domTree)])
+  );
+  const inventoryId = await inventoryRegistry().saveFigmaBaseline(kind, target, baselines, { fileKey: link.fileKey });
+  const connection = await ensureDeviceConnection();
+  let session;
+  try {
+    session = figmaBridge.enqueue(
+      built.job,
+      { root: target, inventoryId, figmaFileKey: link.fileKey, connectionToken: connection.token },
+      connection.token,
+      built.assets ?? new Map()
+    );
+  } catch (cause) {
+    return { ok: false, message: describeRejectedJob(cause, built.job) };
+  }
+  return {
+    ok: true,
+    ...session,
+    requiresPairing: !connection.confirmed,
+    fileName: link.fileName,
+    fileKey: link.fileKey,
+    missing: built.missing,
+    missingReasons: built.missingReasons,
+    dropped: built.dropped,
+    substitutedFonts: built.substitutedFonts
+  };
+}
+
 /** What an iOS scan needs from the app: where to build, what to talk to, and
  * which Simulator this project was last captured on. */
 async function swiftScanOptions(root) {
   const registry = await readRegistry().catch(() => []);
   const remembered = registry.find((item) => item.root === root);
+  // Read per scan rather than held: the setting is the answer to "which way
+  // should the next scan capture", and a value cached at launch would mean
+  // changing it in the menu did nothing until Crank was restarted.
+  const pipeline = await readCapturePipeline(app.getPath("userData"));
   return {
     cacheDirectory: path.join(app.getPath("userData"), "design-build"),
     runtimeServer: swiftUiRuntimeServer,
+    displayListServer: usesDisplayList(pipeline) ? displayListServer : null,
+    capturePipeline: pipeline,
     preferredUdid: remembered?.swiftSimulator?.udid ?? null
   };
 }
@@ -1377,13 +1591,7 @@ function closeInventoryPreview() {
 async function replayRecipe(contents, recipe) {
   const missed = [];
   for (const step of recipe) {
-    const clicked = await contents.executeJavaScript(`(() => {
-      const element = document.querySelector(${JSON.stringify(step.locator)});
-      if (!element) return false;
-      element.scrollIntoView({ block: "center" });
-      element.click();
-      return true;
-    })()`, true).catch(() => false);
+    const clicked = await contents.executeJavaScript(replayClickScript(step.locator), true).catch(() => false);
     if (!clicked) {
       missed.push(step.label || step.locator);
       break;
@@ -1504,67 +1712,11 @@ function registerIpc() {
   });
 
   ipcMain.handle("inventory:scan-folder", async (event, root, workspaceRoot) => {
-    const safeRoot = projectRootSchema.parse(root);
-    // Set only when this package was picked out of a workspace the user
-    // dropped, which is the relationship the sidebar nests by.
-    const parent = workspaceRoot ? projectRootSchema.parse(workspaceRoot) : null;
-    const id = targetId("folder", safeRoot);
-    const send = (channel, value) => {
-      if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
-    };
-    // Register before scanning, not after: the project should appear in the
-    // sidebar the moment it is dropped, so the wait is something to walk away
-    // from rather than something to sit in front of.
-    // An installed app is recognised by its icon, and it has one before it has
-    // been scanned — so the row wears it from the moment it is dropped rather
-    // than after the minutes a scan takes.
-    await inventoryRegistry().remember("folder", safeRoot, {
-      parent,
-      icon: looksLikeAppBundle(safeRoot) ? await readAppIcon(safeRoot) : null
+    return scanInventoryFolder(root, workspaceRoot, {
+      onEvent: ({ channel, ...value }) => {
+        if (!event.sender.isDestroyed()) event.sender.send(channel, value);
+      }
     });
-    send("inventory:started", { kind: "folder", target: safeRoot });
-    // Scanning UI Sync itself is the one project served this way. Every other
-    // route to it produces a copy with no bridge and therefore no projects to
-    // show; this one opens a window of its own interface with a preload that
-    // only reads. See scanSelf.
-    const scanning = { keepAnyway: await inventoryRegistry().kept(id),
-      onStatus: (status) => send("inventory:status", status),
-      onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth }) };
-    const scanned = path.resolve(safeRoot) === path.resolve(app.getAppPath())
-      ? await scanSelf({ appRoot: safeRoot, ...scanning })
-      : await scanFolder(safeRoot, { ...scanning, swift: await swiftScanOptions(safeRoot) });
-    // An iOS scan carries its capture with it. The pages go to the renderer;
-    // the capture is kept here, because that is what turns a page into Figma
-    // layers later, and it is all absolute paths and runtime measurements.
-    if (scanned.ok && scanned.capture) {
-      await storeSwiftCapture(safeRoot, scanned.capture);
-      delete scanned.capture;
-    }
-    // The folder is what was scanned; the port it was served on is an accident
-    // of this run and must not be what the project is remembered as.
-    const inventory = scanned.ok
-      ? { ...scanned, source: { kind: "folder", target: safeRoot }, pages: await keepWanted(id, scanned.pages) }
-      : scanned;
-    // A workspace has nothing of its own to show, but its packages do, and the
-    // sidebar should hold them the moment the folder is dropped rather than
-    // only for as long as a picker is on screen.
-    if (!inventory.ok && inventory.reason === "workspace") {
-      for (const item of inventory.packages ?? []) {
-        await inventoryRegistry().remember("folder", item.root, { parent: safeRoot });
-      }
-    }
-    if (inventory.ok) {
-      await inventoryRegistry().saveInventory("folder", safeRoot, inventory, { parent });
-      // A folder that also holds projects gets them registered underneath it,
-      // unscanned. Dropping a folder means "index what is in here", and the
-      // sidebar should show that shape straight away rather than after the
-      // user has hunted each one down separately.
-      for (const item of inventory.packages ?? []) {
-        await inventoryRegistry().remember("folder", item.root, { parent: safeRoot });
-      }
-    }
-    send("inventory:finished", { ok: inventory.ok });
-    return { ...inventory, id };
   });
 
   let recording = null;
@@ -1768,95 +1920,15 @@ function registerIpc() {
   });
 
   ipcMain.handle("inventory:send-to-figma", async (event, inventory, figmaUrl) => {
-    if (!figmaBridge) throw new Error("The local Figma bridge is not running");
-    const link = parseFigmaDesignUrl(z.string().min(1).max(2000).parse(figmaUrl));
-    if (!link) return { ok: false, message: "That is not a Figma design URL." };
-
-    // Pictures are stored once by content and referred to, which the plugin
-    // knows nothing about — so they go back inline for the trip to Figma.
-    const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
-    // One identity for the project, whatever served it this time: the folder or
-    // the address the user gave, which is also what the sidebar remembers it
-    // by. A folder served on a fresh port every scan would otherwise be a new
-    // project each time — new baseline, new frames beside the old ones.
-    const kind = parsed.source?.kind ?? (parsed.origin?.startsWith("http") ? "url" : "folder");
-    const target = parsed.source?.target ?? parsed.origin ?? "";
-
-    // A page the plugin has already drawn is sent back to its own frame. The
-    // renderer holds the scan, not what became of it, so the frames are read
-    // from what the last push recorded.
-    const known = (await inventoryRegistry().loadFigmaBaseline(targetId(kind, target)))?.frames ?? {};
-
-    // An iOS page reaches Figma as its exported page — the rendered PDF as
-    // vectors, with only reliably matched native layers restored on top —
-    // rather than as a captured layer tree.
-    const built = parsed.pages.some((page) => page.vector?.pageId)
-      ? await buildSwiftInventoryJob(parsed, {
-        kind,
-        target,
-        figmaFileName: link.fileName,
-        frames: known,
-        onProgress: (state) => {
-          if (!event.sender.isDestroyed()) event.sender.send("inventory:figma-progress", state);
-        }
-      })
-      : buildFigmaJob(parsed, {
-        identity: `${kind}:${target}`,
-        projectName: nameFor(kind, target),
-        figmaFileName: link.fileName
-      });
-    if (!built.ok) return built;
-
-    for (const screen of built.job.screens) {
-      screen.currentNodeId = screen.currentNodeId ?? known[screen.id]?.nodeId ?? null;
-    }
-
-    // What is being sent becomes the baseline a later pull compares against.
-    // flattenEditableDom is the same reader the original pull path uses, so
-    // both directions agree on what a node's properties are. An exported iOS
-    // page has no DOM to read: its baseline is the PDF it came from.
-    const baselines = Object.fromEntries(
-      built.job.screens
-        .filter((screen) => screen.domTree)
-        .map((screen) => [screen.id, flattenEditableDom(screen.domTree)])
-    );
-    const inventoryId = await inventoryRegistry().saveFigmaBaseline(kind, target, baselines, { fileKey: link.fileKey });
-
-    const connection = await ensureDeviceConnection();
-    let session;
-    try {
-      session = figmaBridge.enqueue(
-        built.job,
-        { root: target, inventoryId, figmaFileKey: link.fileKey, connectionToken: connection.token },
-        connection.token,
-        built.assets ?? new Map()
-      );
-    } catch (cause) {
-      // A page that captured fine can still hold one value the bridge refuses,
-      // and the whole export then failed as a wall of validator output with a
-      // path forty levels deep. Say which property, on which page, and what it
-      // was — the rest of that output helps nobody.
-      return { ok: false, message: describeRejectedJob(cause, built.job) };
-    }
-    return {
-      ok: true,
-      ...session,
-      requiresPairing: !connection.confirmed,
-      fileName: link.fileName,
-      // The window has only the pasted URL; the key is what opens the file
-      // again from the dialog, and it is parsed here rather than twice.
-      fileKey: link.fileKey,
-      // Named so the caller can say what will not arrive, rather than letting
-      // a short export look complete.
-      missing: built.missing,
-      missingReasons: built.missingReasons,
-      dropped: built.dropped,
-      substitutedFonts: built.substitutedFonts
-    };
+    return sendInventoryToFigma(inventory, figmaUrl, {
+      onProgress: (state) => {
+        if (!event.sender.isDestroyed()) event.sender.send("inventory:figma-progress", state);
+      }
+    });
   });
 
   ipcMain.handle("inventory:figma-status", async (_event, pairingCode) => {
-    if (!figmaBridge) throw new Error("The local Figma bridge is not running");
+    if (!figmaBridge || !figmaBridgeRunning) throw new Error("The local Figma bridge is not running");
     return figmaBridge.getStatus(pairingCodeSchema.parse(pairingCode));
   });
 
@@ -1948,10 +2020,21 @@ function registerIpc() {
     return true;
   });
 
+  ipcMain.handle("settings:capture-pipeline", async () => readCapturePipeline(app.getPath("userData")));
+
+  ipcMain.handle("settings:set-capture-pipeline", async (_event, pipeline) => {
+    const chosen = captureSettingsSchema.shape.capturePipeline.parse(pipeline);
+    return writeCapturePipeline(app.getPath("userData"), chosen);
+  });
+
   ipcMain.handle("inventory:export", async (_event, inventory, title) => {
     const safeTitle = z.string().min(1).max(120).optional().parse(title) ?? "Design handoff";
     // An exported page is opened elsewhere, so it carries its pictures with it.
-    const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
+    const asked = handoffInventorySchema.parse(inventory);
+    const parsed = await internalise(
+      await withSnapshots(asked, inventoryRegistry().snapshots),
+      inventoryRegistry().assets
+    );
     const suggested = `${safeTitle.replace(/[^\w\u4e00-\u9fa5-]+/g, "-").replace(/^-+|-+$/g, "") || "handoff"}.html`;
     const target = await dialog.showSaveDialog({
       title: "Save handoff page",
@@ -1961,6 +2044,38 @@ function registerIpc() {
     if (target.canceled || !target.filePath) return { saved: false };
     await writeFile(target.filePath, await renderHandoffPage(parsed, { title: safeTitle }), "utf8");
     return { saved: true, filePath: target.filePath };
+  });
+
+  /**
+   * Puts a scan on the clipboard as the HTML Paper pastes as layers.
+   *
+   * A clipboard rather than a file because that is Paper's own way in, and no
+   * connection is set up or remembered: unlike the Figma bridge there is
+   * nothing to pair, so the whole export is this one call.
+   */
+  ipcMain.handle("inventory:copy-for-paper", async (_event, inventory, options) => {
+    const asked = paperCopySchema.parse(options ?? {});
+    const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
+    const document = await renderPaperDocument(parsed, { pageId: asked.pageId ?? null, title: asked.title ?? "Crank" });
+    if (!document.ok) return { ok: false, message: document.message, missing: document.missing };
+    // Both flavours, because a paste handler may read either and the markup is
+    // the honest plain-text form of itself.
+    clipboard.write({ html: document.html, text: document.html });
+    return { ok: true, screens: document.screens, missing: document.missing, dropped: document.dropped };
+  });
+
+  /**
+   * Draws the scan straight into the Paper file that is open.
+   *
+   * Paper Desktop runs an MCP server while a file is open, so this needs no
+   * pairing and no plugin — it is the one place Crank is an MCP client rather
+   * than a server. Only ever the file the person is already looking at: the
+   * push cannot choose one, and should not.
+   */
+  ipcMain.handle("inventory:push-to-paper", async (_event, inventory, options) => {
+    const asked = paperCopySchema.parse(options ?? {});
+    const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
+    return pushToPaper(parsed, { pageId: asked.pageId ?? null });
   });
 
   ipcMain.handle("inventory:reveal", async (_event, filePath) => {
@@ -1975,6 +2090,26 @@ function registerIpc() {
     return inventoryRegistry().loadInventory(safeId);
   });
 
+  /**
+   * One captured page's markup. Kept out of the scan the window is handed —
+   * it is most of a scan's weight — and fetched only when a page is opened.
+   */
+  ipcMain.handle("inventory:snapshot", async (_event, reference) => {
+    const safe = z.string().regex(/^crank-snapshot:\/\/[a-f0-9]{40}\.html$/).parse(reference);
+    return inventoryRegistry().readSnapshot(safe);
+  });
+
+  ipcMain.handle("inventory:figma-links", async (_event, id) => {
+    const safeId = z.string().regex(/^[a-f0-9]{16}$/).parse(id);
+    const stored = await inventoryRegistry().loadFigmaBaseline(safeId);
+    if (!stored?.fileKey) return null;
+    const parsed = inventoryFigmaLinksSchema.safeParse({
+      fileKey: stored.fileKey,
+      frames: stored.frames ?? {}
+    });
+    return parsed.success ? parsed.data : null;
+  });
+
   ipcMain.handle("inventory:forget", async (_event, id) => {
     await inventoryRegistry().forget(z.string().regex(/^[a-f0-9]{16}$/).parse(id));
     return inventoryRegistry().grouped();
@@ -1987,47 +2122,11 @@ function registerIpc() {
    * would let an empty shell overwrite a real inventory.
    */
   ipcMain.handle("inventory:scan-attached", async (event, port) => {
-    const safePort = z.number().int().min(1).max(65535).parse(port);
-    // The port is how the app was reached this time, not what it is: tomorrow
-    // 9222 may be something else entirely, and the same app started again is
-    // the same project. So the window is asked what it is showing, and the
-    // address it serves names it — distinct from a plain scan of that address,
-    // which reaches the same app without the data behind it.
-    let windows = [];
-    try {
-      windows = await listTargets(safePort);
-    } catch {}
-    if (windows.length === 0) {
-      return {
-        ok: false,
-        message: `Nothing is listening for a debugger on port ${safePort}. Start the app with --remote-debugging-port=${safePort}, then try again.`
-      };
-    }
-    let origin;
-    try {
-      origin = new URL(windows[0].url).origin;
-    } catch {
-      return { ok: false, message: `That window is showing ${windows[0].url || "nothing"}, which cannot be scanned.` };
-    }
-    const target = `attached:${origin}`;
-    const id = targetId("url", target);
-    const send = (channel, value) => {
-      if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
-    };
-    await inventoryRegistry().remember("url", target);
-    send("inventory:started", { kind: "url", target });
-    const scanned = await scanAttached(safePort, {
-      targetId: windows[0].id,
-      keepAnyway: await inventoryRegistry().kept(id),
-      onStatus: (status) => send("inventory:status", status),
-      onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
+    return scanInventoryAttached(port, {
+      onEvent: ({ channel, ...value }) => {
+        if (!event.sender.isDestroyed()) event.sender.send(channel, value);
+      }
     });
-    const inventory = scanned.ok
-      ? { ...scanned, source: { kind: "url", target }, pages: await keepWanted(id, scanned.pages) }
-      : scanned;
-    if (inventory.ok) await inventoryRegistry().saveInventory("url", target, inventory);
-    send("inventory:finished", { ok: inventory.ok });
-    return { ...inventory, id };
   });
 
   ipcMain.handle("inventory:debug-windows", async (_event, port) => {
@@ -2040,27 +2139,11 @@ function registerIpc() {
   });
 
   ipcMain.handle("inventory:scan", async (event, url, seedPaths) => {
-    const target = z.string().min(1).max(2000).parse(url);
-    const seeds = z.array(z.string().max(2000)).max(200).optional().parse(seedPaths) ?? [];
-    const id = targetId("url", target);
-    const send = (channel, value) => {
-      if (!event.sender.isDestroyed()) event.sender.send(channel, { ...value, id });
-    };
-    await inventoryRegistry().remember("url", target);
-    send("inventory:started", { kind: "url", target });
-    const scanned = await scanUrl(target, {
-      keepAnyway: await inventoryRegistry().kept(id),
-      seedPaths: seeds,
-      onProgress: (state) => send("inventory:progress", { name: state.name, route: state.route, depth: state.depth })
+    return scanInventoryUrl(url, seedPaths ?? [], {
+      onEvent: ({ channel, ...value }) => {
+        if (!event.sender.isDestroyed()) event.sender.send(channel, value);
+      }
     });
-    // The address as typed, which is what the sidebar remembers — the scan
-    // normalizes it to an origin and a start path.
-    const inventory = scanned.ok
-      ? { ...scanned, source: { kind: "url", target }, pages: await keepWanted(id, scanned.pages) }
-      : scanned;
-    if (inventory.ok) await inventoryRegistry().saveInventory("url", target, inventory);
-    send("inventory:finished", { ok: inventory.ok });
-    return { ...inventory, id };
   });
 
   ipcMain.handle("projects:previews", async (_event, root) => {
@@ -2207,7 +2290,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("projects:auto-map", async (_event, root, unsafeTargetId) => {
-    if (!figmaBridge) throw new Error("The local Figma bridge is not running");
+    if (!figmaBridge || !figmaBridgeRunning) throw new Error("The local Figma bridge is not running");
     const safeRoot = projectRootSchema.parse(root);
     const registry = await readRegistry();
     const current = registry.find((item) => item.root === safeRoot);
@@ -2418,7 +2501,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("projects:pull", async (_event, root) => {
-    if (!figmaBridge) throw new Error("The local Figma bridge is not running");
+    if (!figmaBridge || !figmaBridgeRunning) throw new Error("The local Figma bridge is not running");
     const safeRoot = projectRootSchema.parse(root);
     const registry = await readRegistry();
     const current = registry.find((item) => item.root === safeRoot);
@@ -2611,7 +2694,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("projects:auto-map-status", async (_event, root, pairingCode) => {
-    if (!figmaBridge) return { state: "error", message: "The local Figma bridge is not running" };
+    if (!figmaBridge || !figmaBridgeRunning) return { state: "error", message: "The local Figma bridge is not running" };
     const safeRoot = projectRootSchema.parse(root);
     const safeCode = pairingCodeSchema.parse(pairingCode);
     const status = figmaBridge.getStatus(safeCode);
@@ -2637,7 +2720,7 @@ function registerIpc() {
     const connection = await readDeviceConnection();
     return {
       connected: Boolean(connection?.confirmed),
-      running: Boolean(figmaBridge),
+      running: figmaBridgeRunning,
       port: FIGMA_BRIDGE_PORT,
       manifestPath: figmaPluginManifestPath
     };
@@ -2650,7 +2733,7 @@ function registerIpc() {
    * someone who has just installed the plugin and has nothing to send yet.
    */
   ipcMain.handle("figma:start-pairing", async () => {
-    if (!figmaBridge) return { ok: false, message: "The local Figma bridge is not running." };
+    if (!figmaBridge || !figmaBridgeRunning) return { ok: false, message: "The local Figma bridge is not running." };
     const connection = await ensureDeviceConnection();
     const session = figmaBridge.enqueue({
       operation: "pair",
@@ -2671,7 +2754,7 @@ function registerIpc() {
    */
   ipcMain.handle("figma:forget-connection", async () => {
     await writeDeviceConnection({ token: randomBytes(32).toString("hex"), confirmed: false });
-    return { connected: false, running: Boolean(figmaBridge), port: FIGMA_BRIDGE_PORT, manifestPath: figmaPluginManifestPath };
+    return { connected: false, running: figmaBridgeRunning, port: FIGMA_BRIDGE_PORT, manifestPath: figmaPluginManifestPath };
   });
 
   ipcMain.handle("codex:open-thread", async (_event, threadId) => {
@@ -2745,6 +2828,64 @@ function registerIpc() {
   });
 }
 
+function createMcpOperations() {
+  const safeInventoryId = (value) => z.string().regex(/^[a-f0-9]{16}$/).parse(value);
+  const withoutIcon = (entry) => {
+    if (entry?.kind === "group") {
+      return {
+        ...entry,
+        root: entry.root ? withoutIcon(entry.root) : null,
+        children: entry.children.map(withoutIcon)
+      };
+    }
+    if (!entry || typeof entry !== "object") return entry;
+    const { icon, ...rest } = entry;
+    return rest;
+  };
+  const progressOptions = (progress) => ({
+    onProgress: (value) => progress({ phase: "scanning", ...value }),
+    onEvent: ({ channel, ...value }) => {
+      if (channel === "inventory:status") progress(value);
+      else if (channel === "inventory:started") progress({ phase: "starting", detail: value.target });
+      else if (channel === "inventory:finished") progress({ phase: "finished", ok: value.ok });
+    }
+  });
+
+  return {
+    listProjects: async () => (await inventoryRegistry().grouped()).map(withoutIcon),
+    getInventory: (id) => inventoryRegistry().loadInventory(safeInventoryId(id)),
+    async getPage(id, pageId) {
+      const inventory = await inventoryRegistry().loadInventory(safeInventoryId(id));
+      return inventory?.ok ? inventory.pages.find((page) => page.id === pageId) ?? null : null;
+    },
+    async getPageImage(id, pageId) {
+      const inventory = await inventoryRegistry().loadInventory(safeInventoryId(id));
+      const reference = inventory?.ok ? inventory.pages.find((page) => page.id === pageId)?.thumbnail?.dataUrl : null;
+      if (!reference) return null;
+      return reference.startsWith("crank-asset://")
+        ? inventoryRegistry().assets.dataUrl(reference)
+        : reference;
+    },
+    scanProject: (root, workspaceRoot, progress) => scanInventoryFolder(root, workspaceRoot, progressOptions(progress)),
+    scanUrl: (url, seeds, progress) => scanInventoryUrl(url, seeds, progressOptions(progress)),
+    scanAttached: (port, progress) => scanInventoryAttached(port, progressOptions(progress)),
+    async sendToFigma(id, figmaUrl, pageIds, progress) {
+      const safeId = safeInventoryId(id);
+      const inventory = await inventoryRegistry().loadInventory(safeId);
+      if (!inventory?.ok) throw new Error("No stored inventory has that ID. Scan the project first.");
+      const wanted = pageIds ? new Set(pageIds) : null;
+      const pages = wanted ? inventory.pages.filter((page) => wanted.has(page.id)) : inventory.pages;
+      if (pages.length === 0) throw new Error("None of the requested pages are present in this inventory.");
+      if (wanted && pages.length !== wanted.size) throw new Error("At least one requested page is no longer present in this inventory.");
+      return sendInventoryToFigma({ ...inventory, pages }, figmaUrl, { onProgress: progress });
+    },
+    getFigmaStatus(pairingCode) {
+      if (!figmaBridge || !figmaBridgeRunning) throw new Error("The local Figma bridge is not running.");
+      return figmaBridge.getStatus(pairingCodeSchema.parse(pairingCode));
+    }
+  };
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1220,
@@ -2804,8 +2945,8 @@ app.whenReady().then(async () => {
   });
   inventoryRegistry().sweepAssets()
     .then(({ removed, skipped, unread }) => {
-      if (skipped) console.log(`Kept every stored image: ${unread} scan(s) could not be read, so what is unreferenced is not known.`);
-      else if (removed > 0) console.log(`Removed ${removed} stored images nothing points at.`);
+      if (skipped) runtimeLog(`Kept every stored image: ${unread} scan(s) could not be read, so what is unreferenced is not known.`);
+      else if (removed > 0) runtimeLog(`Removed ${removed} stored images nothing points at.`);
     })
     .catch(() => null);
   // The product was renamed, and Electron derives this directory from the
@@ -2815,8 +2956,21 @@ app.whenReady().then(async () => {
     path.join(path.dirname(app.getPath("userData")), "UI Sync"),
     app.getPath("userData")
   );
-  if (carried.carried.length > 0) console.log("Carried forward from UI Sync:", carried.carried.join(", "));
-  if (process.platform === "darwin") app.dock.setIcon(appIconPath);
+  if (carried.carried.length > 0) runtimeLog("Carried forward from UI Sync:", carried.carried.join(", "));
+  if (!mcpMode && process.platform === "darwin") app.dock.setIcon(appIconPath);
+  const mcpTokenPath = path.join(app.getPath("userData"), "mcp-rpc-token");
+
+  // When the window is already running it owns the browser sessions, registry,
+  // and bridge ports. The stdio process becomes a thin authenticated proxy to
+  // that owner instead of starting a conflicting second Crank runtime.
+  if (mcpMode) {
+    const existing = await createMcpRpcClient({ tokenPath: mcpTokenPath });
+    if (existing) {
+      await startCrankMcpServer(existing);
+      process.stdin.on("end", () => app.quit());
+      return;
+    }
+  }
   figmaBridge = createFigmaBridge({
     onComplete: async (context, result) => {
       // A pairing job has no pages behind it and nothing to save: the plugin
@@ -2836,10 +2990,37 @@ app.whenReady().then(async () => {
     onDisconnect: resetDeviceConnection
   });
   swiftUiRuntimeServer = createSwiftUiRuntimeServer();
+  displayListServer = createDisplayListServer();
   try {
-    await Promise.all([figmaBridge.start(), swiftUiRuntimeServer.start()]);
+    await figmaBridge.start();
+    figmaBridgeRunning = true;
   } catch (error) {
-    console.error("Could not start a local UI Sync bridge", error);
+    console.error("Could not start the local Figma bridge", error);
+  }
+  try {
+    await swiftUiRuntimeServer.start();
+  } catch (error) {
+    console.error("Could not start the local SwiftUI bridge", error);
+  }
+  try {
+    await displayListServer.start();
+  } catch (error) {
+    // Not fatal: a scan simply falls back to the exported-vector path, which is
+    // what every iOS scan did before this one existed.
+    console.error("Could not start the local display-list bridge", error);
+    displayListServer = null;
+  }
+  if (mcpMode) {
+    await startCrankMcpServer(createMcpOperations());
+    process.stdin.on("end", () => app.quit());
+    return;
+  }
+  mcpRpcServer = createMcpRpcServer({ operations: createMcpOperations(), tokenPath: mcpTokenPath });
+  try {
+    await mcpRpcServer.start();
+  } catch (error) {
+    console.error("Could not start the local MCP relay", error);
+    mcpRpcServer = null;
   }
   registerIpc();
   createWindow();
@@ -2861,8 +3042,11 @@ function stopOwnedDevServers() {
 }
 
 app.on("before-quit", () => {
+  figmaBridgeRunning = false;
+  if (mcpRpcServer) void mcpRpcServer.stop();
   if (figmaBridge) void figmaBridge.stop();
   if (swiftUiRuntimeServer) void swiftUiRuntimeServer.stop();
+  if (displayListServer) void displayListServer.stop();
   stopOwnedDevServers();
 });
 

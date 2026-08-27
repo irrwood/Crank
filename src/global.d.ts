@@ -1,4 +1,4 @@
-import type { DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryGroup, InventoryTarget, ScanLifecycle, ScanProgress, ScanStatus, FigmaBuildProgress, AutomaticMappingSession, AutomaticMappingStatus, FigmaConnection, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
+import type { CapturePipeline, DiscoveredPage, PageInventory, PageInventoryFiltered, InventoryFigmaLinks, InventoryGroup, InventoryTarget, ScanLifecycle, ScanProgress, ScanStatus, FigmaBuildProgress, AutomaticMappingSession, AutomaticMappingStatus, FigmaConnection, CodexSyncResult, DesignBuildResult, LivePreviewBounds, LivePreviewSession, LivePreviewStatus, ProjectInfo, ProjectKind, ProjectPreview, PullApplyResult, SemanticIntent, SwiftUiDesignSession, VisualEditResult } from "./types";
 
 declare global {
   interface Window {
@@ -42,6 +42,7 @@ declare global {
       chooseFolder: () => Promise<string | null>;
       listInventoryTargets: () => Promise<Array<InventoryTarget | InventoryGroup>>;
       openInventory: (id: string) => Promise<PageInventory | null>;
+      getInventoryFigmaLinks: (id: string) => Promise<InventoryFigmaLinks>;
       restoreFilteredPage: (
         source: { kind: "folder" | "url"; target: string },
         item: { label: string; route: string; recipe: Array<{ kind?: string; locator: string; label: string }> }
@@ -57,6 +58,25 @@ declare global {
       onScanStatus: (callback: (value: ScanStatus) => void) => () => void;
       onScanLifecycle: (callback: (value: ScanLifecycle) => void) => () => void;
       exportHandoffPage: (inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] }, title?: string) => Promise<{ saved: boolean; filePath?: string }>;
+      readPageSnapshot: (reference: string) => Promise<string | null>;
+      copyForPaper: (
+        inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] },
+        options?: { pageId?: string | null; title?: string }
+      ) => Promise<{ ok: boolean; message?: string; screens?: string[]; missing?: string[]; dropped?: string[] }>;
+      pushToPaper: (
+        inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] },
+        options?: { pageId?: string | null }
+      ) => Promise<{
+        ok: boolean;
+        message?: string | null;
+        fileName?: string | null;
+        created?: string[];
+        updated?: string[];
+        failed?: Array<{ name: string; reason: string }>;
+        missing?: string[];
+      }>;
+      getCapturePipeline: () => Promise<CapturePipeline>;
+      setCapturePipeline: (pipeline: CapturePipeline) => Promise<CapturePipeline>;
       revealFile: (filePath: string) => Promise<void>;
       onScanProgress: (callback: (value: ScanProgress) => void) => () => void;
       onFigmaBuildProgress: (callback: (value: FigmaBuildProgress) => void) => () => void;

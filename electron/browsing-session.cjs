@@ -3,6 +3,7 @@ const { DOWNSCALE_OVER_BYTES, DOWNSCALE_TO_WIDTH, MAX_ASSET_BYTES, MAX_TOTAL_ASS
 const { serializeRenderedApplication } = require("./figma-tree.cjs");
 const { assignKeys } = require("./node-identity.cjs");
 const { isFileOrigin, routeWithin, withinOrigin } = require("./page-origin.cjs");
+const { isStableDomId, replayClickScript, semanticLocator } = require("./replay-locator.cjs");
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -98,7 +99,9 @@ function createBrowsingSession(origin, driver) {
   };
 
   const read = async () => {
-    const snapshot = await evaluate(`(${collectUiState.toString()})(${JSON.stringify(readerOptions)})`).catch(() => null);
+    const snapshot = await evaluate(
+      `(${collectUiState.toString()})(${JSON.stringify(readerOptions)}, ${isStableDomId.toString()}, ${semanticLocator.toString()})`
+    ).catch(() => null);
     if (!snapshot || !isFileOrigin(origin)) return snapshot;
     // The page reports where it is as a path on disk, and every page of an
     // installed app shares the same long prefix — where it happens to have been
@@ -182,13 +185,7 @@ function createBrowsingSession(origin, driver) {
     async click(locator, { patient = false } = {}) {
       let clicked = false;
       try {
-        clicked = await evaluate(`(() => {
-          const element = document.querySelector(${JSON.stringify(locator)});
-          if (!element) return false;
-          element.scrollIntoView({ block: "center" });
-          element.click();
-          return true;
-        })()`);
+        clicked = await evaluate(replayClickScript(locator));
       } catch {
         return null;
       }

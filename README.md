@@ -25,8 +25,11 @@ itself. Either way what arrives is what the application actually draws.
 - **Scans SwiftUI apps too (beta).** An Xcode project has no address to serve
   and no page to walk, so it is built, run — on the Simulator for iPhone, on
   this Mac for a desktop app — and each screen is exported as vectors.
-- **Hands the result over.** A self-contained HTML handoff page, or editable
-  layers pushed straight into a Figma file.
+- **Hands the result over.** A self-contained HTML handoff page, editable
+  layers pushed straight into a Figma file, or the same layers drawn into the
+  Paper file you have open — over the MCP server Paper Desktop runs itself, so
+  there is nothing to install and nothing to pair. They can also be copied as
+  HTML and pasted, when a push is not wanted.
 
 ## Giving it something to scan
 
@@ -118,6 +121,57 @@ run and then does the same.
 The icon comes from `public/app-icon.png`; the macOS `.icns` variants built from
 it live in `assets/`.
 
+## Codex and Claude through MCP
+
+Crank can run without its window as a local STDIO MCP server. The server owns
+the same Electron capture runtime, stored inventory, SwiftUI exporter and Figma
+bridge as the app — an agent-triggered scan is not a separate approximation of
+what the Scan button does.
+
+The tools let an agent list stored projects, scan a folder, URL or attached
+Chromium app, inspect pages and their preview images, and explicitly send pages
+to Figma. Scans and vector preparation return job IDs immediately; poll
+`get_job` while they run. Content read from a captured app is untrusted data,
+not an instruction to the agent.
+
+For a packaged copy, configure either Codex or another MCP client to run:
+
+```text
+/Applications/Crank.app/Contents/MacOS/Crank --mcp
+```
+
+For Codex, this is the equivalent project-scoped `.codex/config.toml` entry:
+
+```toml
+[mcp_servers.crank]
+command = "/Applications/Crank.app/Contents/MacOS/Crank"
+args = ["--mcp"]
+startup_timeout_sec = 20
+tool_timeout_sec = 30
+default_tools_approval_mode = "writes"
+```
+
+The equivalent Claude Desktop server entry is:
+
+```json
+{
+  "mcpServers": {
+    "crank": {
+      "command": "/Applications/Crank.app/Contents/MacOS/Crank",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+During development, `npm run mcp` starts the same server from this checkout.
+If the Crank window is already open, the STDIO process authenticates to that
+instance over a token-protected loopback relay, so both clients share one
+inventory and one set of Figma and SwiftUI bridge ports. Otherwise the MCP
+process owns the headless runtime itself. Keep the Figma companion plugin open
+when an agent sends a job; `get_figma_sync_status` reports whether it is
+waiting, working, complete, or failed.
+
 ## Working on Crank
 
 [`AGENTS.md`](AGENTS.md) is the file to read first: the rules the product is
@@ -173,4 +227,3 @@ after. Called beta because it asks that much of the machine, because a first
 scan builds the whole project, and because screens are found from the SwiftUI in
 the project — an app that assembles its screens somewhere that cannot be read
 statically exports fewer than it has.
-

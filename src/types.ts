@@ -1,3 +1,9 @@
+/**
+ * Which way a SwiftUI project is captured. `both` runs the two paths against
+ * one launch of the app, so their results can be compared directly.
+ */
+export type CapturePipeline = "vector-pdf" | "display-list" | "both";
+
 export type ProjectInfo = {
   id: string;
   root: string;
@@ -322,8 +328,17 @@ export type SemanticChange = {
 export type FigmaTree = { width: number; height: number; tree: unknown; error?: string };
 
 export type HtmlSnapshot = {
-  /** The page's own document, with its pictures held as stored references. */
-  html: string;
+  /**
+   * The page's own document, with its pictures held as stored references.
+   *
+   * Present on a scan just taken. A scan read from disk carries `ref` instead:
+   * the markup is most of a scan's weight and is fetched for the one page
+   * someone opens, rather than carried across for all of them.
+   */
+  html?: string;
+  ref?: string | null;
+  /** The anchors in that document, read once so the flow view need not. */
+  links?: Array<{ href: string; label: string }>;
   bytes: number;
   stats: {
     stylesheets: number;
@@ -343,6 +358,8 @@ export type PageVariant = {
   recipe: Array<{ kind: string; locator: string; label: string }>;
   thumbnail: { dataUrl: string; width: number; height: number } | null;
   layerTree: FigmaTree | null;
+  /** Why replay did not produce a capture, when it did not. */
+  layerError?: string | null;
   snapshot: HtmlSnapshot | null;
 };
 
@@ -363,6 +380,8 @@ export type DiscoveredPage = {
   thumbnail: { dataUrl: string; width: number; height: number } | null;
   /** Layers: what a card draws, and what is exported to Figma. */
   layerTree: FigmaTree | null;
+  /** Why replay did not produce a capture, when it did not. */
+  layerError?: string | null;
   /** The page's own document — the one view of it that is not an approximation. */
   snapshot: HtmlSnapshot | null;
   /**
@@ -405,6 +424,12 @@ export type InventoryTarget = {
   /** What the last scan found this to be. */
   platform?: "web" | "swiftui" | null;
 };
+
+/** Exact Figma frames reported by the plugin after a successful import. */
+export type InventoryFigmaLinks = {
+  fileKey: string;
+  frames: Record<string, { nodeId: string; frameName: string }>;
+} | null;
 
 /** A folder holding several scanned packages, shown as one expandable entry. */
 export type InventoryGroup = {
