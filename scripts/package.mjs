@@ -1,5 +1,6 @@
 import { packager } from "@electron/packager";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -80,3 +81,20 @@ const [built] = await packager({
   appVersion: process.env.npm_package_version ?? "0.1.0"
 });
 console.log(`built ${built}`);
+
+/**
+ * The archive someone downloads.
+ *
+ * `ditto` rather than `zip`: a macOS app bundle carries symlinks and extended
+ * attributes inside its frameworks, and a zip that flattens them produces a
+ * copy that will not launch. Named with the version because a release page
+ * holds several at once.
+ */
+const archive = path.resolve("release", `Crank-${process.env.npm_package_version ?? "0.1.0"}-${arch}.zip`);
+await new Promise((done, fail) => {
+  const run = spawn("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", path.join(built, "Crank.app"), archive], { stdio: "inherit" });
+  run.on("error", fail);
+  run.on("exit", (code) => (code === 0 ? done() : fail(new Error(`ditto exited with ${code}`))));
+});
+const { size } = await stat(archive);
+console.log(`archived ${archive} (${Math.round(size / 1e6)}MB)`);
