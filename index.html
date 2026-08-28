@@ -173,6 +173,74 @@
         </article>
       </div>
     </section>
+
+    <section class="faq" aria-labelledby="faq-title">
+      <h2 id="faq-title" data-zh="常见问题" data-en="Questions">常见问题</h2>
+
+      <details>
+        <summary data-zh="打开时说「已损坏，无法打开」" data-en="It says the app is damaged and can't be opened">打开时说「已损坏，无法打开」</summary>
+        <p data-zh="没有损坏，是 Gatekeeper。这个版本没有签名和公证，所以 macOS 会拦。第一次打开时右键点 Crank.app → 打开 → 再点一次「打开」；或者在终端里跑一次 xattr -dr com.apple.quarantine /Applications/Crank.app。"
+           data-en="Nothing is damaged — that is Gatekeeper. This build is not signed or notarised, so macOS stops it. The first time, right-click Crank.app → Open → Open again, or run xattr -dr com.apple.quarantine /Applications/Crank.app once in a terminal.">
+          没有损坏，是 Gatekeeper。这个版本没有签名和公证，所以 macOS 会拦。第一次打开时右键点 Crank.app → 打开 → 再点一次「打开」；或者在终端里跑一次 xattr -dr com.apple.quarantine /Applications/Crank.app。
+        </p>
+      </details>
+
+      <details>
+        <summary data-zh="我的代码和截图会上传吗" data-en="Does my code or my screens leave the machine">我的代码和截图会上传吗</summary>
+        <p data-zh="不会。扫描结果、项目清单、Figma 连接全部留在本机。只有你主动点「送到 Figma」时，才会把归一化后的视觉结构发出去——发的是图层，不是源码。执行这些规则的文件公开在仓库的 privacy/ 目录，还附了一个脚本，把它们和你下载的这个应用里的副本逐字节对比。"
+           data-en="No. Scans, the project list and the Figma connection all stay on your Mac. Normalized visual structure leaves only when you press Send to Figma — layers, not source. The files that enforce this are published in the repository's privacy/ folder, with a script that compares them byte for byte against the copy inside the app you downloaded.">
+          不会。扫描结果、项目清单、Figma 连接全部留在本机。只有你主动点「送到 Figma」时，才会把归一化后的视觉结构发出去——发的是图层，不是源码。执行这些规则的文件公开在仓库的 privacy/ 目录，还附了一个脚本，把它们和你下载的这个应用里的副本逐字节对比。
+        </p>
+      </details>
+
+      <details>
+        <summary data-zh="它会改我的项目吗" data-en="Can it change my project">它会改我的项目吗</summary>
+        <p data-zh="不会。抓取时只读页面已经画出来的东西：会写入的请求一律拦掉，第三方脚本和数据调用也拦掉，读起来像「删除」「退出登录」「支付」的按钮不点。Xcode 工程是先复制一份再做标记，你的原始文件一个字都不动。"
+           data-en="No. Capture reads only what the page has already drawn: requests that would write are cancelled, so are third-party scripts and data calls, and controls that read as Delete, Log out or Pay are never clicked. An Xcode project is copied before anything is instrumented — your own files are never touched.">
+          不会。抓取时只读页面已经画出来的东西：会写入的请求一律拦掉，第三方脚本和数据调用也拦掉，读起来像「删除」「退出登录」「支付」的按钮不点。Xcode 工程是先复制一份再做标记，你的原始文件一个字都不动。
+        </p>
+      </details>
+
+      <details>
+        <summary data-zh="和自己截图贴进 Figma 有什么区别" data-en="How is this different from pasting screenshots into Figma">和自己截图贴进 Figma 有什么区别</summary>
+        <p data-zh="送过去的是真的文字、矢量、图片和布局，选中就能改字号、改颜色、改间距。而且画框有身份：第二次扫描会更新原来那一批，不会在旁边再画一份。"
+           data-en="What arrives is real text, vectors, images and layout — select a layer and change its size, its colour, its spacing. Frames also keep an identity, so a second scan updates the ones already there instead of drawing another set beside them.">
+          送过去的是真的文字、矢量、图片和布局，选中就能改字号、改颜色、改间距。而且画框有身份：第二次扫描会更新原来那一批，不会在旁边再画一份。
+        </p>
+      </details>
+
+      <details>
+        <summary data-zh="要登录才看得到的页面能扫吗" data-en="Can it reach screens behind a login">要登录才看得到的页面能扫吗</summary>
+        <p data-zh="能。两种办法：把你正在用的那个应用带调试端口启动，Crank 连过去扫你手上这一份，数据是真的；或者你自己手动走一遍，它把每一页记下来。"
+           data-en="Yes, two ways. Start the app you are already using with a debugging port and Crank scans that copy, with the data actually in it — or walk the flow yourself once and it records every page you visit.">
+          能。两种办法：把你正在用的那个应用带调试端口启动，Crank 连过去扫你手上这一份，数据是真的；或者你自己手动走一遍，它把每一页记下来。
+        </p>
+      </details>
+
+      <details>
+        <summary data-zh="扫 Xcode 工程还要装什么" data-en="What else do I need for an Xcode project">扫 Xcode 工程还要装什么</summary>
+        <p data-zh="完整的 Xcode（不是命令行工具），iPhone 项目还需要一个 iOS 模拟器运行时。Poppler（brew install poppler）只有选「画面一致」或「两种都要」时才需要；只要「图层可改」就不用装。"
+           data-en="The full Xcode app, not the Command Line Tools, plus an iOS Simulator runtime for iPhone projects. Poppler (brew install poppler) is only wanted by Match the screen and Both — ask for Layers you can edit alone and it is not needed.">
+          完整的 Xcode（不是命令行工具），iPhone 项目还需要一个 iOS 模拟器运行时。Poppler（brew install poppler）只有选「画面一致」或「两种都要」时才需要；只要「图层可改」就不用装。
+        </p>
+      </details>
+
+      <details>
+        <summary data-zh="用 AI 猜的吗" data-en="Is any of this guessed by a model">用 AI 猜的吗</summary>
+        <p data-zh="抓取这一步没有 AI。网页是读浏览器已经算好的布局，SwiftUI 是读它自己画出来的那棵渲染树——都是量出来的，不是猜出来的。"
+           data-en="Not the capture. A web app is read from the layout the browser already computed; a SwiftUI app from the render tree it drew itself. Both are measured, not inferred.">
+          抓取这一步没有 AI。网页是读浏览器已经算好的布局，SwiftUI 是读它自己画出来的那棵渲染树——都是量出来的，不是猜出来的。
+        </p>
+      </details>
+
+      <details>
+        <summary data-zh="支持 Intel Mac 或 Windows 吗" data-en="Intel Macs or Windows">支持 Intel Mac 或 Windows 吗</summary>
+        <p data-zh="目前只有 Apple Silicon 的 macOS 版本。"
+           data-en="Apple Silicon macOS only, for now.">
+          目前只有 Apple Silicon 的 macOS 版本。
+        </p>
+      </details>
+    </section>
   </main>
 
   <footer class="site-footer">

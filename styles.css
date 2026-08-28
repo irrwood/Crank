@@ -210,6 +210,69 @@ a {
 
 /* ---------- supports ---------- */
 
+/* Questions, as a native disclosure list. `<details>` needs no script, keeps
+   working with the keyboard and with a screen reader, and one open answer does
+   not push the others off the page. */
+.faq {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 96px 28px 40px;
+}
+
+.faq h2 {
+  margin: 0 0 24px;
+  font-size: 28px;
+  letter-spacing: -0.01em;
+}
+
+.faq details {
+  border-top: 1px solid var(--line);
+}
+
+.faq details:last-of-type {
+  border-bottom: 1px solid var(--line);
+}
+
+.faq summary {
+  padding: 18px 32px 18px 0;
+  position: relative;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.faq summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A plus that becomes a minus. Drawn from the summary rather than added as an
+   element so the marker cannot be read out as content. */
+.faq summary::after {
+  content: "+";
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.faq details[open] summary::after {
+  content: "\2212";
+}
+
+.faq summary:hover {
+  color: var(--blue);
+}
+
+.faq details p {
+  margin: 0;
+  padding: 0 32px 20px 0;
+  color: var(--body);
+  line-height: 1.65;
+}
+
 /* A picture inside a section, framed the way the hero shot is so the two do not
    read as different kinds of thing. Sits under the cards it illustrates. */
 .section-shot {
