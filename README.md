@@ -24,7 +24,9 @@ itself. Either way what arrives is what the application actually draws.
   to capture screens that live behind a login or a bridge.
 - **Scans SwiftUI apps too (beta).** An Xcode project has no address to serve
   and no page to walk, so it is built, run — on the Simulator for iPhone, on
-  this Mac for a desktop app — and each screen is exported as vectors.
+  this Mac for a desktop app — and read either as exported vectors or as the
+  render tree SwiftUI itself drew. The first matches the screen exactly; the
+  second keeps names, corner radii and text, so the layers can be edited.
 - **Hands the result over.** A self-contained HTML handoff page, editable
   layers pushed straight into a Figma file, or the same layers drawn into the
   Paper file you have open — over the MCP server Paper Desktop runs itself, so
@@ -201,16 +203,58 @@ a different road:
    this machine, signed to run locally, and launched here — one screen at a
    time, and stopped again afterwards. Each top-level navigation state is opened
    in turn.
-3. Each state is exported through SwiftUI's `ImageRenderer` as a vector PDF
-   page, with a UIKit window capture standing in for genuinely opaque content.
+3. Each state is read — as a vector PDF page through SwiftUI's `ImageRenderer`,
+   as the render tree the app drew, or as both. See below.
 4. Those pages become the project's inventory: the same cards, the same
    right-click menu, the same **Send to Figma**.
 
-Sending a page converts its PDF to SVG with Poppler and then restores only what
-the capture can vouch for on top of it — editable text, shadows and blur, the
-matching native Tab Bar, original asset-catalog images. Anything that cannot be
-matched confidently keeps its rendered appearance; the page is never redrawn
-from the source.
+### Two ways to read a screen
+
+An exported page draws what the app draws, and it arrives as loose shapes. A PDF
+page has no tree, no names and no identity, so a second scan cannot recognise a
+single layer from the first, and a card is a bezier outline with some text lying
+over it rather than a box that moves when you drag it.
+
+So a scan can instead read `DisplayList` — SwiftUI's own flattened list of
+drawing operations, held behind the hosting view. Every item in it carries the
+frame the layout engine computed, an identity SwiftUI assigned, and typed
+content: a path, a colour, a string, an image. A card then comes back as a box
+with the corner radius and the padding its source declares.
+
+Which one a page carries is chosen in the project's **...** menu:
+
+| | |
+| --- | --- |
+| **Match the screen** | Exactly what the app shows, as exported vectors. |
+| **Layers you can edit** | The render tree, with names, corners and text. |
+| **Both** | One build and one launch, captured twice, to compare. |
+
+**Both** is there because which is better is a question about a real project
+rather than one to settle in the abstract — and capturing twice in one launch
+compares two readings of one screen, not two runs that differ for reasons nobody
+can pin down.
+
+The render tree is read by reflection rather than by linking against private
+symbols, so a field Apple renames comes back missing instead of wrong, and the
+failure names the view's real type and the fields it did have. What cannot be
+reached is reported rather than drawn: a UIKit container that paints itself is
+named as a gap, not left as an empty box that looks intentional.
+
+Asked for the render tree alone, a scan needs no Poppler and does not fail when
+nothing could be exported — the screens it read are the pages. A page whose
+layers did not come back keeps its exported vectors instead, and says which
+happened.
+
+### Sending a page
+
+Sending an exported page converts its PDF to SVG with Poppler and then restores
+only what the capture can vouch for on top of it — editable text, shadows and
+blur, the matching native Tab Bar, original asset-catalog images. Anything that
+cannot be matched confidently keeps its rendered appearance; the page is never
+redrawn from the source.
+
+A page read from the render tree needs none of that: it already is a layer tree,
+and it goes to Figma the same way a web page's layers do.
 
 An exported page has no address, so it cannot be reopened live, recaptured, or
 explored one level further. Its card says which view it came from instead.
@@ -221,9 +265,14 @@ finds it either way. A repository with a manifest of its own is left alone, so a
 React Native project is not claimed by the `ios/` folder inside it.
 
 Needs the full Xcode app (found through `DEVELOPER_DIR`, `xcode-select -p`, or
-the default install), an iOS Simulator runtime for iPhone projects, and Poppler
-(`brew install poppler`), which is checked before a build starts rather than
-after. Called beta because it asks that much of the machine, because a first
-scan builds the whole project, and because screens are found from the SwiftUI in
-the project — an app that assembles its screens somewhere that cannot be read
-statically exports fewer than it has.
+the default install) and an iOS Simulator runtime for iPhone projects. Poppler
+(`brew install poppler`) is needed only by the paths that export vectors, and is
+checked before a build starts rather than after — a scan asked for the render
+tree alone does not look for it.
+
+Called beta because it asks that much of the machine, because a first scan
+builds the whole project, and because screens are found from the SwiftUI in the
+project — an app that assembles its screens somewhere that cannot be read
+statically exports fewer than it has. The render tree adds a reason of its own:
+it is read out of fields Apple does not promise to keep, so a future SDK can
+take it away, and the exported-vector path is what it falls back to.
