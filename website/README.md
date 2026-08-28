@@ -19,6 +19,9 @@
 - **支持什么**：能扫什么（Web / Electron / SwiftUI / 本地优先）。
 - **图层去哪里**：扫完之后送到哪（Figma / Paper / HTML 交接页）。三栏用
   `.supports-grid--three`，Paper 标题后面那个「新」是 `.tag-new`。
+- **常见问题**：`.faq`，用原生 `<details>` 折叠，不需要 JS。加一条就复制一个
+  `<details>` 块；`summary` 和里面的 `<p>` 都要带 `data-zh` / `data-en`，否则
+  切语言时那一条不会跟着变。
 
 ## 中英文
 

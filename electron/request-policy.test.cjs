@@ -100,3 +100,15 @@ test("an app serving itself from its own scheme may read itself too", () => {
   assert.equal(requestVerdict("client://other/index.html", "GET", "document", own).allow, false);
   assert.equal(requestVerdict("client://app/notes", "POST", "xhr", own).allow, false);
 });
+
+test("a scanned page cannot read this app's stored pictures", () => {
+  // `crank-asset://` is where Crank keeps the screenshots of everything it has
+  // scanned. Crank's own interface is allowed to draw them, but that allowance
+  // lives in the self-scan session — the shared policy, which is what judges a
+  // third party's page, must keep refusing them.
+  const asset = `crank-asset://${"a".repeat(40)}.webp`;
+  assert.deepEqual(
+    requestVerdict(asset, "GET", "image", "example.com"),
+    { allow: false, reason: "external", host: `${"a".repeat(40)}.webp` }
+  );
+});

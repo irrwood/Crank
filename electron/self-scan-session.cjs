@@ -51,6 +51,23 @@ async function createSelfScanSession({ appRoot, devServerUrl = process.env.UI_SY
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.session.setPermissionRequestHandler((_w, _p, callback) => callback(false));
   contents.session.webRequest.onBeforeRequest((details, callback) => {
+    // This app's own pictures, in this app's own interface.
+    //
+    // The shared policy judges a scheme it does not recognise as off-host,
+    // which is right for a third party's page and wrong here. `crank-asset://`
+    // is where the stored screenshots live, and its host is a content hash, so
+    // it can never sit "within" the loopback origin the interface is served
+    // from — every thumbnail and every project icon came back a broken image,
+    // in a scan of the one app that is not a third party.
+    //
+    // Only here, and only for reads. A scan of someone else's page still
+    // cannot ask for these.
+    if (details.url.startsWith("crank-asset://")
+      && ["GET", "HEAD"].includes(String(details.method || "GET").toUpperCase())) {
+      lastRequestAt = Date.now();
+      callback({ cancel: false });
+      return;
+    }
     const verdict = requestVerdict(details.url, details.method, details.resourceType, originHost, drawn);
     if (!verdict.allow) {
       if (verdict.reason === "external") blocked.external.add(verdict.host);

@@ -4608,8 +4608,12 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
   background: #fff;
 }
 
+/* Nudged clear of the zoom stack, which is 30px wide at the panel's own 15px
+   inset. The bottom margin has to stay 15px: React Flow gives every panel
+   15px on all sides, and zeroing it here dropped this button 15px below the
+   stack it sits beside, so the two read as one control that had come apart. */
 .screen-flow-board-toggle {
-  margin: 0 0 0 50px !important;
+  margin: 0 0 15px 50px !important;
 }
 
 .screen-flow-board-toggle button {
