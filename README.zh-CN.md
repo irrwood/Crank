@@ -6,6 +6,10 @@
 
 **[官网 →](https://irrwood.github.io/Crank/)** · [English →](README.md)
 
+![Crank 的流程视图：扫到的每一屏是一张带缩略图的卡片，卡片之间的连线是点击的去向](docs/screen-flow.png)
+
+*每一条点击路径都留着。*
+
 ---
 
 ## 下载

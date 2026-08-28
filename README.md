@@ -8,6 +8,10 @@ It does not rebuild your interface. A web app runs in Chromium and Crank reads
 what the browser laid out; a SwiftUI app is built, launched and asked to render
 itself. Either way what arrives is what the application actually draws.
 
+![Screens as cards, joined by the clicks between them](docs/screen-flow.png)
+
+*Every click path, preserved.*
+
 ## What it does
 
 - **Starts the project itself.** npm and pnpm projects run their own dev script;
