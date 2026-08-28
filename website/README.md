@@ -10,6 +10,9 @@
 - **开始使用按钮**：`https://github.com/irrwood/Crank/releases/latest`。
 - **GitHub 链接**：`https://github.com/irrwood/Crank`。
 - **品牌图标**：`icon.svg` 来自 `public/app-icon.svg`。
+- **流程图**：`screen-flow.png`，「页面怎么到达」那节卡片下面那张，截自一次真实
+  扫描。换图直接替换文件；`<img>` 上的 `data-zh-alt` / `data-en-alt` 要一起改，
+  切语言时 alt 会跟着换。
 
 ## 版块
 
