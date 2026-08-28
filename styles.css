@@ -210,6 +210,22 @@ a {
 
 /* ---------- supports ---------- */
 
+/* A picture inside a section, framed the way the hero shot is so the two do not
+   read as different kinds of thing. Sits under the cards it illustrates. */
+.section-shot {
+  margin: 28px 0 0;
+}
+
+.section-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-frame);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-demo);
+  background: var(--surface);
+}
+
 .supports {
   max-width: 1040px;
   margin: 0 auto;

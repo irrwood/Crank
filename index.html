@@ -125,6 +125,12 @@
           </p>
         </article>
       </div>
+      <figure class="section-shot">
+        <img src="./screen-flow.png" width="1600" height="1018" loading="lazy"
+             alt="Crank 的流程视图：扫到的每一屏是一张带缩略图的卡片，卡片之间的连线是点击的去向"
+             data-zh-alt="Crank 的流程视图：扫到的每一屏是一张带缩略图的卡片，卡片之间的连线是点击的去向"
+             data-en-alt="Crank's flow view: every screen the scan reached, as a card with its own thumbnail, joined by the clicks between them" />
+      </figure>
     </section>
     <section class="supports" aria-labelledby="lands-title">
       <h2 id="lands-title" data-zh="图层去哪里" data-en="Where the layers land">图层去哪里</h2>
@@ -191,6 +197,10 @@
         document.querySelectorAll("[data-zh-content], [data-en-content]").forEach(function (el) {
           var text = el.getAttribute(l === "zh-CN" ? "data-zh-content" : "data-en-content");
           if (text !== null) el.setAttribute("content", text);
+        });
+        document.querySelectorAll("[data-zh-alt], [data-en-alt]").forEach(function (el) {
+          var alt = el.getAttribute(l === "zh-CN" ? "data-zh-alt" : "data-en-alt");
+          if (alt !== null) el.setAttribute("alt", alt);
         });
         document.querySelectorAll("[data-zh-html], [data-en-html]").forEach(function (el) {
           var html = el.getAttribute(l === "zh-CN" ? "data-zh-html" : "data-en-html");
