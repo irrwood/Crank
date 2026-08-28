@@ -46,6 +46,24 @@ function serializeRenderedApplication() {
    */
   const IMAGE_HEADROOM = 4;
 
+  /** Whether anything in the drawing is see-through, and so needs PNG. */
+  const opaque = (context, canvas) => {
+    try {
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      // Every fourth byte is alpha; stepping by whole pixels over a large photo
+      // is the difference between a check and a cost.
+      const step = 4 * Math.max(1, Math.floor(data.length / 4 / 40_000));
+      for (let index = 3; index < data.length; index += step) {
+        if (data[index] !== 255) return false;
+      }
+      return true;
+    } catch {
+      // A canvas holding a cross-origin image cannot be read. PNG is the answer
+      // that is never wrong.
+      return false;
+    }
+  };
+
   const imageData = (element) => {
     try {
       const natural = Math.max(1, element.naturalWidth || element.width);
@@ -55,11 +73,17 @@ function serializeRenderedApplication() {
       canvas.width = width;
       canvas.height = Math.max(1, Math.round((element.naturalHeight || element.height || 1) * (width / natural)));
       canvas.getContext("2d")?.drawImage(element, 0, 0, canvas.width, canvas.height);
+      // PNG or JPEG, never WebP. These are the pictures that go to Figma, and
+      // figma.createImage takes PNG, JPEG and GIF — a WebP is not a smaller
+      // image there, it is no image at all. (The page raster is a different
+      // picture with a different destination, and stays WebP.)
+      //
+      // JPEG only where there is nothing to lose by it: one transparent pixel
+      // and it would be composited onto black.
       const png = canvas.toDataURL("image/png");
-      // Whichever is smaller. WebP wins on photographs by a wide margin and PNG
-      // on flat icons and logos, and a real page has both.
-      const webp = canvas.toDataURL("image/webp", 0.85);
-      return webp.startsWith("data:image/webp") && webp.length < png.length ? webp : png;
+      if (!opaque(context, canvas)) return png;
+      const jpeg = canvas.toDataURL("image/jpeg", 0.85);
+      return jpeg.startsWith("data:image/jpeg") && jpeg.length < png.length ? jpeg : png;
     } catch {
       return null;
     }
@@ -110,6 +134,68 @@ function serializeRenderedApplication() {
           .replace(/\sfill=(['"])[^'"]*\1/gi, "");
         return `<svg${cleaned} width="${rounded(rect.width)}" height="${rounded(rect.height)}" fill="${paint}">`;
       });
+  }
+
+  /**
+   * An icon drawn by a font, which is neither text nor a box.
+   *
+   * A large share of real interfaces draw their icons this way — codicon,
+   * FontAwesome, Material, Bootstrap — as a private-use character in
+   * `::before { content }`. It is not a DOM text node, so a walk over the DOM
+   * cannot see it, and Cursor's window arrived in Figma with 2,252 icon
+   * references and not one icon.
+   *
+   * It cannot be sent as text either: the character is private-use and the font
+   * is one Figma does not have, so it would draw as a box or as nothing. Here
+   * the font *is* loaded — it is what the screen is showing — so the glyph is
+   * drawn to a canvas and travels as a picture of itself.
+   *
+   * Only leaves are asked. An icon span holds nothing else, and asking every
+   * element on a page for two more computed styles is not free.
+   */
+  function glyphImage(element, rect) {
+    if (rect.width < 4 || rect.height < 4 || rect.width > 256 || rect.height > 256) return null;
+    for (const pseudo of ["::before", "::after"]) {
+      let computed;
+      try {
+        computed = getComputedStyle(element, pseudo);
+      } catch {
+        continue;
+      }
+      const content = String(computed.content || "");
+      if (!content || content === "none" || content === "normal") continue;
+      const literal = content.replace(/^["']|["']$/g, "");
+      // One character in the Private Use Area is what every icon font emits,
+      // and nothing else does. A stricter test than "the font differs", which
+      // would rasterise quotation marks and bullets as well.
+      if ([...literal].length !== 1 || !/[\uE000-\uF8FF]/u.test(literal)) continue;
+
+      const scale = Math.min(4, Math.max(2, window.devicePixelRatio || 1) * 2);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(rect.width * scale));
+      canvas.height = Math.max(1, Math.round(rect.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) continue;
+      context.scale(scale, scale);
+      // The pseudo-element's own font and colour, not the element's: an icon
+      // sized by `font-size` on ::before is a different size from its box.
+      context.font = `${computed.fontStyle || "normal"} ${computed.fontWeight || "400"} ${computed.fontSize || "16px"} ${computed.fontFamily}`;
+      context.fillStyle = computed.color || "#000";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      try {
+        context.fillText(literal, rect.width / 2, rect.height / 2);
+      } catch {
+        continue;
+      }
+      // PNG, not WebP: an icon needs its transparency, and Figma's createImage
+      // takes PNG, JPEG and GIF only.
+      const drawn = canvas.toDataURL("image/png");
+      // A glyph that drew nothing — a missing font, a blank in the icon set —
+      // is not worth a layer. An empty canvas encodes to almost nothing.
+      return drawn.length > 400 ? { dataUrl: drawn, name: `Icon · ${literal.codePointAt(0).toString(16)}` } : null;
+    }
+    return null;
   }
 
   const nodeStyle = (style, rect) => ({
@@ -395,7 +481,35 @@ function serializeRenderedApplication() {
     const masked = maskedShape(element, style, rect);
     if (masked) return { kind: "svg", ...common, svg: masked };
 
+    // Nor is one drawn by a font. Asked of leaves only, which is what an icon
+    // span is, and what keeps this from costing two computed styles per element.
+    //
+    // Kept as a child rather than put in the element's place: an icon button
+    // has a background, a radius and a border of its own, and standing the
+    // glyph in for the whole element threw all of that away — every toolbar
+    // button would have arrived as a bare symbol on nothing.
+    // "Holds nothing" has to mean nothing *drawn*, not nothing at all: markup
+    // formatted across lines leaves a whitespace text node inside the tag, and
+    // testing firstChild made every icon in a pretty-printed template invisible.
+    const empty = [...element.childNodes].every(
+      (child) => child.nodeType === Node.TEXT_NODE && !String(child.textContent ?? "").trim()
+    );
+    const glyph = empty ? glyphImage(element, rect) : null;
+
     const children = [];
+    if (glyph) {
+      children.push({
+        kind: "image",
+        id: `${identity}/glyph`,
+        selector,
+        name: glyph.name,
+        x: 0,
+        y: 0,
+        width: rounded(rect.width),
+        height: rounded(rect.height),
+        dataUrl: glyph.dataUrl
+      });
+    }
     let elementIndex = 0;
     let textIndex = 0;
     // What the browser actually draws, which is not always what the element
