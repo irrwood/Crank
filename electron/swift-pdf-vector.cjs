@@ -39,14 +39,61 @@ function runOutput(command, arguments_, options = {}) {
   });
 }
 
-async function findPdfToCairo() {
-  for (const candidate of PDFTOCAIRO_CANDIDATES) {
+const POPPLER_INSTALL_MESSAGE = "Rendered vector export needs Poppler. Install it with `brew install poppler`, then scan this project again.";
+
+// Returns null rather than throwing, so a scan can check for Poppler before it
+// spends minutes on xcodebuild and the Simulator.
+async function resolvePdfToCairo() {
+  const fromPath = String(process.env.PATH || "").split(":").filter(Boolean).map((entry) => path.join(entry, "pdftocairo"));
+  for (const candidate of [...PDFTOCAIRO_CANDIDATES, ...fromPath]) {
     try {
       await access(candidate);
       return candidate;
     } catch {}
   }
-  throw new Error("Rendered vector export needs Poppler. Install it with `brew install poppler`, then run Design Build again.");
+  return null;
+}
+
+async function findPdfToCairo() {
+  const resolved = await resolvePdfToCairo();
+  if (!resolved) throw new Error(POPPLER_INSTALL_MESSAGE);
+  return resolved;
+}
+
+function stableOptionDigest(value) {
+  return createHash("sha256").update(JSON.stringify(value ?? null, (_key, entry) => {
+    if (entry && entry.type === "Buffer" && Array.isArray(entry.data)) {
+      return `buffer:${createHash("sha1").update(Buffer.from(entry.data)).digest("hex")}`;
+    }
+    return entry;
+  }) || "null").digest("hex");
+}
+
+/**
+ * Identifies one conversion by its inputs.
+ *
+ * The same page is converted again every time it is re-sent, which repeats
+ * Poppler, the image downsampling, and the glyph stripping for a result that
+ * cannot have changed. Hashed by PDF content rather than by timestamp, so a
+ * re-export that lands in the same millisecond still invalidates the entry.
+ */
+async function conversionCacheKey(pdfPath, pageNumber, options) {
+  const contents = await readFile(pdfPath);
+  return stableOptionDigest({
+    pageNumber,
+    pdf: createHash("sha256").update(contents).digest("hex"),
+    stripTextGlyphs: Boolean(options.stripTextGlyphs),
+    maximumByteLength: options.maximumByteLength ?? 2_500_000,
+    pixelDensities: options.pixelDensities ?? null,
+    sourceImages: options.sourceImages ?? null
+  });
+}
+
+function svgStatistics(svgPath, prepared) {
+  const drawableCount = (prepared
+    .replace(/<defs\b[\s\S]*?<\/defs\s*>/gi, "")
+    .match(/<(?:path|rect|circle|ellipse|polygon|polyline|line|image|use)\b/gi) || []).length;
+  return { path: svgPath, byteLength: Buffer.byteLength(prepared, "utf8"), drawableCount };
 }
 
 function svgAttributes(source) {
@@ -132,7 +179,7 @@ async function downsampleEmbeddedPngs(source, options = {}) {
   let output = String(source || "");
   if (Buffer.byteLength(output, "utf8") <= maximumByteLength) return output;
 
-  const densities = options.pixelDensities || [2, 1.5, 1];
+  const densities = options.pixelDensities || [2, 1.5, 1, 0.75, 0.5];
   const temporaryDirectory = options.imageResizer ? null : await mkdtemp(path.join(os.tmpdir(), "ui-sync-svg-images-"));
   let resizeIndex = 0;
   try {
@@ -361,8 +408,17 @@ async function indexPdfPages(pdfPath, outputDirectory, options = {}) {
 }
 
 async function convertPdfToFigmaSvg(pdfPath, svgPath, options = {}) {
-  const command = options.command || await findPdfToCairo();
   const pageNumber = options.pageNumber || 1;
+  const cacheKeyPath = `${svgPath}.cache-key`;
+  const cacheKey = options.cache === false ? null : await conversionCacheKey(pdfPath, pageNumber, options).catch(() => null);
+  if (cacheKey) {
+    const cached = await readFile(cacheKeyPath, "utf8").catch(() => null);
+    if (cached === cacheKey) {
+      const existing = await readFile(svgPath, "utf8").catch(() => null);
+      if (existing) return svgStatistics(svgPath, existing);
+    }
+  }
+  const command = options.command || await findPdfToCairo();
   await run(command, ["-svg", "-f", String(pageNumber), "-l", String(pageNumber), pdfPath, svgPath], { timeout: 60_000 });
   const maximumByteLength = options.maximumByteLength ?? 2_500_000;
   let prepared = prepareFigmaVectorSvg(await readFile(svgPath, "utf8"), {
@@ -380,10 +436,8 @@ async function convertPdfToFigmaSvg(pdfPath, svgPath, options = {}) {
     maximumByteLength
   });
   await writeFile(svgPath, prepared, "utf8");
-  const drawableCount = (prepared
-    .replace(/<defs\b[\s\S]*?<\/defs\s*>/gi, "")
-    .match(/<(?:path|rect|circle|ellipse|polygon|polyline|line|image|use)\b/gi) || []).length;
-  return { path: svgPath, byteLength: Buffer.byteLength(prepared, "utf8"), drawableCount };
+  if (cacheKey) await writeFile(cacheKeyPath, cacheKey, "utf8").catch(() => {});
+  return svgStatistics(svgPath, prepared);
 }
 
 module.exports = {
@@ -395,5 +449,6 @@ module.exports = {
   indexPdfPages,
   isSwiftUiUnsupportedRendererSvg,
   parsePdfInfo,
-  prepareFigmaVectorSvg
+  prepareFigmaVectorSvg,
+  resolvePdfToCairo
 };

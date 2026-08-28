@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   chooseFolder: () => ipcRenderer.invoke("inventory:choose-folder"),
   listInventoryTargets: () => ipcRenderer.invoke("inventory:targets"),
   openInventory: (id) => ipcRenderer.invoke("inventory:open", id),
+  getInventoryFigmaLinks: (id) => ipcRenderer.invoke("inventory:figma-links", id),
   restoreFilteredPage: (source, item) => ipcRenderer.invoke("inventory:restore-filtered", source, item),
   // The project's own page, served and shown where a capture would have been.
   openPagePreview: (id, page, bounds) => ipcRenderer.invoke("inventory:preview-open", id, page, bounds),
@@ -47,7 +48,17 @@ contextBridge.exposeInMainWorld("uiSync", {
     };
   },
   exportHandoffPage: (inventory, title) => ipcRenderer.invoke("inventory:export", inventory, title),
+  readPageSnapshot: (reference) => ipcRenderer.invoke("inventory:snapshot", reference),
+  copyForPaper: (inventory, options) => ipcRenderer.invoke("inventory:copy-for-paper", inventory, options),
+  pushToPaper: (inventory, options) => ipcRenderer.invoke("inventory:push-to-paper", inventory, options),
+  getCapturePipeline: () => ipcRenderer.invoke("settings:capture-pipeline"),
+  setCapturePipeline: (pipeline) => ipcRenderer.invoke("settings:set-capture-pipeline", pipeline),
   revealFile: (filePath) => ipcRenderer.invoke("inventory:reveal", filePath),
+  onFigmaBuildProgress: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("inventory:figma-progress", listener);
+    return () => ipcRenderer.removeListener("inventory:figma-progress", listener);
+  },
   onScanProgress: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("inventory:progress", listener);
@@ -79,6 +90,9 @@ contextBridge.exposeInMainWorld("uiSync", {
   forgetFigmaConnection: () => ipcRenderer.invoke("figma:forget-connection"),
   copyText: (value) => ipcRenderer.invoke("clipboard:write", value),
   openFigma: (fileKey, nodeId) => ipcRenderer.invoke("figma:open", fileKey, nodeId),
+  openFigmaPluginPage: () => ipcRenderer.invoke("figma:open-plugin-page"),
+  runProject: (root) => ipcRenderer.invoke("projects:run", root),
+  stopProjectRun: (root) => ipcRenderer.invoke("projects:stop-run", root),
   startLivePreview: (root, capturePath, bounds) => ipcRenderer.invoke("preview:start", root, capturePath, bounds),
   setLivePreviewBounds: (bounds) => ipcRenderer.invoke("preview:set-bounds", bounds),
   navigateLivePreview: (capturePath) => ipcRenderer.invoke("preview:navigate", capturePath),

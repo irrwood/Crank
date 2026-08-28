@@ -180,3 +180,38 @@ test("a pill's radius is the one the browser draws, not the one it was written a
   assert.equal(pill.style.borderRadius, 17, "half the shorter side is the whole pill");
   assert.equal(avatar.style.borderRadius, 22, "and a square becomes a circle");
 });
+
+test("a page with more layers than Figma can be handed is refused, with the count", () => {
+  // A code editor with a project open is tens of thousands of elements. Handed
+  // over whole it is not a slow export but one that never visibly ends, which
+  // is what Ian saw: layers appearing without pause and no way to tell whether
+  // it was working or stuck.
+  const deep = (breadth, depth) => (depth === 0
+    ? { kind: "element", id: `leaf-${depth}-${breadth}`, x: 0, y: 0, width: 1, height: 1, style: {}, children: [] }
+    : { kind: "element", id: `n-${depth}`, x: 0, y: 0, width: 10, height: 10, style: {},
+      children: Array.from({ length: breadth }, () => deep(breadth, depth - 1)) });
+
+  const built = buildFigmaJob({
+    origin: "http://x",
+    pages: [
+      { id: "small", name: "Home", layerTree: { width: 1220, height: 790, tree: deep(3, 3) } },
+      { id: "huge", name: "Workbench", layerTree: { width: 1220, height: 790, tree: deep(10, 5) } }
+    ]
+  }, { identity: "url:http://x", projectName: "Editor", figmaFileName: "f" });
+
+  assert.equal(built.ok, true, "the pages that can be drawn still go");
+  assert.deepEqual(built.job.screens.map((screen) => screen.name), ["Home"]);
+  assert.deepEqual(built.missing, ["Workbench"], "and the one that cannot is named, not dropped in silence");
+  assert.match(built.missingReasons.join(" "), /Workbench has over 6,000 layers/);
+});
+
+test("every real page measured stays well inside the limit", () => {
+  // 936 is the busiest page of a thirty-page portfolio; 432 is a whole desktop
+  // app's densest screen. The limit exists for a code editor, not for design work.
+  const wide = { kind: "element", id: "root", x: 0, y: 0, width: 1220, height: 790, style: {},
+    children: Array.from({ length: 936 }, (_, index) => ({ kind: "element", id: `n${index}`, x: 0, y: 0, width: 4, height: 4, style: {}, children: [] })) };
+  const built = buildFigmaJob({ origin: "http://x", pages: [{ id: "p", name: "Work", layerTree: { width: 1220, height: 790, tree: wide } }] },
+    { identity: "url:http://x", projectName: "Portfolio", figmaFileName: "f" });
+  assert.equal(built.job.screens.length, 1);
+  assert.deepEqual(built.missing, []);
+});

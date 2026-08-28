@@ -2,6 +2,7 @@ const { BrowserWindow } = require("electron");
 const { randomBytes } = require("node:crypto");
 const { collectUiState, identityOf, isHtmlContentType, signatureOf } = require("./state-discovery.cjs");
 const { MAX_ASSET_BYTES, MAX_TOTAL_ASSET_BYTES, captureHtmlDocument } = require("./html-snapshot.cjs");
+const { isStableDomId, semanticLocator } = require("./replay-locator.cjs");
 
 /**
  * Records the pages someone visits while driving the app themselves.
@@ -42,7 +43,10 @@ function createRecordingSession(origin, { onCaptured, onNavigate, width = 1280, 
     }
     busy = true;
     try {
-      const snapshot = await contents.executeJavaScript(`(${collectUiState.toString()})()`, true).catch(() => null);
+      const snapshot = await contents.executeJavaScript(
+        `(${collectUiState.toString()})(undefined, ${isStableDomId.toString()}, ${semanticLocator.toString()})`,
+        true
+      ).catch(() => null);
       if (!snapshot) return;
       if (snapshot.contentType && !isHtmlContentType(snapshot.contentType)) return;
 

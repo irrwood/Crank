@@ -23,6 +23,17 @@ function chooseDevScript(scripts) {
   return null;
 }
 
+/** The lockfile that named the package manager, so a suggestion can cite it. */
+async function lockfileFor(root) {
+  for (const [lockfile] of packageManagerLockfiles) {
+    try {
+      await access(path.join(root, lockfile));
+      return lockfile;
+    } catch {}
+  }
+  return null;
+}
+
 async function detectPackageManager(root) {
   for (const [lockfile, manager] of packageManagerLockfiles) {
     try {
@@ -199,16 +210,25 @@ async function resolveDevCommand(root) {
       message: "This project has no dev, start, serve or preview script to run."
     };
   }
+  const packageManager = await detectPackageManager(root);
   try {
     await access(path.join(root, "node_modules"));
   } catch {
+    // Which package manager, and where — "install them" was true and useless.
+    // The lockfile is the project's own answer to the first half, and a
+    // freshly cloned project is the common way to arrive here.
+    const lockfile = await lockfileFor(root);
     return {
       ok: false,
       reason: "dependencies-missing",
-      message: "Dependencies are not installed. Install them in this project, then try again."
+      message: `This project's dependencies are not installed, so it cannot be started. Run ${packageManager} install in it, then scan again.`,
+      install: {
+        command: `${packageManager} install`,
+        source: lockfile ?? "package.json",
+        root
+      }
     };
   }
-  const packageManager = await detectPackageManager(root);
   const launcher = resolveLauncher(packageManager);
   if (!launcher) {
     return {

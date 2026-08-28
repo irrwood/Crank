@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   changeMagnitude,
   chooseStateName,
+  collectUiState,
   discoverStates,
   humanizeStateName,
   identityOf,
@@ -14,6 +15,7 @@ const {
   isSameDocument,
   planNextStep,
   rankCandidates,
+  reachState,
   signatureOf
 } = require("./state-discovery.cjs");
 
@@ -656,4 +658,93 @@ test("hands back the page it began at, so it is never mistaken for a discovery",
   assert.equal(found.length, 1, "only the genuinely new state survives");
   assert.ok(found[0].name.includes("Settings"));
   assert.notEqual(start.id, staleId, "the recomputed id does not match the stored one — which was the trap");
+});
+
+test("walks through a wrapper that has no box of its own", async () => {
+  // An app window is a stack of absolutely positioned layers: the element they
+  // hang under measures zero, and stopping there left every screen looking
+  // identical to every other.
+  const walked = collectUiState.toString();
+  assert.match(walked, /if \(visible\(element\)\) \{/);
+  assert.doesNotMatch(walked, /!\(element instanceof Element\) \|\| !visible\(element\)/);
+});
+
+test("names an app screen after its window, not after where the app is installed", () => {
+  const arguments_ = {
+    recipe: [],
+    route: "/Applications/Cursor.app/Contents/Resources/app/out/vs/code/workbench.html",
+    heading: "",
+    title: "Cursor Agents"
+  };
+  assert.equal(chooseStateName({ ...arguments_, addressable: false }), "Cursor Agents");
+  assert.match(chooseStateName(arguments_), /Applications/);
+});
+
+test("reaches a state by clicking when the app cannot be navigated", async () => {
+  const clicks = [];
+  const session = {
+    navigable: false,
+    look: async () => ({ url: "/app", candidates: [] }),
+    goto: async () => { throw new Error("an app that cannot be navigated must not be navigated"); },
+    click: async (locator) => { clicks.push(locator); return { url: "/app", candidates: [] }; }
+  };
+  const snapshot = await reachState(session, { route: "/app", recipe: [{ locator: "#one" }, { locator: "#two" }] });
+  assert.deepEqual(clicks, ["#one", "#two"]);
+  assert.ok(snapshot);
+});
+
+test("waits for an installed app to mount before discovering its controls", async () => {
+  const observations = [];
+  const session = {
+    navigable: false,
+    look: async (options) => {
+      observations.push(options);
+      return {
+        contentType: "text/html",
+        title: "Cursor Agents",
+        heading: "",
+        url: "/workbench.html",
+        fingerprint: ["main|ready||120x90"],
+        skeleton: ["main@0"],
+        candidates: []
+      };
+    }
+  };
+
+  const { states } = await discoverStates(session);
+  assert.deepEqual(observations, [{ patient: true }]);
+  assert.equal(states.length, 1);
+  assert.equal(states[0].name, "Cursor Agents");
+});
+
+test("hands each state over while it is still visible", async () => {
+  const session = fakeSession({
+    "/": {
+      title: "Home",
+      url: "/",
+      fingerprint: ["home"],
+      controls: [{ locator: "#settings", label: "Settings", to: "settings" }]
+    },
+    settings: { title: "Settings", url: "/", fingerprint: ["settings"], controls: [] }
+  });
+  const recorded = [];
+
+  await discoverStates(session, {
+    routes: ["/"],
+    maxDepth: 1,
+    onRecord: async (state) => recorded.push(state.name)
+  });
+
+  assert.deepEqual(recorded, ["Home", "Settings"]);
+});
+
+test("still loads the address when the app has one", async () => {
+  const visited = [];
+  const session = {
+    navigable: true,
+    goto: async (route) => { visited.push(route); return { url: route, candidates: [] }; },
+    click: async () => ({ url: "/app", candidates: [] })
+  };
+  await reachState(session, { route: "/settings", recipe: [] });
+  assert.deepEqual(visited, ["/settings"]);
 });

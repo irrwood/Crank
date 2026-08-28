@@ -291,4 +291,4 @@ async function renderHandoffPage(inventory, { title = "Design handoff", generate
 </html>`;
 }
 
-module.exports = { addressOf, escapeHtml, renderHandoffPage };
+module.exports = { addressOf, drawLayer, escapeHtml, renderHandoffPage };

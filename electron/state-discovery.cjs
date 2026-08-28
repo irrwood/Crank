@@ -194,11 +194,15 @@ function humanizeRoute(route) {
  * control that opened it ("全部记录", "常规") is written by the app's authors
  * and does not drift; headings and titles are used only when they look stable.
  */
-function chooseStateName({ recipe = [], route, heading, title }) {
+function chooseStateName({ recipe = [], route, heading, title, addressable = true }) {
   const label = recipe.length > 0 ? recipe[recipe.length - 1].label : null;
   const parts = [];
   if (label && !isVolatileText(label) && !isAppearanceLabel(label)) parts.push(label);
-  if (parts.length === 0 && route) parts.push(humanizeRoute(route));
+  // A running app's "route" is where its window happens to be installed. That
+  // is not the name of a screen — the first page of an app was arriving called
+  // "Applications Cursor.App Contents Resources App Out Vs Code…" — so what the
+  // window calls itself is used instead.
+  if (parts.length === 0 && route && addressable) parts.push(humanizeRoute(route));
   for (const candidate of [heading, title]) {
     if (parts.length >= 2) break;
     if (candidate && !isVolatileText(candidate)) parts.push(candidate);
@@ -255,7 +259,12 @@ function planNextStep(frontier, { maxDepth }) {
  * Runs inside the page. Returns a structural fingerprint plus the controls
  * worth trying. Kept dependency-free because it is serialized into the page.
  */
-function collectUiState() {
+function collectUiState(options, stableDomId, makeSemanticLocator) {
+  // An app draws its whole interface inside one box that is itself sized by its
+  // children, so the reader is told how deep to look. A web page's structure is
+  // near the top; a desktop app's is a dozen layers further in.
+  const walkDepth = options && options.walkDepth ? options.walkDepth : 12;
+  const maxNodes = options && options.maxNodes ? options.maxNodes : 1200;
   const visible = (element) => {
     const style = window.getComputedStyle(element);
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
@@ -263,10 +272,40 @@ function collectUiState() {
     return rect.width > 1 && rect.height > 1;
   };
 
+  const isStableId = typeof stableDomId === "function"
+    ? stableDomId
+    : (id) => Boolean(id) && !/^[0-9]/.test(id) && !/(?:^|[-_:])_?r_[a-z0-9]+_?$/i.test(id) && !/:r[a-z0-9]+:$/i.test(id);
+  const semanticLocator = typeof makeSemanticLocator === "function"
+    ? makeSemanticLocator
+    : (role, tag, name, index = 0) => `crank:a11y:${JSON.stringify({ role, tag, name, index })}`;
+
+  // The order the accessible name is actually computed in: a title is the last
+  // resort, after the element's own content, not the first thing tried.
+  const accessibleName = (element) => (
+    element.getAttribute("aria-label")
+    || (element.innerText || element.textContent || "").trim()
+    || element.getAttribute("title")
+    || ""
+  ).replace(/\s+/g, " ").slice(0, 60);
+  const roleOf = (element) => (
+    element.getAttribute("role")
+    || (element.tagName === "A" ? "link" : element.tagName === "BUTTON" ? "button" : "")
+  ).toLowerCase();
+
   const locatorFor = (element) => {
-    if (element.id && !/^[0-9]/.test(element.id)) return `#${CSS.escape(element.id)}`;
     const testId = element.getAttribute("data-testid") || element.getAttribute("data-test-id");
     if (testId) return `[data-testid="${CSS.escape(testId)}"]`;
+    if (isStableId(element.id)) return `#${CSS.escape(element.id)}`;
+
+    const name = accessibleName(element);
+    const role = roleOf(element);
+    const tag = element.tagName.toLowerCase();
+    if (name) {
+      const peers = Array.from(document.querySelectorAll("button,a[href],[role],[aria-label],[title],nav [class*=item],[class*=tab]:not([role])"))
+        .filter((candidate) => roleOf(candidate) === role && candidate.tagName.toLowerCase() === tag && accessibleName(candidate) === name);
+      return semanticLocator(role, tag, name, Math.max(0, peers.indexOf(element)));
+    }
+
     const parts = [];
     let node = element;
     let depth = 0;
@@ -293,36 +332,30 @@ function collectUiState() {
   // both translation and a theme change, and is what makes it the same page.
   const skeleton = [];
   const walk = (element, depth) => {
-    if (depth > 12 || fingerprint.length > 1200) return;
-    if (!(element instanceof Element) || !visible(element)) return;
+    if (depth > walkDepth || fingerprint.length > maxNodes) return;
+    if (!(element instanceof Element)) return;
     const tag = element.tagName.toLowerCase();
     if (tag === "script" || tag === "style") return;
-    const own = [...element.childNodes]
-      .filter((node) => node.nodeType === 3)
-      .map((node) => node.textContent.trim())
-      .join(" ")
-      .replace(/\d[\d.,:/-]*/g, "#")
-      .slice(0, 60);
-    const rect = element.getBoundingClientRect();
-    const box = `${Math.round(rect.width / 8)}x${Math.round(rect.height / 8)}`;
-    fingerprint.push(`${tag}|${element.className && typeof element.className === "string" ? element.className.slice(0, 40) : ""}|${own}|${box}`);
-    skeleton.push(`${tag}@${depth}`);
+    // An element with no box of its own is not recorded — but the walk carries
+    // on through it. An app whose window is a stack of absolutely positioned
+    // layers hangs its entire interface under a wrapper that measures zero, and
+    // stopping there left the fingerprint empty: every screen then looked
+    // identical to every other, which is a scan that finds one page.
+    if (visible(element)) {
+      const own = [...element.childNodes]
+        .filter((node) => node.nodeType === 3)
+        .map((node) => node.textContent.trim())
+        .join(" ")
+        .replace(/\d[\d.,:/-]*/g, "#")
+        .slice(0, 60);
+      const rect = element.getBoundingClientRect();
+      const box = `${Math.round(rect.width / 8)}x${Math.round(rect.height / 8)}`;
+      fingerprint.push(`${tag}|${element.className && typeof element.className === "string" ? element.className.slice(0, 40) : ""}|${own}|${box}`);
+      skeleton.push(`${tag}@${depth}`);
+    }
     for (const child of element.children) walk(child, depth + 1);
   };
   walk(root, 0);
-
-  // The order the accessible name is actually computed in: a title is the last
-  // resort, after the element's own content, not the first thing tried. Taking
-  // it first named pages after tooltips — this app's sidebar puts the project's
-  // full path in a title and its name in the text, so every page it reached was
-  // named "/Users/someone/Documents/…", which then travelled into Figma frame
-  // names and the exported handoff page.
-  const accessibleName = (element) => (
-    element.getAttribute("aria-label")
-    || (element.innerText || element.textContent || "").trim()
-    || element.getAttribute("title")
-    || ""
-  ).replace(/\s+/g, " ").slice(0, 60);
 
   const interactiveSelector = [
     "[role=tab]", "[role=menuitem]", "[role=menuitemradio]", "[role=option]",
@@ -378,6 +411,27 @@ function collectUiState() {
  * visual state. `open` is injected so the traversal logic stays testable
  * without Electron: it must expose { goto, click, read, close }.
  */
+/**
+ * Puts the app on the screen a state names.
+ *
+ * With addresses this is a fresh load followed by the clicks that were
+ * recorded, which is what makes a state reproducible. A running desktop app has
+ * no address to load: reloading it would restart the application, so its states
+ * are reached by clicking from wherever the app currently is. Top-level
+ * controls — a sidebar, a tab bar, a toolbar — switch the same way from any
+ * screen, which is what makes that work in practice.
+ */
+async function reachState(session, { route, recipe = [] }, { patient = false } = {}) {
+  let snapshot = session.navigable === false
+    ? await session.look({ patient })
+    : await session.goto(route, { patient });
+  for (const step of recipe) {
+    if (!snapshot) return null;
+    snapshot = await session.click(step.locator, { patient });
+  }
+  return snapshot;
+}
+
 async function discoverStates(session, {
   routes = ["/"],
   // Start at one known state instead of at the app's entry routes, so the walk
@@ -394,7 +448,8 @@ async function discoverStates(session, {
   // clear the threshold. The judgement is the user's; the measurement only
   // decides the default.
   keepAnyway = new Set(),
-  onProgress
+  onProgress,
+  onRecord
 } = {}) {
   const states = [];
   const bySignature = new Map();
@@ -439,6 +494,7 @@ async function discoverStates(session, {
    * cheap to recapture and independent of the path that first found them.
    */
   const simplify = async (snapshot, recipe, entryRoute, signature) => {
+    if (session.navigable === false) return { recipe, entryRoute };
     if (recipe.length === 0 || !snapshot.url || snapshot.url === entryRoute) return { recipe, entryRoute };
     const direct = await session.goto(snapshot.url);
     if (direct && signatureOf(direct.fingerprint) === signature) return { recipe: [], entryRoute: snapshot.url };
@@ -483,13 +539,15 @@ async function discoverStates(session, {
       };
       existing.variants.push(variant);
       bySignature.set(signature, existing);
+      await onRecord?.(variant);
       return null;
     }
     const name = chooseStateName({
       recipe,
       route: entryRoute,
       heading: snapshot.heading,
-      title: snapshot.title
+      title: snapshot.title,
+      addressable: session.navigable !== false
     });
     const state = {
       id: claimIdentity(entryRoute, recipe),
@@ -506,6 +564,7 @@ async function discoverStates(session, {
     bySkeleton.set(skeleton, state);
     states.push(state);
     onProgress?.(state);
+    await onRecord?.(state);
     remember(state.route);
     remember(snapshot.url);
 
@@ -537,6 +596,13 @@ async function discoverStates(session, {
     }
     if (!snapshot) return { states, skipped, filtered, inert, start: null, reached: false };
     start = await record(snapshot, from.recipe ?? [], from.route);
+  } else if (session.navigable === false) {
+    // An installed app exposes its debugging window before React has mounted
+    // the controls inside it. Reading immediately turned Cursor into one empty
+    // "State" even though the later screenshot showed the complete Agents UI.
+    // Give only this first observation the same patient settle as capture.
+    const snapshot = await session.look({ patient: true });
+    if (snapshot) await record(snapshot, [], routes[0] ?? "/");
   } else {
     for (const route of routes) {
       if (states.length >= maxStates) break;
@@ -563,14 +629,8 @@ async function discoverStates(session, {
       await session.reset?.();
       dirty = false;
     }
-    let snapshot = await session.goto(step.from.entryRoute);
+    let snapshot = await reachState(session, { route: step.from.entryRoute, recipe });
     if (!snapshot) continue;
-    let reached = true;
-    for (const action of recipe) {
-      snapshot = await session.click(action.locator);
-      if (!snapshot) { reached = false; break; }
-    }
-    if (!reached) continue;
     if (isAppearanceLabel(step.action.label)) dirty = true;
 
     // A control that only opened a dropdown or a tooltip did not produce a
@@ -632,6 +692,7 @@ async function discoverStates(session, {
 module.exports = {
   collectUiState,
   discoverStates,
+  reachState,
   changeMagnitude,
   chooseStateName,
   humanizeRoute,

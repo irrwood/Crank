@@ -194,7 +194,10 @@ async function ensureFontLoaded(fonts, font) {
 
 async function resolveMeasuredFont(fonts, measuredStyle, value) {
   const systemFamilies = new Set([
-    "systemui", "uisansserif", "sansserif", "apple-system", "blinkmacsystemfont",
+    // Compared after normalizedName, which strips the punctuation — so
+    // "apple-system" here never matched the "-apple-system" every Mac app
+    // actually asks for, and each one was reported as a substitution it was not.
+    "systemui", "uisansserif", "sansserif", "applesystem", "blinkmacsystemfont",
     "sfpro", "sfprotext", "sfprodisplay"
   ]);
   const requested = measuredStyle?.resolvedFontFamily
@@ -339,7 +342,11 @@ function createTextNode(value, fonts, options = {}) {
   const text = figma.createText();
   const weight = options.weight || "regular";
   const content = parseInlineMarkdown(value);
-  text.name = options.name || "Text";
+  // Named only when the layer is something other than what it says. Figma
+  // names an untouched text layer after its own content and keeps the two in
+  // step as it is edited, which is what a designer expects to find in the
+  // layer list — setting any name at all turns that off for good.
+  if (options.name) text.name = options.name;
   text.fontName = fontForText(fonts, content.characters, weight);
   text.fontSize = options.size || 17;
   text.characters = content.characters;
@@ -650,11 +657,14 @@ function appleButtonSize(ir) {
   return "Large";
 }
 
-async function createMarkedAppleButton(ir, context = {}, page = figma.currentPage) {
+async function createMarkedAppleButton(ir, context = {}, page = figma.currentPage, known = null) {
   if (!["glass", "glassProminent"].includes(ir.material)) return null;
   const label = firstButtonText(ir);
   if (!label) return null;
-  const template = await markedSystemTemplate("Button", page);
+  // Looked up once per render when the caller already has it. Each lookup makes
+  // the template's page current, and switching pages under a render that is
+  // holding nodes is how a handle goes stale.
+  const template = known ?? await markedSystemTemplate("Button", page);
   if (!template) return null;
   const instance = template.clone();
   if (instance.type !== "INSTANCE") {
@@ -1308,17 +1318,65 @@ async function renderSnapshotContent(frame, screen, pairingCode, managed) {
   return "rendered";
 }
 
+/**
+ * A CSS colour as Figma's 0–1 channels, or null when it is not one.
+ *
+ * Chromium hands back `color(srgb 0.13 0.13 0.13)` for anything a stylesheet
+ * wrote in modern colour syntax — `color-mix()`, a relative colour, a wide-gamut
+ * literal — and a parser that only knew rgb() silently returned nothing for all
+ * of them. Nothing, not black: the fill was simply never set, so Cursor's whole
+ * dark interface arrived in Figma as empty frames. 703 colours across the scans
+ * on this machine are in that syntax.
+ *
+ * display-p3 is converted rather than dropped, because a Mac reports colours in
+ * it whenever the display is wide-gamut, and Figma's canvas is sRGB.
+ */
+function parseCssColor(value) {
+  const text = String(value ?? "").trim();
+  const legacy = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.%]+))?\s*\)$/i.exec(text);
+  if (legacy) {
+    return {
+      r: Math.min(1, Number(legacy[1]) / 255),
+      g: Math.min(1, Number(legacy[2]) / 255),
+      b: Math.min(1, Number(legacy[3]) / 255),
+      a: alphaOf(legacy[4])
+    };
+  }
+  const modern = /^color\(\s*(srgb|srgb-linear|display-p3)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)(?:\s*\/\s*([\d.%]+))?\s*\)$/i.exec(text);
+  if (!modern) return null;
+  const clamp = (channel) => Math.max(0, Math.min(1, Number(channel)));
+  const [space, red, green, blue] = [modern[1].toLowerCase(), clamp(modern[2]), clamp(modern[3]), clamp(modern[4])];
+  const converted = space === "display-p3" ? p3ToSrgb(red, green, blue) : { r: red, g: green, b: blue };
+  return { ...converted, a: alphaOf(modern[5]) };
+}
+
+function alphaOf(value) {
+  if (value === undefined) return 1;
+  const text = String(value);
+  const number = text.endsWith("%") ? Number(text.slice(0, -1)) / 100 : Number(text);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 1;
+}
+
+/** Display P3 to sRGB, through linear light, as the CSS colour spec defines it. */
+function p3ToSrgb(red, green, blue) {
+  const toLinear = (channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  const toGamma = (channel) => {
+    const clamped = Math.max(0, Math.min(1, channel));
+    return clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055;
+  };
+  const [r, g, b] = [toLinear(red), toLinear(green), toLinear(blue)];
+  return {
+    r: toGamma(1.2249401 * r - 0.2249404 * g + 0.0000000 * b),
+    g: toGamma(-0.0420569 * r + 1.0420571 * g + 0.0000000 * b),
+    b: toGamma(-0.0196376 * r - 0.0786361 * g + 1.0982735 * b)
+  };
+}
+
 /** @param {string} value @returns {SolidPaint[]} */
 function cssPaint(value) {
-  const match = String(value || "").match(/^rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i);
-  if (!match) return [];
-  const opacity = match[4] === undefined ? 1 : Number(match[4]);
-  if (opacity <= 0) return [];
-  return [{
-    type: "SOLID",
-    color: { r: Number(match[1]) / 255, g: Number(match[2]) / 255, b: Number(match[3]) / 255 },
-    opacity
-  }];
+  const parsed = parseCssColor(value);
+  if (!parsed || parsed.a <= 0) return [];
+  return [{ type: "SOLID", color: { r: parsed.r, g: parsed.g, b: parsed.b }, opacity: parsed.a }];
 }
 
 function domFont(fonts, weight) {
@@ -1419,12 +1477,30 @@ async function renderDomNode(ir, fonts) {
     return positionDomNode(vector, ir);
   }
   if (ir.kind === "image") {
-    const encoded = ir.dataUrl.slice(ir.dataUrl.indexOf(",") + 1);
-    const image = figma.createImage(figma.base64Decode(encoded));
     const rectangle = figma.createRectangle();
     rectangle.resize(ir.width, ir.height);
-    rectangle.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
-    return positionDomNode(rectangle, ir);
+    // createImage reads PNG, JPEG and GIF. Anything else is not a smaller
+    // picture here, it is no picture — and handed one it throws, which took
+    // down the whole render partway and left a half-drawn page on the canvas.
+    // An empty shape in the right place, and the format named in the report,
+    // is a thing someone can act on.
+    const type = String(ir.dataUrl || "").slice(5, String(ir.dataUrl || "").indexOf(";"));
+    let unreadable = ["image/png", "image/jpeg", "image/gif"].includes(type) ? "" : (type || "unknown format");
+    if (!unreadable) {
+      try {
+        const image = figma.createImage(figma.base64Decode(ir.dataUrl.slice(ir.dataUrl.indexOf(",") + 1)));
+        rectangle.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
+      } catch (cause) {
+        unreadable = String((cause && cause.message) || cause).slice(0, 80);
+      }
+    }
+    positionDomNode(rectangle, ir);
+    // Named after positioning, which sets the name from the capture.
+    if (unreadable) {
+      rectangle.name = `Unreadable image (${unreadable})`;
+      rectangle.fills = [];
+    }
+    return rectangle;
   }
 
   const container = figma.createFrame();
@@ -1511,12 +1587,11 @@ function createRuntimeTextLayer(ir, frame, fonts, suffix = "") {
   return text;
 }
 
-function createPdfTextLayer(run, fonts, index, pageWidth = null) {
+function createPdfTextLayer(run, fonts, pageWidth = null) {
   const text = createTextNode(run.text, fonts, {
     size: run.fontSize,
     weight: run.fontWeight,
-    color: run.color,
-    name: `Editable PDF Text ${index + 1}`
+    color: run.color
   });
   // Poppler reports the visual glyph bounds from the embedded PDF font. The
   // locally available editable font can be wider (notably PingFang), which
@@ -1734,8 +1809,9 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
     vector.y = 0;
   }
 
+  let textGroup = null;
   if (screen.vectorTextMode !== "pdf-glyphs") {
-    const textGroup = figma.createFrame();
+    textGroup = figma.createFrame();
     textGroup.name = "Editable Text";
     textGroup.layoutMode = "NONE";
     textGroup.resize(viewport.width, viewport.height);
@@ -1746,8 +1822,8 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
     textGroup.y = 0;
 
     if (screen.vectorTextMode === "editable-pdf") {
-      for (const [index, run] of (screen.vectorTextRuns || []).entries()) {
-        textGroup.appendChild(createPdfTextLayer(run, fonts, index, viewport.width));
+      for (const run of screen.vectorTextRuns || []) {
+        textGroup.appendChild(createPdfTextLayer(run, fonts, viewport.width));
       }
     } else {
       for (const ir of runtimeTextRuns(screen.uiTree)) {
@@ -1760,11 +1836,14 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
     }
   }
 
+  const systemPage = frame.parent?.type === "PAGE" ? frame.parent : figma.currentPage;
+  await placeSystemGlassButtons(screen, root, vector, textGroup, systemPage);
+
   const systemTabBar = await createSystemTabBar(
     screen,
     fonts,
     viewport.width,
-    frame.parent?.type === "PAGE" ? frame.parent : figma.currentPage
+    systemPage
   );
   if (systemTabBar) {
     root.appendChild(systemTabBar);
@@ -1777,6 +1856,101 @@ async function renderHybridSwiftContent(frame, screen, fonts, managed) {
   root.x = 0;
   root.y = 0;
   return "rendered";
+}
+
+/**
+ * Puts Apple's own button where the export drew a picture of one.
+ *
+ * A `.buttonStyle(.glass)` button is not a shape somebody designed — it is the
+ * system's, and a file that has the system's component should get that
+ * component carrying this button's words. The same bargain the Tab Bar strikes.
+ *
+ * What the export drew in that spot is taken out first: the vector shapes
+ * inside the button's frame, and the editable text run of its own label. Glass
+ * is translucent, so leaving them would show one button through the other, with
+ * the label written twice.
+ */
+async function placeSystemGlassButtons(screen, root, vector, textGroup, page) {
+  const buttons = screen.systemButtons || [];
+  if (buttons.length === 0) return 0;
+  const template = await markedSystemTemplate("Button", page);
+  if (!template) return 0;
+
+  let placed = 0;
+  for (const button of buttons) {
+    const instance = await createMarkedAppleButton(
+      {
+        material: button.material,
+        text: button.label,
+        controlSize: button.controlSize,
+        isEnabled: button.isEnabled,
+        destructive: button.destructive,
+        runtimeFrame: button.frame,
+        runtimeEnvironment: screen.uiTree?.runtimeEnvironment
+      },
+      {},
+      page,
+      template
+    );
+    if (!instance) continue;
+    clearVectorRegion(vector, button.frame);
+    clearTextRegion(textGroup, button.frame);
+    root.appendChild(instance);
+    // Placed at its own size rather than stretched to the captured frame: the
+    // component carries Apple's metrics, and the frame only says where.
+    instance.x = button.frame.x + (button.frame.width - instance.width) / 2;
+    instance.y = button.frame.y + (button.frame.height - instance.height) / 2;
+    instance.setSharedPluginData(NAMESPACE, "swift_sync_id", String(button.syncId || ""));
+    placed += 1;
+  }
+  return placed;
+}
+
+/** Whether a node sits wholly inside a region, give or take a hairline. */
+function withinRegion(bounds, region, tolerance = 1.5) {
+  return bounds.width > 0 && bounds.height > 0
+    && bounds.x >= region.x - tolerance
+    && bounds.y >= region.y - tolerance
+    && bounds.x + bounds.width <= region.x + region.width + tolerance
+    && bounds.y + bounds.height <= region.y + region.height + tolerance;
+}
+
+function contains(ancestor, node) {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (parent === ancestor) return true;
+  }
+  return false;
+}
+
+function clearVectorRegion(vector, region) {
+  if (!vector || vector.removed) return;
+  // Measured before anything is removed. Taking a container out mid-walk leaves
+  // every node below it invalid, and reading one of those is what makes Figma
+  // report a callback with an invalid id.
+  const targets = [];
+  for (const node of vector.findAll(() => true)) {
+    try {
+      if (withinRegion(boundsRelativeToVector(node, vector), region)) targets.push(node);
+    } catch {
+      // A node that cannot be measured is not one this can judge.
+    }
+  }
+  for (const node of targets) {
+    if (targets.some((other) => other !== node && contains(other, node))) continue;
+    try { node.remove(); } catch { /* already gone with the parent that held it */ }
+  }
+}
+
+function clearTextRegion(textGroup, region) {
+  if (!textGroup || textGroup.removed) return;
+  for (const node of [...textGroup.children]) {
+    try {
+      const bounds = { x: Number(node.x || 0), y: Number(node.y || 0), width: node.width, height: node.height };
+      if (withinRegion(bounds, region, 3)) node.remove();
+    } catch {
+      // Already gone.
+    }
+  }
 }
 
 function vectorViewport(screen) {

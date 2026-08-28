@@ -249,6 +249,12 @@ a {
   font-size: 14px;
 }
 
+/* The one phrase on the page worth picking out of a paragraph. */
+.support-card strong {
+  color: var(--blue);
+  font-weight: 600;
+}
+
 .support-tags {
   display: flex;
   flex-wrap: wrap;
@@ -263,6 +269,40 @@ a {
   color: var(--blue);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+}
+
+/* Three cards, not four: a row of four with one gap left over reads as a card
+   that failed to load. */
+/* One card across the row, for the thing that is better shown than listed. */
+.supports-grid--wide {
+  grid-template-columns: 1fr;
+}
+
+.supports-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Two of these sections in a row would otherwise sit 96px apart, which reads
+   as the second one belonging to something else. */
+.supports + .supports {
+  padding-top: 24px;
+}
+
+.support-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag-new {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  border: 1px solid var(--blue-line);
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 /* ---------- footer ---------- */
@@ -289,6 +329,12 @@ a {
   .supports-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  /* The odd card would be stranded alone on the second row; three narrower
+     ones still read across at this width. */
+  .supports-grid--three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -300,7 +346,8 @@ a {
     font-size: 36px;
   }
 
-  .supports-grid {
+  .supports-grid,
+  .supports-grid--three {
     grid-template-columns: 1fr;
   }
 }

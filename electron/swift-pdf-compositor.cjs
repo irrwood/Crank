@@ -3,9 +3,7 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { z } = require("zod");
 const { shippedPath } = require("./packaged-path.cjs");
-
-const xcodeSwiftCompilerPath = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc";
-const xcodeMacSdkPath = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
+const { resolveXcodePaths } = require("./xcode-paths.cjs");
 
 const compositionSchema = z.object({
   basePdfPath: z.string().min(1),
@@ -44,28 +42,43 @@ function run(command, arguments_) {
   });
 }
 
+const COMPOSITOR_BINARY_NAME = "ui-sync-pdf-compositor";
+
+function prebuiltCompositorPath() {
+  return path.resolve(shippedPath("swift-tools"), "prebuilt", COMPOSITOR_BINARY_NAME);
+}
+
+/** Shared with the packaging step, which ships the tool rather than its source. */
+async function compileCompositorBinary(binaryPath, xcode) {
+  await mkdir(path.dirname(binaryPath), { recursive: true });
+  await run(xcode.swiftc, [
+    "-sdk", xcode.macosSdk,
+    "-target", `${process.arch === "x64" ? "x86_64" : "arm64"}-apple-macosx14.0`,
+    path.resolve(shippedPath("swift-tools"), "UISyncPdfCompositor", "main.swift"),
+    "-o", binaryPath
+  ]);
+  return binaryPath;
+}
+
 async function ensureCompositorBinary(cacheDirectory) {
-  if (!(await exists(xcodeSwiftCompilerPath))) {
+  const xcode = await resolveXcodePaths();
+  if (!xcode || !(await exists(xcode.swiftc))) {
     throw new Error("The full Xcode toolchain is required to compose SwiftUI PDF pages");
   }
+  // A built app carries the compiled tool and not the Swift it was written in.
+  const prebuilt = prebuiltCompositorPath();
+  if (await exists(prebuilt)) return prebuilt;
   const sourcePath = path.resolve(shippedPath("swift-tools"), "UISyncPdfCompositor", "main.swift");
   const binaryDirectory = path.join(cacheDirectory, "pdf-compositor");
   const binaryPath = path.join(binaryDirectory, "ui-sync-pdf-compositor");
   await mkdir(binaryDirectory, { recursive: true });
   const [sourceInfo, compilerInfo, binaryInfo] = await Promise.all([
     stat(sourcePath),
-    stat(xcodeSwiftCompilerPath),
+    stat(xcode.swiftc),
     stat(binaryPath).catch(() => null)
   ]);
   const newestInput = Math.max(sourceInfo.mtimeMs, compilerInfo.mtimeMs);
-  if (!binaryInfo || binaryInfo.mtimeMs < newestInput) {
-    await run(xcodeSwiftCompilerPath, [
-      "-sdk", xcodeMacSdkPath,
-      "-target", `${process.arch === "x64" ? "x86_64" : "arm64"}-apple-macosx14.0`,
-      sourcePath,
-      "-o", binaryPath
-    ]);
-  }
+  if (!binaryInfo || binaryInfo.mtimeMs < newestInput) await compileCompositorBinary(binaryPath, xcode);
   return binaryPath;
 }
 
@@ -86,4 +99,4 @@ async function composePdfPage(input) {
   return options.outputPath;
 }
 
-module.exports = { composePdfPage, ensureCompositorBinary };
+module.exports = { compileCompositorBinary, composePdfPage, ensureCompositorBinary, prebuiltCompositorPath };

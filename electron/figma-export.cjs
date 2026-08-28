@@ -93,17 +93,57 @@ function unavailableFonts(inventory) {
 }
 
 /**
+ * How many layers one page may contribute.
+ *
+ * Every real page measured here is far under it — the biggest in a thirty-page
+ * portfolio is 936, a whole desktop app's busiest screen is 432. A code editor
+ * with a project open is a different kind of document: its file tree, its
+ * syntax-highlighted buffer and its minimap are tens of thousands of elements,
+ * and handing Figma that many is not a slow export, it is one that never
+ * visibly ends — layers appearing without pause and no way to tell whether it
+ * is working or stuck.
+ *
+ * Refused whole rather than truncated. Half a page of layers is not a design
+ * anyone can use, and the count is what tells the person what they are up
+ * against.
+ */
+const MAX_LAYERS_PER_SCREEN = 6_000;
+
+function countLayers(node, limit) {
+  if (!node) return 0;
+  let total = 1;
+  for (const child of node.children ?? []) {
+    total += countLayers(child, limit);
+    // Counting every node of a runaway page is itself the wrong amount of work.
+    if (total > limit) return total;
+  }
+  return total;
+}
+
+/**
  * Builds the job. Pages without a captured layer tree are left out and
  * reported rather than sent as empty frames, which would look like a
  * successful export of a blank screen.
  */
 function buildFigmaJob(inventory, { identity, projectName, figmaFileName, operation = "push" } = {}) {
-  const pages = (inventory?.pages ?? []).filter((page) => page?.layerTree?.tree);
+  const withLayers = (inventory?.pages ?? []).filter((page) => page?.layerTree?.tree);
+  const oversized = withLayers
+    .map((page) => ({ layers: countLayers(page.layerTree.tree, MAX_LAYERS_PER_SCREEN), page }))
+    .filter((entry) => entry.layers > MAX_LAYERS_PER_SCREEN);
+  const tooBig = new Set(oversized.map((entry) => entry.page));
+  const pages = withLayers.filter((page) => !tooBig.has(page));
   const without = (inventory?.pages ?? []).filter((page) => !page?.layerTree?.tree);
-  const missing = without.map((page) => page?.name ?? "(unnamed)");
+  const missing = [
+    ...without.map((page) => page?.name ?? "(unnamed)"),
+    ...oversized.map((entry) => entry.page?.name ?? "(unnamed)")
+  ];
   // The capture knows why a page has no layers. Saying "no layers" back to
   // someone who can already see that is not a report; the reason is.
-  const missingReasons = [...new Set(without.map((page) => page?.layerError).filter(Boolean))];
+  const missingReasons = [...new Set([
+    ...without.map((page) => page?.layerError).filter(Boolean),
+    ...oversized.map((entry) =>
+      `${entry.page?.name ?? "A page"} has over ${MAX_LAYERS_PER_SCREEN.toLocaleString("en-US")} layers, more than Figma can be handed at once.`)
+  ])];
 
   if (pages.length === 0) {
     const reason = missingReasons.length > 0

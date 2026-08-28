@@ -1,5 +1,12 @@
 import { packager } from "@electron/packager";
-import { rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
+
+const require = createRequire(import.meta.url);
+const { compileScannerBinary } = require("../electron/swift-syntax-backend.cjs");
+const { compileCompositorBinary } = require("../electron/swift-pdf-compositor.cjs");
+const { requireXcodePaths } = require("../electron/xcode-paths.cjs");
 
 /**
  * Builds the macOS app someone can be handed.
@@ -13,6 +20,18 @@ const [, , ...args] = process.argv;
 const arch = args.find((value) => value.startsWith("--arch="))?.slice("--arch=".length) ?? "arm64";
 
 await rm("release", { recursive: true, force: true });
+
+// The Swift tools ship compiled. They are the one part of this app that is not
+// open, and unpacking them beside the archive — which `swiftc` needs in order
+// to read them at all — would otherwise put their source in every copy handed
+// out, in plain text, one right-click away.
+const prebuilt = path.resolve("swift-tools", "prebuilt");
+await rm(prebuilt, { recursive: true, force: true });
+await mkdir(prebuilt, { recursive: true });
+const xcode = await requireXcodePaths("Install the full Xcode app before packaging: the Swift tools are compiled into the build");
+await compileScannerBinary(path.join(prebuilt, "ui-sync-swift-scanner"), xcode);
+await compileCompositorBinary(path.join(prebuilt, "ui-sync-pdf-compositor"), xcode);
+console.log("compiled the Swift tools into swift-tools/prebuilt");
 const [built] = await packager({
   dir: ".",
   name: "Crank",
@@ -29,9 +48,32 @@ const [built] = await packager({
   // ships. A first attempt at this shipped 67 browser console logs from a
   // debugging session. This is everything the app actually runs from.
   ignore: (file) => {
+    // node_modules is the exception to the rule below, and the reason for the
+    // rule does not apply to it: it holds nobody's work but its authors', so a
+    // list of what to leave out cannot one day leak something of the user's.
+    // What it can do is ship sixty megabytes nothing runs.
+    //
+    // Three things are in there that the packaged app never loads. Vite's
+    // pre-bundle cache and the dev tools' shims are build leftovers. And every
+    // package the *renderer* imports is already inside `dist` — Vite bundled
+    // it — so a second copy travels along as source for no one.
+    if (/^\/node_modules\/\.(vite|bin)(\/|$)/.test(file)) return true;
+    const bundledIntoDist = [
+      "lucide-react", "react", "react-dom", "scheduler",
+      "@xyflow/react", "@xyflow/system", "zustand",
+      "@dagrejs/dagre", "@dagrejs/graphlib"
+    ];
+    if (bundledIntoDist.some((name) => file === `/node_modules/${name}` || file.startsWith(`/node_modules/${name}/`))) {
+      return true;
+    }
     if (file === "") return false;
-    const shipped = ["/package.json", "/electron", "/dist", "/assets", "/figma-plugin", "/swift-tools", "/shared", "/node_modules"];
+    // `/swift-sdk` holds the capture agent that is appended into a copy of a
+    // SwiftUI project at scan time. Left out, a packaged build could open an
+    // iOS project and never read a display list from it.
+    const shipped = ["/package.json", "/electron", "/dist", "/assets", "/figma-plugin", "/swift-sdk", "/swift-tools", "/shared", "/node_modules"];
     if (/\.test\.cjs$/.test(file)) return true;
+    // Compiled above and shipped from swift-tools/prebuilt instead.
+    if (/^\/swift-tools\/.*\.swift$/.test(file)) return true;
     return !shipped.some((entry) => file === entry || file.startsWith(`${entry}/`));
   },
   appBundleId: "com.crank.desktop",

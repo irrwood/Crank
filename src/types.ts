@@ -1,3 +1,9 @@
+/**
+ * Which way a SwiftUI project is captured. `both` runs the two paths against
+ * one launch of the app, so their results can be compared directly.
+ */
+export type CapturePipeline = "vector-pdf" | "display-list" | "both";
+
 export type ProjectInfo = {
   id: string;
   root: string;
@@ -159,6 +165,13 @@ export type SyncDirection = "to-figma" | "to-local";
 export type AppView = "connections";
 export type ReviewState = "idle" | "checking" | "review" | "syncing" | "complete";
 
+/** Which page of a Figma send is being rendered, while the send is in flight. */
+export type FigmaBuildProgress = {
+  name: string;
+  done: number;
+  total: number;
+};
+
 export type AutomaticMappingSession = {
   pairingCode: string;
   expiresAt: string;
@@ -315,8 +328,17 @@ export type SemanticChange = {
 export type FigmaTree = { width: number; height: number; tree: unknown; error?: string };
 
 export type HtmlSnapshot = {
-  /** The page's own document, with its pictures held as stored references. */
-  html: string;
+  /**
+   * The page's own document, with its pictures held as stored references.
+   *
+   * Present on a scan just taken. A scan read from disk carries `ref` instead:
+   * the markup is most of a scan's weight and is fetched for the one page
+   * someone opens, rather than carried across for all of them.
+   */
+  html?: string;
+  ref?: string | null;
+  /** The anchors in that document, read once so the flow view need not. */
+  links?: Array<{ href: string; label: string }>;
   bytes: number;
   stats: {
     stylesheets: number;
@@ -336,6 +358,8 @@ export type PageVariant = {
   recipe: Array<{ kind: string; locator: string; label: string }>;
   thumbnail: { dataUrl: string; width: number; height: number } | null;
   layerTree: FigmaTree | null;
+  /** Why replay did not produce a capture, when it did not. */
+  layerError?: string | null;
   snapshot: HtmlSnapshot | null;
 };
 
@@ -356,8 +380,23 @@ export type DiscoveredPage = {
   thumbnail: { dataUrl: string; width: number; height: number } | null;
   /** Layers: what a card draws, and what is exported to Figma. */
   layerTree: FigmaTree | null;
+  /** Why replay did not produce a capture, when it did not. */
+  layerError?: string | null;
   /** The page's own document — the one view of it that is not an approximation. */
   snapshot: HtmlSnapshot | null;
+  /**
+   * Present when the page was exported from a running iOS app rather than
+   * captured in a browser. It names the exported PDF page; the export itself
+   * stays on disk. Such a page has no address, so it cannot be reloaded,
+   * recaptured, or walked further.
+   */
+  vector?: {
+    pageId: string;
+    width: number;
+    height: number;
+    renderSource?: "image-renderer" | "window-fallback" | null;
+    sourceName?: string | null;
+  } | null;
   /** The same page re-skinned — theme or language — not separate pages. */
   variants: PageVariant[];
 };
@@ -380,7 +419,17 @@ export type InventoryTarget = {
   pageCount: number | null;
   /** The workspace this was picked out of, when it was. */
   parent: string | null;
+  /** The Figma file this project's pages were last sent to. */
+  figmaUrl?: string | null;
+  /** What the last scan found this to be. */
+  platform?: "web" | "swiftui" | null;
 };
+
+/** Exact Figma frames reported by the plugin after a successful import. */
+export type InventoryFigmaLinks = {
+  fileKey: string;
+  frames: Record<string, { nodeId: string; frameName: string }>;
+} | null;
 
 /** A folder holding several scanned packages, shown as one expandable entry. */
 export type InventoryGroup = {
@@ -396,13 +445,23 @@ export type InventoryGroup = {
 export type WorkspacePackage = { root: string; name: string };
 
 export type PageInventory =
-  | { ok: false; message: string; reason?: string; packages?: WorkspacePackage[]; foreign?: ForeignProject }
+  | {
+      ok: false;
+      message: string;
+      reason?: string;
+      packages?: WorkspacePackage[];
+      foreign?: ForeignProject;
+      /** The command that would make this project runnable, and what named it. */
+      install?: { command: string; source: string; root: string };
+    }
   | {
       ok: true;
       /** Where the pages were served from on this run — a fresh port each scan. */
       origin: string;
       /** What was scanned: the folder, or the address as typed. Stable. */
       source?: { kind: "folder" | "url"; target: string };
+      /** What this turned out to be — an app that is built and run, or a served one. */
+      platform?: "web" | "swiftui";
       pages: DiscoveredPage[];
       /** Controls skipped because their label reads as destructive. */
       skipped: Array<{ label: string; reason: string }>;

@@ -14,10 +14,13 @@
   --line-strong: rgba(32, 33, 31, 0.16);
   --surface: #ffffff;
   --surface-soft: #f7f7f5;
-  --sidebar: rgba(235, 235, 232, 0.84);
+  --sidebar: #f4f4f4;
   --accent: #20211f;
   --green: #34a46f;
   --green-soft: #e8f5ee;
+  --shadow-preview-rest: 0 1px 3px rgba(32, 33, 31, 0.07), 0 8px 20px rgba(32, 33, 31, 0.06);
+  --shadow-preview-hover: 0 2px 5px rgba(32, 33, 31, 0.09), 0 14px 30px rgba(32, 33, 31, 0.1);
+  --shadow-canvas-control: 0 3px 12px rgba(32, 33, 31, 0.08);
 }
 
 * {
@@ -51,7 +54,7 @@ button:focus-visible {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 212px minmax(0, 1fr);
   /* The single row stays the window's height: without a bound the row grows
      with its tallest cell, and a sidebar full of projects then stretches the
      window's content instead of scrolling its list. */
@@ -77,7 +80,8 @@ button {
   /* Without this the sidebar is its content's height and the project list
      never overflows — a grid item's automatic minimum is its content. */
   min-height: 0;
-  border-right: 1px solid rgba(32, 33, 31, 0.09);
+  width: 100%;
+  border-right: 0;
   background: var(--sidebar);
   backdrop-filter: blur(28px) saturate(1.15);
 }
@@ -99,9 +103,9 @@ button {
 
 .brand-mark {
   display: grid;
-  width: 26px;
-  height: 26px;
-  margin-right: 9px;
+  width: 28px;
+  height: 28px;
+  margin-right: 0;
   place-items: center;
   border-radius: 8px;
   overflow: hidden;
@@ -109,8 +113,8 @@ button {
 
 .brand-mark img {
   display: block;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
 }
 
 .icon-button {
@@ -310,7 +314,7 @@ button {
   align-items: center;
   height: 40px;
   flex: none;
-  padding: 0 8px 0 14px;
+  padding: 0 10px 0 18px;
   gap: 9px;
 }
 
@@ -333,9 +337,8 @@ button {
   align-items: center;
   flex: none;
   gap: 4px;
-  margin: 0 8px;
+  margin: 0 14px;
   padding: 7px 0 9px;
-  border-top: 1px solid rgba(32, 33, 31, 0.08);
 }
 
 .sidebar-chip {
@@ -437,23 +440,16 @@ button {
   opacity: 0.4; font-variant-numeric: tabular-nums;
 }
 .plugin-steps span { font-size: 12px; line-height: 1.6; opacity: 0.58; }
-.plugin-path {
-  display: flex; align-items: center; gap: 8px; margin-top: 2px; padding: 7px 9px;
-  border: 1px solid rgba(32, 33, 31, 0.12); border-radius: 7px; background: rgba(32, 33, 31, 0.035);
-  cursor: pointer; text-align: left;
+/* The way to the plugin, now that it has a page of its own to be installed from. */
+.plugin-community {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 6px;
 }
-.plugin-path:hover { background: rgba(32, 33, 31, 0.06); }
-.plugin-path code {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; opacity: 0.7;
-}
-.plugin-path svg { flex: none; opacity: 0.5; }
 
 .project-item {
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 48px;
+  min-height: 40px;
   padding: 6px 8px;
   gap: 9px;
   border: 0;
@@ -506,8 +502,9 @@ button {
   display: flex;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .project-copy strong {
@@ -620,19 +617,20 @@ button {
   -webkit-app-region: no-drag;
 }
 
+.project-header-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 24px;
+  -webkit-app-region: no-drag;
+}
+
 .project-header-actions .primary-button {
   width: 138px;
   padding-right: 10px;
   padding-left: 10px;
   gap: 5px;
   white-space: nowrap;
-}
-
-.project-header-actions .project-refresh-button {
-  width: 36px;
-  flex: none;
-  justify-content: center;
-  padding: 0;
 }
 
 .project-header h1 {
@@ -3498,7 +3496,7 @@ button.screen-figma-link {
 .inventory-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 26px 22px;
+  gap: 28px 22px;
 }
 
 .inventory-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -3514,6 +3512,7 @@ button.screen-figma-link {
 }
 .inventory-shot img { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
 .inventory-shot-empty { display: grid; place-items: center; height: 100%; font-size: 12px; opacity: 0.45; }
+.inventory-shot-empty.is-error { color: #b35a45; opacity: 0.82; }
 .inventory-shot { position: relative; }
 .inventory-shot-busy {
   position: absolute;
@@ -3554,7 +3553,7 @@ button.screen-figma-link {
 
 .inventory-meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .inventory-index { font-size: 11px; opacity: 0.4; font-variant-numeric: tabular-nums; }
-.inventory-meta h3 { margin: 0; font-size: 13px; font-weight: 560; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inventory-meta h3 { margin: 0; font-size: 13px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .inventory-address { margin: 0; font-size: 11px; opacity: 0.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .inventory-overlay {
@@ -3568,11 +3567,17 @@ button.screen-figma-link {
 }
 .inventory-overlay figure { margin: 0; max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column; gap: 10px; }
 .inventory-overlay figcaption { display: flex; align-items: baseline; gap: 14px; color: #fff; font-size: 13px; }
-.inventory-overlay figcaption code { opacity: 0.6; font-size: 11px; }
+.inventory-overlay figcaption code { min-width: 0; overflow: hidden; opacity: 0.6; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.inventory-overlay figcaption strong,
+.inventory-overlay figcaption button { flex-shrink: 0; }
 .inventory-overlay figcaption button {
-  margin-left: auto; border: 0; border-radius: 7px; padding: 6px 14px;
-  background: rgba(255, 255, 255, 0.18); color: #fff; font-size: 12px; cursor: pointer;
+  margin-left: 0; border: 0; border-radius: 7px; padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.18); color: #fff; font-size: 12px; cursor: pointer; white-space: nowrap;
 }
+.inventory-overlay figcaption .inventory-figma-link { display: inline-flex; align-items: center; gap: 5px; }
+.inventory-overlay figcaption > button:last-child,
+.inventory-overlay figcaption > .inventory-live-toggle { margin-left: auto; }
+.inventory-overlay figcaption > .inventory-live-toggle + button:last-child { margin-left: 0; }
 .inventory-overlay img { max-width: 100%; max-height: 78vh; object-fit: contain; border-radius: 10px; background: #fff; }
 
 .inventory-title-input {
@@ -3660,6 +3665,22 @@ div.inventory-frame.is-live {
   height: 78vh; max-height: 78vh; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
 }
+/* A phone page opened full size: as tall as the window allows, as wide as its
+   own shape asks for, and rounded like the device it was drawn on. */
+div.inventory-frame.is-portrait,
+iframe.inventory-frame.is-portrait,
+img.inventory-frame.is-portrait {
+  width: auto; height: 78vh; max-width: 92vw; max-height: 78vh;
+  border-radius: 34px; overflow: hidden;
+  /* The overlay stacks caption, page and notes in a column, which would
+     otherwise stretch the page to the width of the longest note and shrink it
+     to whatever height was left — both of which lose the phone's shape. */
+  align-self: center; flex: none;
+}
+.inventory-frame.is-portrait .page-document { width: 100%; }
+img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78vh; object-fit: contain; object-position: top center; background: #fff; display: block; }
+.inventory-overlay img.inventory-frame { max-height: 78vh; border-radius: 34px; }
+
 .inventory-frame-note { margin: 0; color: rgba(255, 255, 255, 0.68); font-size: 11.5px; max-width: 92vw; }
 .inventory-overlay figcaption .inventory-variants button { color: rgba(255, 255, 255, 0.72); border-color: rgba(255, 255, 255, 0.3); }
 .inventory-overlay figcaption .inventory-variants button[aria-pressed="true"] { color: #fff; border-color: #fff; }
@@ -3676,16 +3697,27 @@ div.inventory-frame.is-live {
   inset: auto;
   min-width: 0;
   min-height: 0;
+  margin: 4px 4px 4px 0;
   padding: 0;
   gap: 0;
-  /* White, so the pages are the only thing on it that carries a surface. The
-     sidebar keeps its tint and the border between them does the separating. */
+  overflow: hidden auto;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
   background: var(--surface);
 }
 
 /* The header keeps the older interface's proportions and stays put while the
    gallery scrolls under it. */
-.inventory-page > .project-header { position: sticky; top: 0; z-index: 4; }
+.inventory-page > .project-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  min-height: 72px;
+  padding: 14px 20px;
+}
+.inventory-page > .project-header h1 { font-size: 22px; letter-spacing: -0.03em; }
+.inventory-page > .project-header .project-header-copy { gap: 2px; }
+.inventory-page > .project-header .project-header-actions .primary-button { min-height: 36px; }
 /* Onboarding fills the empty state and is gone once a scan exists — it is
    there to teach the first move, not to sit above every result. */
 .inventory-page > .onboarding {
@@ -3695,42 +3727,24 @@ div.inventory-frame.is-live {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 30px;
+  gap: 18px;
   padding: 40px 30px 60px;
 }
 .onboarding.is-over .onboarding-drop { border-color: #3b6cf6; background: rgba(59, 108, 246, 0.06); }
 
 .onboarding-drop {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
-  width: min(560px, 100%); padding: 40px 32px; text-align: center;
-  border: 2px dashed rgba(32, 33, 31, 0.16); border-radius: 16px; background: #fff;
-  transition: border-color 140ms ease, background 140ms ease;
+  width: min(560px, 100%); padding: 0; text-align: center;
+  border: 0; background: transparent;
 }
-.onboarding-drop svg { opacity: 0.32; }
+.onboarding-drop svg { color: #20211f; opacity: 1; }
 .onboarding-drop h1 { margin: 4px 0 0; font-size: 19px; letter-spacing: -0.01em; }
 .onboarding-drop p { margin: 0 0 6px; font-size: 13px; opacity: 0.6; max-width: 40ch; line-height: 1.55; }
-.onboarding-drop .onboarding-alt-line { font-size: 12px; opacity: 0.48; margin: -2px 0 8px; }
-.onboarding-drop .onboarding-alt-line code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
-  padding: 1px 5px; border-radius: 5px; background: rgba(32, 33, 31, 0.07);
+.onboarding-alt {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: 8px 18px; width: min(620px, 100%);
 }
-
-.onboarding-steps {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 22px; width: min(880px, 100%); margin: 0; padding: 0; list-style: none;
-  counter-reset: onboarding;
-}
-.onboarding-steps li { display: flex; flex-direction: column; gap: 5px; counter-increment: onboarding; }
-.onboarding-steps strong::before {
-  content: counter(onboarding); display: inline-grid; place-items: center;
-  width: 18px; height: 18px; margin-right: 7px; border-radius: 50%;
-  background: rgba(32, 33, 31, 0.08); font-size: 10px; font-weight: 600; vertical-align: 1px;
-}
-.onboarding-steps strong { font-size: 13px; font-weight: 600; }
-.onboarding-steps span { font-size: 12px; line-height: 1.6; opacity: 0.58; }
-
-.onboarding-alt { display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(620px, 100%); }
-.onboarding-alt .inventory-form { width: 100%; margin-top: 6px; }
+.onboarding-alt .inventory-form { order: 2; width: 100%; margin-top: 6px; }
 .inventory-page > .inventory-form,
 .inventory-page > .inventory-drop,
 .inventory-page > .inventory-choices,
@@ -3740,19 +3754,540 @@ div.inventory-frame.is-live {
 .inventory-page > .inventory-saved,
 .inventory-page > .inventory-filtered,
 .inventory-page > .inventory-grid,
-.inventory-page > .inventory-rows { margin: 0 30px 22px; }
+.inventory-page > .inventory-rows,
+.inventory-page > .screen-flow { margin: 0 32px 22px; }
+.inventory-page > .inventory-grid { margin-right: 32px; margin-left: 32px; }
 .inventory-page > .inventory-drop { margin-top: 18px; }
 /* Every state that has no header of its own still needs to clear the top. */
-.inventory-page > *:first-child:not(.project-header):not(.onboarding) { margin-top: 26px; }
+.inventory-page > *:first-child:not(.project-header):not(.onboarding):not(.scene-editor) { margin-top: 26px; }
 .inventory-page > .project-header + .inventory-progress { margin-top: 20px; }
+.inventory-page > .project-header + .inventory-grid { margin-top: 27px; }
+.inventory-page > .project-header + .screen-flow { margin-top: 20px; }
 .inventory-page > .inventory-grid,
-.inventory-page > .inventory-rows { margin-bottom: 60px; }
+.inventory-page > .inventory-rows,
+.inventory-page > .screen-flow { margin-bottom: 60px; }
+
+/* Flow is a workspace, not a gallery card. It owns every remaining pixel below
+   the project header so panning and zooming never compete with page scrolling. */
+.app-frame > .inventory-page.is-flow-view { overflow: hidden; }
+.inventory-page.is-flow-view > .screen-flow {
+  min-height: 0;
+  height: auto;
+  flex: 1;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+/* Scene editing is the other workspace view. It owns the right-hand region so
+   the canvas pans inside itself instead of moving the application shell. */
+.app-frame > .inventory-page.is-editor-view { overflow: hidden; }
+.inventory-page.is-editor-view > .scene-editor {
+  min-height: 0;
+  flex: 1;
+  /* The generic inventory rule adds breathing room before every first child.
+     Here that child is already a full workspace with its own toolbar, so the
+     margin became a blank strip above the editor. */
+  margin-top: 0;
+}
+
+.inventory-edit-button {
+  background: #3b6cf6 !important;
+  color: #fff !important;
+  font-weight: 620;
+}
+
+.scene-editor {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: #f8f8f7;
+  color: #242523;
+}
+
+.scene-editor-toolbar {
+  z-index: 4;
+  display: flex;
+  min-height: 52px;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(32, 33, 31, 0.1);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.scene-tool {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgba(32, 33, 31, 0.12);
+  border-radius: 7px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.scene-tool:hover:not(:disabled) { background: #f3f3f1; border-color: rgba(32, 33, 31, 0.2); }
+.scene-tool:disabled { cursor: default; opacity: 0.38; }
+.scene-tool.is-icon { width: 30px; padding: 0; }
+.scene-editor-back { border-color: transparent; background: transparent; }
+.scene-editor-title { display: flex; min-width: 0; flex-direction: column; margin-right: auto; line-height: 1.2; }
+.scene-editor-title strong { max-width: 220px; overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.scene-editor-title span { color: rgba(32, 33, 31, 0.48); font-size: 10.5px; }
+.scene-editor-history { display: flex; gap: 4px; }
+.scene-editor-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(59, 108, 246, 0.09);
+  color: #315edb;
+  font-size: 11px;
+}
+.scene-editor-mode.is-fallback { background: rgba(176, 113, 34, 0.1); color: #8b5c21; }
+
+.scene-editor-body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: 214px minmax(260px, 1fr) 252px;
+}
+
+.scene-layer-panel,
+.scene-inspector {
+  min-width: 0;
+  min-height: 0;
+  background: #fbfbfa;
+}
+.scene-layer-panel { display: flex; flex-direction: column; border-right: 1px solid rgba(32, 33, 31, 0.1); }
+.scene-inspector { display: flex; flex-direction: column; overflow: auto; border-left: 1px solid rgba(32, 33, 31, 0.1); background: #fff; }
+.scene-layer-panel h2,
+.scene-inspector h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: rgba(32, 33, 31, 0.72);
+  font-size: 11px;
+  font-weight: 650;
+}
+.scene-layer-panel > h2 { min-height: 36px; padding: 0 11px; }
+.scene-layer-panel > h2 button {
+  margin-left: auto;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #315edb;
+  font: inherit;
+  font-size: 9.5px;
+  cursor: pointer;
+}
+.scene-layer-panel > h2 button:hover { background: rgba(59, 108, 246, 0.09); }
+.scene-layer-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 7px 5px;
+  padding: 0 7px;
+  border: 1px solid rgba(32, 33, 31, 0.1);
+  border-radius: 6px;
+  background: rgba(32, 33, 31, 0.035);
+  color: rgba(32, 33, 31, 0.45);
+}
+.scene-layer-search:focus-within { border-color: #6e91f5; background: #fff; box-shadow: 0 0 0 2px rgba(59, 108, 246, 0.1); }
+.scene-layer-search input {
+  min-width: 0;
+  width: 100%;
+  height: 27px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10.5px;
+}
+.scene-layer-search input::placeholder { color: rgba(32, 33, 31, 0.42); }
+.scene-layer-list { min-height: 0; flex: 1; overflow: auto; padding: 5px; }
+.scene-layer-list button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding-right: 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: default;
+}
+.scene-layer-list button:hover { background: rgba(32, 33, 31, 0.055); }
+.scene-layer-list button[aria-pressed="true"] { background: rgba(59, 108, 246, 0.12); color: #274fbe; }
+.scene-layer-list button svg { flex: none; opacity: 0.66; }
+.scene-layer-list button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene-layer-disclosure {
+  display: grid;
+  width: 11px;
+  height: 18px;
+  flex: none;
+  place-items: center;
+  overflow: visible !important;
+  border-radius: 3px;
+}
+.scene-layer-disclosure:hover { background: rgba(32, 33, 31, 0.08); }
+.scene-layer-disclosure svg { transition: transform 120ms ease; }
+.scene-layer-disclosure.is-open svg { transform: rotate(90deg); }
+.scene-layer-disclosure.is-empty { visibility: hidden; }
+
+.scene-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  background-color: #e9e9e7;
+  background-image: radial-gradient(rgba(32, 33, 31, 0.12) 0.7px, transparent 0.7px);
+  background-size: 12px 12px;
+  cursor: default;
+}
+.scene-canvas.is-panning { cursor: grab; }
+.scene-canvas.is-panning:active { cursor: grabbing; }
+.scene-artboard-transform { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; }
+.scene-artboard {
+  position: relative;
+  /* The white rectangle marks the source viewport; it is not a mask. Layers
+     remain selectable while they sit outside it and can be dragged back in. */
+  overflow: visible;
+  background: #fff;
+  box-shadow: var(--shadow-preview-rest, 0 10px 32px rgba(0, 0, 0, 0.14));
+}
+.scene-artboard .page-layers { position: absolute; inset: 0; }
+.scene-selection {
+  position: absolute;
+  z-index: 100000;
+  box-sizing: border-box;
+  border-style: solid;
+  border-color: #4779ff;
+  pointer-events: none;
+}
+.scene-resize-handle {
+  position: absolute;
+  width: var(--scene-handle);
+  height: var(--scene-handle);
+  box-sizing: border-box;
+  padding: 0;
+  border: calc(var(--scene-handle) * 0.14) solid #4779ff;
+  border-radius: 0;
+  background: #fff;
+  pointer-events: auto;
+}
+.scene-resize-handle.is-nw { top: 0; left: 0; transform: translate(-50%, -50%); cursor: nwse-resize; }
+.scene-resize-handle.is-n { top: 0; left: 50%; transform: translate(-50%, -50%); cursor: ns-resize; }
+.scene-resize-handle.is-ne { top: 0; right: 0; transform: translate(50%, -50%); cursor: nesw-resize; }
+.scene-resize-handle.is-e { top: 50%; right: 0; transform: translate(50%, -50%); cursor: ew-resize; }
+.scene-resize-handle.is-se { right: 0; bottom: 0; transform: translate(50%, 50%); cursor: nwse-resize; }
+.scene-resize-handle.is-s { bottom: 0; left: 50%; transform: translate(-50%, 50%); cursor: ns-resize; }
+.scene-resize-handle.is-sw { bottom: 0; left: 0; transform: translate(-50%, 50%); cursor: nesw-resize; }
+.scene-resize-handle.is-w { top: 50%; left: 0; transform: translate(-50%, -50%); cursor: ew-resize; }
+/* On a small layer eight fixed-size handles cover the whole object and turn
+   every drag into a resize. Keep the selection movable; exact sizing remains
+   available in the inspector until the layer is large enough for handles. */
+.scene-selection.is-compact .scene-resize-handle { display: none; }
+.scene-inline-text {
+  position: absolute;
+  z-index: 100001;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #4779ff;
+  border-radius: 0;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.02);
+  resize: none;
+  white-space: pre-wrap;
+}
+.scene-edit-text-button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 7px 9px;
+  border: 1px solid rgba(59, 108, 246, 0.28);
+  border-radius: 6px;
+  background: rgba(59, 108, 246, 0.08);
+  color: #315edb;
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.scene-edit-text-button:hover { background: rgba(59, 108, 246, 0.13); }
+.scene-field-hint { margin: 6px 0 0; color: rgba(32, 33, 31, 0.46); font-size: 9.5px; line-height: 1.4; }
+.scene-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid rgba(32, 33, 31, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-canvas-control, 0 5px 18px rgba(0, 0, 0, 0.1));
+}
+.scene-zoom button {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 0;
+  border-right: 1px solid rgba(32, 33, 31, 0.09);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.scene-zoom button:last-child { border-right: 0; }
+.scene-zoom button:hover { background: rgba(32, 33, 31, 0.06); }
+
+.scene-inspector-header {
+  display: flex;
+  min-height: 50px;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 0 13px;
+  border-bottom: 1px solid rgba(32, 33, 31, 0.11);
+}
+.scene-selected-name { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; margin: 0; }
+.scene-selected-name strong { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.scene-inspector-header > button,
+.scene-section-heading,
+.scene-alignment-grid button,
+.scene-icon-group button,
+.scene-aspect-button,
+.scene-paint-row button {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.scene-inspector-header > button { width: 27px; height: 27px; }
+.scene-inspector-header > button:hover:not(:disabled),
+.scene-alignment-grid button:hover:not(:disabled),
+.scene-icon-group button:hover:not(:disabled),
+.scene-aspect-button:hover:not(:disabled),
+.scene-paint-row button:hover:not(:disabled) { background: rgba(32, 33, 31, 0.065); }
+.scene-inspector button:disabled { cursor: default; opacity: 0.34; }
+.scene-inspector-section { flex: none; border-bottom: 1px solid rgba(32, 33, 31, 0.11); }
+.scene-section-heading {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 13px;
+  border-radius: 0;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  text-align: left;
+}
+.scene-section-heading:hover { background: rgba(32, 33, 31, 0.025); }
+.scene-section-heading > svg { transform: rotate(0deg); transition: transform 120ms ease; }
+.scene-section-heading > svg.is-open,
+.scene-heading-actions > svg.is-open { transform: rotate(90deg); }
+.scene-heading-actions { display: flex; align-items: center; gap: 9px; color: rgba(32, 33, 31, 0.82); }
+.scene-heading-actions > span { color: rgba(32, 33, 31, 0.44); font-size: 10px; font-variant-numeric: tabular-nums; }
+.scene-section-content { padding: 1px 13px 12px; }
+.scene-property-label,
+.scene-stacked-field > span:first-child {
+  display: block;
+  margin: 8px 0 6px;
+  color: rgba(32, 33, 31, 0.55);
+  font-size: 10.5px;
+}
+.scene-alignment-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  overflow: hidden;
+  border-radius: 7px;
+  background: rgba(32, 33, 31, 0.055);
+}
+.scene-alignment-grid button { height: 25px; border-right: 1px solid rgba(255, 255, 255, 0.9); border-radius: 0; }
+.scene-alignment-grid button:last-child { border-right: 0; }
+.scene-control-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.scene-number-field,
+.scene-select-field {
+  display: flex;
+  min-width: 0;
+  height: 25px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: rgba(32, 33, 31, 0.055);
+  color: rgba(32, 33, 31, 0.55);
+  font-size: 10.5px;
+}
+.scene-number-field:focus-within,
+.scene-select-field:focus-within,
+.scene-text-field:focus { border-color: #73a6e8; outline: 2px solid rgba(31, 127, 218, 0.12); background: #fff; }
+.scene-number-field input,
+.scene-select-field select,
+.scene-text-field {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #242523;
+  font: inherit;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.scene-number-field input:disabled,
+.scene-select-field select:disabled { color: rgba(32, 33, 31, 0.42); }
+.scene-number-field em { margin-left: -4px; color: rgba(32, 33, 31, 0.48); font-style: normal; }
+.scene-select-field select { appearance: auto; }
+.scene-constraints-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.scene-constraint-selects { display: grid; gap: 6px; }
+.scene-constraint-preview {
+  display: grid;
+  min-height: 56px;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(32, 33, 31, 0.055);
+  color: #2589db;
+}
+.scene-rotation-row { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
+.scene-icon-group { display: flex; overflow: hidden; border-radius: 7px; background: rgba(32, 33, 31, 0.055); }
+.scene-icon-group button { width: 27px; height: 25px; border-right: 1px solid rgba(255, 255, 255, 0.92); border-radius: 0; }
+.scene-icon-group button:last-child { border-right: 0; }
+.scene-icon-group button[aria-pressed="true"],
+.scene-aspect-button[aria-pressed="true"] { background: rgba(31, 127, 218, 0.12); color: #1676cf; }
+.scene-dimensions-row { display: grid; grid-template-columns: 1fr 1fr 26px; gap: 7px; align-items: center; }
+.scene-aspect-button { width: 26px; height: 25px; }
+.scene-stacked-field { display: block; min-width: 0; }
+.scene-stacked-field .scene-number-field { width: 100%; }
+.scene-paint-row { display: grid; grid-template-columns: 25px minmax(0, 1fr) 26px; gap: 7px; align-items: center; }
+.scene-color-swatch {
+  width: 25px;
+  height: 25px;
+  box-sizing: border-box;
+  padding: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(32, 33, 31, 0.1);
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+.scene-color-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.scene-color-swatch::-webkit-color-swatch { border: 0; border-radius: 4px; }
+.scene-paint-value,
+.scene-text-field {
+  height: 25px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: rgba(32, 33, 31, 0.055);
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+}
+.scene-paint-value:focus { border-color: #73a6e8; outline: 2px solid rgba(31, 127, 218, 0.12); background: #fff; }
+.scene-paint-row button { width: 26px; height: 25px; }
+.scene-stroke-row { display: grid; grid-template-columns: 25px minmax(0, 1fr); gap: 7px; align-items: center; }
+.scene-export-section { margin-top: auto; }
+.scene-manifest { padding-top: 0; overflow: visible; }
+.scene-manifest h2 { display: flex; margin: 0; font-size: 10.5px; }
+.scene-manifest h2 span { margin-left: auto; color: rgba(32, 33, 31, 0.42); font-variant-numeric: tabular-nums; }
+.scene-manifest ol { display: grid; gap: 2px; margin: 9px 0 0; padding: 0; list-style: none; }
+.scene-manifest li { display: flex; align-items: baseline; gap: 7px; min-width: 0; padding: 5px 6px; border-radius: 5px; background: rgba(32, 33, 31, 0.035); font-size: 10.5px; }
+.scene-manifest li strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene-manifest li span { color: rgba(32, 33, 31, 0.48); }
+.scene-empty-copy { margin: 6px 0 0; color: rgba(32, 33, 31, 0.45); font-size: 10.5px; line-height: 1.45; }
 
 .connection-line .header-sep { opacity: 0.6; }
+.connection-line .header-sep.is-warning { color: #a85b38; opacity: 1; }
 
-.inventory-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 30px 12px;
+.project-more { position: relative; }
+.project-more > .secondary-button {
+  width: 36px;
+  padding: 0;
+}
+.project-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 8;
+  min-width: 156px;
+  padding: 4px;
+  border: 1px solid rgba(32, 33, 31, 0.12);
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+}
+.project-more-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.project-more-menu button:hover { background: rgba(32, 33, 31, 0.07); }
+
+/* The capture choice is a wider block than the plain actions above it: each
+   option needs a sentence saying what it costs, or the names alone read as two
+   equivalent buttons rather than a real trade-off. */
+.project-more-heading {
+  margin-top: 4px;
+  padding: 8px 9px 4px;
+  border-top: 1px solid rgba(32, 33, 31, 0.1);
+  color: rgba(32, 33, 31, 0.55);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.project-more-menu button.project-more-choice {
+  align-items: flex-start;
+  max-width: 300px;
+  white-space: normal;
+}
+.project-more-menu button.project-more-choice svg { flex: none; margin-top: 1px; }
+.project-more-menu button.project-more-choice svg.is-hidden { visibility: hidden; }
+.project-more-menu button.project-more-choice small {
+  display: block;
+  margin-top: 2px;
+  color: rgba(32, 33, 31, 0.55);
+  font-size: 10.5px;
+  line-height: 1.35;
 }
 
 .inventory-figma-row {
@@ -3806,7 +4341,7 @@ div.inventory-frame.is-live {
 }
 .target-drop { margin: 6px 10px; font-size: 12px; font-weight: 560; color: #3b6cf6; }
 
-.project-item.is-nested { padding-left: 22px; }
+.project-item.is-nested { padding-left: 20px; }
 
 /* Floated rather than laid out: at rest the row's own text gets the full
    width, so "13 pages · today" is not truncated to make room for buttons
@@ -3822,16 +4357,28 @@ div.inventory-frame.is-live {
 .project-item:hover .target-actions { opacity: 1; pointer-events: auto; }
 .target-actions .icon-button { width: 22px; height: 22px; }
 
+.target-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
 .target-group-head {
   display: flex; align-items: center; gap: 6px; width: 100%;
   min-height: 30px; padding: 0 8px; border: 0; border-radius: 9px;
   background: transparent; color: inherit; cursor: pointer;
-  font: inherit; font-size: 11.5px; opacity: 0.66;
+  font: inherit; font-size: 10.5px; font-weight: 600; opacity: 0.62;
 }
 .target-group-head:hover { background: rgba(255, 255, 255, 0.52); opacity: 1; }
-.target-group-head svg { transition: transform 120ms ease; }
+.target-group-head svg { flex: none; transition: transform 120ms ease; }
 .target-group-head svg.is-open { transform: rotate(90deg); }
-.target-count { margin-left: auto; font-size: 10px; opacity: 0.6; }
+.target-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ---------- view switching ---------- */
 
@@ -3839,14 +4386,286 @@ div.inventory-frame.is-live {
 .view-switch button {
   border: 0; background: none; color: inherit; cursor: pointer; font: inherit; font-size: 11px;
   padding: 4px 11px; border-radius: 6px; opacity: 0.6;
+  transition: color 120ms ease, background-color 120ms ease, opacity 120ms ease;
 }
+.view-switch button:hover { opacity: 0.88; background: rgba(255, 255, 255, 0.52); }
 .view-switch button[aria-pressed="true"] {
   opacity: 1; font-weight: 560;
   background: rgba(255, 255, 255, 0.9); color: #282927;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.07), inset 0 0 0 1px rgba(32, 33, 31, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(32, 33, 31, 0.07);
+}
+
+/* ---------- screen flow ---------- */
+
+.screen-flow {
+  min-height: 440px;
+  height: min(680px, calc(100vh - 190px));
+  overflow: hidden;
+  border: 1px solid rgba(32, 33, 31, 0.09);
+  border-radius: 12px;
+  background: #fdfdfc;
+}
+
+.screen-flow-header {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(32, 33, 31, 0.07);
+  color: #777873;
+  font-size: 11px;
+}
+
+.screen-flow-header small {
+  overflow: hidden;
+  color: #9b9c96;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen-flow-canvas {
+  position: relative;
+  height: 100%;
+}
+
+.screen-flow .react-flow {
+  background: #fdfdfc;
+}
+
+.screen-flow .react-flow__node {
+  cursor: pointer;
+}
+
+.screen-flow .react-flow__node:focus-visible {
+  outline: 0;
+}
+
+.screen-flow-node {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: transparent;
+  color: #62635f;
+  font-size: 16px;
+  font-weight: 440;
+  line-height: 1;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+  transition: color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.screen-flow-node > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.screen-flow-node.is-board {
+  box-sizing: border-box;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-preview-rest);
+}
+
+.screen-flow-node.is-board > span:last-of-type {
+  width: 100%;
+  flex: none;
+  color: #50514d;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: left;
+}
+
+.screen-flow-node .screen-flow-board-preview {
+  position: relative;
+  display: grid;
+  max-width: 100%;
+  flex: none;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(32, 33, 31, 0.1);
+  border-radius: 5px;
+  background: #f1f1ef;
+  box-shadow: 0 1px 2px rgba(32, 33, 31, 0.06);
+}
+
+.screen-flow-board-preview > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.screen-flow-board-preview > small {
+  padding: 8px;
+  color: #92938e;
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.screen-flow-board-layers {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.screen-flow-node:hover,
+.screen-flow-node.is-selected {
+  color: #292a28;
+  background: rgba(59, 108, 246, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(59, 108, 246, 0.15);
+}
+
+.screen-flow-node.is-board:hover {
+  background: #fff;
+  box-shadow: var(--shadow-preview-hover);
+  transform: translateY(-1px);
+}
+
+.screen-flow-node.is-board.is-selected {
+  background: #fff;
+  box-shadow: var(--shadow-preview-rest), inset 0 0 0 1.5px rgba(59, 108, 246, 0.45);
+  transform: none;
+}
+
+.screen-flow-handle {
+  width: 1px !important;
+  min-width: 1px !important;
+  height: 1px !important;
+  min-height: 1px !important;
+  border: 0 !important;
+  opacity: 0;
+}
+
+.screen-flow .react-flow__edge-path.screen-flow-edge {
+  stroke: #3b73ea;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.screen-flow .react-flow__edge-path.screen-flow-edge.is-route {
+  stroke-width: 2.75;
+}
+
+.screen-flow .react-flow__edge.selected .screen-flow-edge,
+.screen-flow .react-flow__edge-path.screen-flow-edge.is-selected {
+  stroke: #245fdc;
+  stroke-width: 3;
+}
+
+.screen-flow-edge-label {
+  position: absolute;
+  z-index: 2;
+  max-width: 150px;
+  overflow: hidden;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(253, 253, 252, 0.92);
+  color: #898a85;
+  font-size: 9.5px;
+  line-height: 13px;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen-flow-edge-label.is-selected {
+  color: #245fdc;
+}
+
+.screen-flow .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid rgba(32, 33, 31, 0.1);
+  border-radius: 8px;
+  box-shadow: var(--shadow-canvas-control);
+}
+
+.screen-flow .react-flow__controls-button {
+  width: 28px;
+  height: 28px;
+  border-bottom-color: rgba(32, 33, 31, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  color: #62635f;
+}
+
+.screen-flow .react-flow__controls-button:hover {
+  color: #245fdc;
+  background: #fff;
+}
+
+.screen-flow-board-toggle {
+  margin: 0 0 0 50px !important;
+}
+
+.screen-flow-board-toggle button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid rgba(32, 33, 31, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #62635f;
+  box-shadow: var(--shadow-canvas-control);
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.screen-flow-board-toggle button:hover,
+.screen-flow-board-toggle button[aria-pressed="true"] {
+  color: #245fdc;
+  background: #fff;
+  border-color: rgba(59, 108, 246, 0.3);
+}
+
+.screen-flow-note {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 3;
+  max-width: min(440px, calc(100% - 100px));
+  margin: 0;
+  padding: 6px 9px;
+  transform: translateX(-50%);
+  border-radius: 6px;
+  background: rgba(253, 253, 252, 0.9);
+  color: #898a85;
+  font-size: 10.5px;
+  text-align: center;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-flow-node { transition: none; }
 }
 
 .inventory-grid.is-compact { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 18px 14px; }
+
+/* A phone screen is tall and its corners are round, so its card is too:
+   cropping one to a landscape rectangle would throw away most of the page. */
+.inventory-grid.is-portrait { grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); }
+.inventory-grid.is-portrait.is-compact { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+.inventory-shot.is-portrait { border-radius: 26px; }
+.inventory-grid.is-compact .inventory-shot.is-portrait { border-radius: 20px; }
+/* The card is cut to the picture's own proportions, so filling it crops
+   nothing — and it leaves no hairline of card showing along the edges. */
+.inventory-shot.is-portrait img { object-fit: cover; object-position: center; background: #fff; }
 
 /* One page per row, at whatever width the window gives. For looking at a page
    rather than at the set of them: the thumbnail keeps its own proportions
@@ -3885,12 +4704,14 @@ div.inventory-frame.is-live {
 
 /* Cards lift the way the existing interface does. */
 .inventory-shot {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 22px rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  box-shadow: var(--shadow-preview-rest);
   transition: box-shadow 150ms ease, transform 120ms ease;
 }
 .inventory-card:hover .inventory-shot {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08), 0 18px 46px rgba(0, 0, 0, 0.14);
-  transform: translateY(-2px);
+  box-shadow: var(--shadow-preview-hover);
+  transform: translateY(-1px);
 }
 
 .inventory-phase-note { font-weight: 400; opacity: 0.55; }

@@ -4,7 +4,14 @@
 
 Crank is an independent local-first desktop application for translating editable UI structure between source projects and Figma. It is not part of MOMO and must not assume that MOMO exists on the machine.
 
-The active product scope is web and Electron projects. Prefer Electron and Chromium's official runtime APIs over source-language layout reconstruction. Existing SwiftUI connections may remain readable for backward compatibility, but do not extend SwiftUI parsing or Design Build unless the product direction is explicitly changed again.
+The active product scope is web, Electron, and SwiftUI iOS projects. Prefer Electron and Chromium's official runtime APIs over source-language layout reconstruction for anything served in a browser, and the Simulator's own rendered output over source reconstruction for iOS.
+
+There are two capture pipelines behind one flow:
+
+- **Served projects** are started, crawled in a sandboxed Chromium, and reach Figma as `editable-dom` screens built from their layer trees.
+- **iOS projects** have no address to serve. A folder holding an `.xcodeproj` is built, launched on a Simulator, and each top-level state is exported as a vector PDF page; those pages reach Figma as `structured` screens carrying the page's SVG.
+
+Everything after capture is shared: one sidebar, one `inventory:scan-folder`, one inventory shape, one `inventory:send-to-figma`, one bridge job. An exported iOS page carries only its identity (`page.vector`); the PDFs, their clean variants, and the runtime snapshot stay on disk and are read back when the page is sent.
 
 ## Architecture rules
 
@@ -32,7 +39,7 @@ Rules here are decisions, not axioms. Where evidence contradicts one, change it 
 | `shared/` | Plain ESM `.js` with a hand-written `.d.ts` | The few decisions both sides must agree on. Loaded by `await import()` in the main process and bundled by Vite in the renderer, so it may use neither Node nor the DOM. |
 | `figma-plugin/` | Plain JS against the Figma Plugin API | The other half of a sync. No build step — `code.js` ships as written, typechecked by `npm run typecheck:plugin`. |
 | `figma-plugin/listing/` | — | The Community submission: the copy and the artwork it is published with. |
-| `swift-tools/`, `swift-sdk/` | Swift | The dormant SwiftUI path. |
+| `swift-tools/`, `swift-sdk/` | Swift | The iOS path: the SwiftSyntax scanner and the PDF compositor Crank compiles on demand, and the design SDK a project can adopt. `swift-tools/` is closed and lives in its own private repository (`irrwood/crank-swift-tools`), cloned into place; it is not tracked here. |
 | `public/`, `assets/` | — | `public/app-icon.png` is the icon; `assets/` holds the macOS `.icns` variants built from it. |
 
 Read the docblock at the top of a module before reading the module. Nearly every

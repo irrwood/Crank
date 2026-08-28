@@ -2,7 +2,7 @@ const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
 const { readFile } = require("node:fs/promises");
-const { discoverStates } = require("./state-discovery.cjs");
+const { discoverStates, reachState } = require("./state-discovery.cjs");
 const { resolveDevCommand, startDevServer } = require("./dev-server.cjs");
 const { detectElectronRenderer, startRendererServer } = require("./renderer-server.cjs");
 const { discoverJavascriptProjectRoots, scanJavascriptProject } = require("./project-scanner.cjs");
@@ -13,6 +13,7 @@ const { readdir } = require("node:fs/promises");
 const { createDiscoverySession } = require("./state-discovery-session.cjs");
 const { createAttachedSession, listTargets } = require("./cdp-session.cjs");
 const { describeAppBundle, launchAppBundle, looksLikeAppBundle, readAppIcon } = require("./app-bundle.cjs");
+const { resolveXcodeProjectRoot, scanSwiftUiFolder } = require("./swiftui-inventory.cjs");
 const { isAppOrigin, originOf, routeWithin } = require("./page-origin.cjs");
 
 /**
@@ -116,6 +117,28 @@ async function captureThumbnail(session, width = 1220) {
   return { dataUrl: scaled.toDataURL(), width: scaled.getSize().width, height: scaled.getSize().height };
 }
 
+/** Captures the state already visible, without trying to navigate back to it. */
+async function captureReachedPage(session, { withThumbnails = true, withHtml = true, withFigmaTree = true } = {}) {
+  if (!withThumbnails) return { thumbnail: null, snapshot: null, reached: true };
+  // Discovery normally reads as soon as the DOM settles enough to compare.
+  // A saved screen needs the slower pass so data, fonts, and lazy assets have
+  // the same opportunity to arrive as they do during an ordinary recapture.
+  await session.look({ patient: true });
+  const thumbnail = await captureThumbnail(session);
+  const captured = withHtml ? await session.captureHtml() : null;
+  const snapshot = captured?.html
+    ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
+    : null;
+  const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
+  return {
+    thumbnail,
+    snapshot,
+    layerTree: figma?.tree ? figma : null,
+    layerError: figma?.tree ? null : figma?.error ?? null,
+    reached: true
+  };
+}
+
 /**
  * Replays one page — load its route, then click its recipe — and captures it.
  *
@@ -127,11 +150,7 @@ async function captureThumbnail(session, width = 1220) {
 async function capturePage(session, { route, recipe = [] }, { withThumbnails = true, withHtml = true, withFigmaTree = true } = {}) {
   if (!withThumbnails) return { thumbnail: null, snapshot: null, reached: true };
   await session.reset?.();
-  let reached = await session.goto(route, { patient: true });
-  for (const step of recipe) {
-    if (!reached) break;
-    reached = await session.click(step.locator, { patient: true });
-  }
+  const reached = await reachState(session, { route, recipe }, { patient: true });
   // A page that could not be reached again is the other way to arrive with no
   // layers, and it used to say nothing at all — the export then reported the
   // absence and not the cause.
@@ -146,30 +165,7 @@ async function capturePage(session, { route, recipe = [] }, { withThumbnails = t
       reached: false
     };
   }
-  // Three views of one visit, each for a different distance. The thumbnail
-  // keeps a grid quick to draw. The layer tree is what a card draws and what
-  // reaches Figma. The markup is the page itself, for opening one and reading
-  // it — the only one of the three that is not an approximation.
-  //
-  // Keeping all three used to mean keeping every picture three times, which is
-  // what made a thirty-page scan 350MB. It does not any more: the pictures are
-  // stored once by content, and all three point at the same ones.
-  const thumbnail = await captureThumbnail(session);
-  const captured = withHtml ? await session.captureHtml() : null;
-  const snapshot = captured?.html
-    ? { html: captured.html, bytes: captured.html.length, stats: captured.stats }
-    : null;
-  const figma = withFigmaTree ? await session.captureFigmaTree?.() : null;
-  // The capture already says why it came back without a tree, and that reason
-  // was being dropped here — leaving the export to report "no page has captured
-  // layers" about pages whose failure it could have named.
-  return {
-    thumbnail,
-    snapshot,
-    layerTree: figma?.tree ? figma : null,
-    layerError: figma?.tree ? null : figma?.error ?? null,
-    reached: true
-  };
+  return captureReachedPage(session, { withThumbnails, withHtml, withFigmaTree });
 }
 
 /**
@@ -304,7 +300,15 @@ function startPathOf(url, origin) {
 async function scanAppBundle(target, { onStatus, ...options } = {}) {
   return withAppSession(target, { onStatus }, async (session, { bundle, origin, window }) => {
     onStatus?.({ phase: "starting", detail: `${bundle.name} is open — reading ${window.title || bundle.name}` });
-    const result = await runScan(session, origin, startPathOf(window.url, origin), { ...options, onStatus });
+    // An app hides its screens behind its own controls rather than behind
+    // addresses: there is no sitemap to seed from and nothing to crawl, so the
+    // walk is given room to click further and try more of what it finds.
+    const result = await runScan(session, origin, startPathOf(window.url, origin), {
+      maxDepth: 2,
+      maxActionsPerState: 24,
+      ...options,
+      onStatus
+    });
     return result.ok
       ? {
         ...result,
@@ -327,17 +331,17 @@ async function scanAppBundle(target, { onStatus, ...options } = {}) {
  * photographed — so it says which page it is on. Without that the window goes
  * silent for minutes once discovery finishes, which reads as having hung.
  */
-async function captureStates(session, states, options, onStatus) {
+async function captureStates(session, states, options, onStatus, observed = new Map()) {
   const pages = [];
   for (const [index, state] of states.entries()) {
     onStatus?.({
       phase: "capturing",
       detail: `Capturing page ${index + 1} of ${states.length} — ${state.name}`
     });
-    const { reached, ...shot } = await capturePage(session, state, options);
+    const { reached, ...shot } = observed.get(state.id) ?? await capturePage(session, state, options);
     const variants = [];
     for (const variant of state.variants ?? []) {
-      const { reached: found, ...look } = await capturePage(session, variant, options);
+      const { reached: found, ...look } = observed.get(variant.id) ?? await capturePage(session, variant, options);
       variants.push({ ...variant, ...look });
     }
     pages.push({ ...state, ...shot, variants });
@@ -488,16 +492,31 @@ async function runScan(session, origin, startPath, {
     const sitemapPaths = await readSitemap(origin);
     const routes = [...new Set([startPath, ...seedPaths, ...sitemapPaths])];
 
+    // A browser page can always be loaded again by address. An installed app
+    // cannot: after discovery Cursor may be sitting in a terminal or an open
+    // menu, and a root-level control no longer exists there. Keep the complete
+    // capture while each discovered state is actually on screen instead of
+    // pretending its click recipe is an address.
+    const observed = new Map();
+    const captureOptions = { withThumbnails, withHtml, withFigmaTree };
+    const onRecord = session.navigable === false
+      ? async (state) => {
+          onStatus?.({ phase: "capturing", detail: `Capturing ${state.name}` });
+          observed.set(state.id, await captureReachedPage(session, captureOptions));
+        }
+      : undefined;
+
     const { states, skipped, filtered, inert } = await discoverStates(session, {
       routes,
       maxStates,
       maxDepth,
       maxActionsPerState,
       keepAnyway: new Set(keepAnyway),
-      onProgress
+      onProgress,
+      onRecord
     });
 
-    const pages = await captureStates(session, states, { withThumbnails, withHtml, withFigmaTree }, onStatus);
+    const pages = await captureStates(session, states, captureOptions, onStatus, observed);
     // Taken once for the project, not per page: it is the same icon on all of
     // them, and it is what tells one project from another in the list.
     const icon = await session.captureIcon?.().catch(() => null) ?? null;
@@ -741,11 +760,67 @@ async function withProjectServer(root, { onStatus, allowWorkspaceRoot = false, .
   }
 }
 
+/**
+ * Starts a project and leaves it running.
+ *
+ * A scan starts one too, and stops it again the moment it is done — right for a
+ * scan, useless for looking at the thing. This tries the same things in the same
+ * order, and hands back what is running: the Electron renderer, the project's
+ * own dev script, the command the project declares for itself in a Dockerfile,
+ * Procfile or README, or a folder of static pages served as they are.
+ */
+async function startProjectServer(root, { onStatus, startTimeoutMs = 90_000 } = {}) {
+  if (looksLikeAppBundle(root)) {
+    return { ok: false, reason: "app-bundle", message: "An installed app is opened rather than served." };
+  }
+  if (await detectElectronRenderer(root)) {
+    onStatus?.({ phase: "starting", detail: "Serving the Electron renderer" });
+    const renderer = await startRendererServer(root);
+    if (renderer.ok) return renderer;
+  }
+  onStatus?.({ phase: "starting", detail: "Starting the project's dev server" });
+  const started = await startDevServer(root, { startTimeoutMs });
+  if (started.ok) return started;
+  if (started.reason !== "no-manifest" && started.reason !== "no-dev-script") return started;
+
+  // Not a Node project. What it declares about itself is the next best thing to
+  // a dev script, and is what the scan already runs.
+  const foreign = await describeForeignProject(root);
+  if (foreign?.commands?.length) {
+    onStatus?.({ phase: "starting", detail: `Running this ${foreign.kind} project's own command` });
+    const ran = await startForeignServer(root, foreign, { startTimeoutMs });
+    if (ran.ok) return ran;
+    return { ok: false, reason: "foreign", message: ran.message, foreign };
+  }
+  const staticSite = await findStaticSite(root);
+  if (staticSite) {
+    onStatus?.({ phase: "starting", detail: `Serving ${staticSite.pages.length} static pages` });
+    const server = await startLocalRendererServer(path.join(root, staticSite.entry));
+    return {
+      ok: true,
+      url: server.origin,
+      origin: server.origin,
+      command: `static files (${staticSite.pages.length} pages)`,
+      attached: false,
+      stop: () => { void server.close(); }
+    };
+  }
+  return started;
+}
+
 async function scanFolder(root, options = {}) {
-  const { onStatus, allowWorkspaceRoot, ...forward } = options;
+  const { onStatus, allowWorkspaceRoot, swift, ...forward } = options;
   // An installed app is a folder too, and dropping one means the app, not its
   // insides: there is no dev script in there to run, only a build to open.
   if (looksLikeAppBundle(root)) return scanAppBundle(root, options);
+  // An iOS project has no address to serve and no dev script to run: it is
+  // built, launched on a Simulator, and its screens are exported there. Claimed
+  // before anything tries to serve it, or it would be turned away for having no
+  // package.json.
+  // The project file is not always at the folder that was handed over — the
+  // app's source folder and the repository around it are the same app.
+  const xcodeRoot = await resolveXcodeProjectRoot(root);
+  if (xcodeRoot) return scanSwiftUiFolder(root, { ...(swift ?? {}), projectRoot: xcodeRoot, onStatus });
   return withProjectServer(root, options, (url, served) => scanUrl(url, {
     ...forward,
     onStatus,
@@ -754,4 +829,4 @@ async function scanFolder(root, options = {}) {
   }));
 }
 
-module.exports = { declaresWorkspace, exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, parseSitemapPaths, recaptureInApp, recapturePage, scanAppBundle, scanAttached, scanFolder, scanSelf, scanUrl, withProjectServer };
+module.exports = { declaresWorkspace, exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, parseSitemapPaths, recaptureInApp, recapturePage, scanAppBundle, scanAttached, scanFolder, scanSelf, scanUrl, startProjectServer, withProjectServer };

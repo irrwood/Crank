@@ -4,11 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title data-zh="Crank：你的应用，重新可编辑" data-en="Crank: Your app, editable again">Crank：你的应用，重新可编辑</title>
-  <meta name="description" content="把项目文件夹或 .app 拖进 Crank，它自己跑起应用、扫遍每个页面，把真实渲染的界面导入 Figma，得到可编辑的图层，不是截图。再同步一次，更新的还是原来那批帧。"
-        data-zh-content="把项目文件夹或 .app 拖进 Crank，它自己跑起应用、扫遍每个页面，把真实渲染的界面导入 Figma，得到可编辑的图层，不是截图。再同步一次，更新的还是原来那批帧。"
-        data-en-content="Drop in a project folder or a built .app. Crank runs the app itself, walks every page, and turns the real rendered UI into editable Figma layers, not screenshots. Sync again, and the same frames update in place." />
+  <meta name="description" content="拖入项目、.app 或网址。Crank 扫描它能到达的页面，送进 Figma 或 Paper——是可编辑图层，不是截图。扫描在本机完成，不用 AI。"
+        data-zh-content="拖入项目、.app 或网址。Crank 扫描它能到达的页面，送进 Figma 或 Paper——是可编辑图层，不是截图。扫描在本机完成，不用 AI。"
+        data-en-content="Drop in a project, a built .app, or a URL. Crank scans every screen it can reach and sends editable layers to Figma or Paper—not screenshots. Capture runs locally, with no AI or token costs." />
   <link rel="icon" type="image/svg+xml" href="./icon.svg" />
-  <link rel="stylesheet" href="./styles.css?v=3" />
+  <link rel="stylesheet" href="./styles.css?v=4" />
 </head>
 <body>
   <header class="site-header">
@@ -32,14 +32,14 @@
     <section class="hero">
       <h1 data-zh="你的应用，重新可编辑" data-en="Your app, editable again">你的应用，重新可编辑</h1>
       <p class="hero-sub"
-         data-zh="拖入项目文件夹或者 .app，扫描页面，一键同步。不是截图，而是真正可编辑的 Figma 图层。"
-         data-en="Drop in a project folder or a .app. It scans the pages, then syncs in one click. Not screenshots, but truly editable Figma layers.">
-        拖入项目文件夹或者 .app，扫描页面，一键同步。不是截图，而是真正可编辑的 Figma 图层。
+         data-zh="拖入项目、.app 或网址。Crank 扫描它能到达的页面，送进 Figma 或 Paper——是可编辑图层，不是截图。"
+         data-en="Drop in a project, a built .app, or a URL. Crank scans every screen it can reach and sends editable layers to Figma or Paper—not screenshots.">
+        拖入项目、.app 或网址。Crank 扫描它能到达的页面，送进 Figma 或 Paper——是可编辑图层，不是截图。
       </p>
       <a class="button button--primary" href="https://github.com/irrwood/Crank/releases/latest" target="_blank" rel="noopener noreferrer"
-         data-zh="开始使用" data-en="Get started">开始使用</a>
+         data-zh="下载 Crank" data-en="Download Crank">下载 Crank</a>
       <p class="hero-meta"
-         data-zh="macOS · 本地优先 · 免费" data-en="macOS · Local-first · Free">macOS · 本地优先 · 免费</p>
+         data-zh="macOS · 本地扫描 · 免费 · 不用 AI" data-en="macOS · Local capture · Free · No AI">macOS · 本地扫描 · 免费 · 不用 AI</p>
     </section>
 
     <figure class="hero-shot">
@@ -61,9 +61,9 @@
       <div class="supports-grid">
         <article class="support-card">
           <h3 data-zh="Web 项目" data-en="Web projects">Web 项目</h3>
-          <p data-zh="贴一个地址，或丢一个文件夹，正在跑的应用直接扫。"
-             data-en="Paste an address or drop a folder. The app you have running scans as it is.">
-            贴一个地址，或丢一个文件夹，正在跑的应用直接扫。
+          <p data-zh="粘贴网址，或拖入项目文件夹让 Crank 启动它，然后扫描页面。"
+             data-en="Paste a URL, or drop in a project folder for Crank to start and scan.">
+            粘贴网址，或拖入项目文件夹让 Crank 启动它，然后扫描页面。
           </p>
           <p class="support-tags"
              data-zh-html="<code>Vite</code><code>Next.js</code><code>Remix</code><code>Astro</code><code>静态站点</code>"
@@ -73,9 +73,9 @@
         </article>
         <article class="support-card">
           <h3 data-zh="Electron 应用" data-en="Electron apps">Electron 应用</h3>
-          <p data-zh="React、Vue、Svelte，还是纯 Chromium，跑得起来，就扫得出来。"
-             data-en="React, Vue, Svelte, or plain Chromium. If it runs, it scans.">
-            React、Vue、Svelte，还是纯 Chromium，跑得起来，就扫得出来。
+          <p data-zh="拖入源码或构建好的 .app，直接读取应用实际渲染的界面。"
+             data-en="Drop in source code or a built .app. Crank reads the interface the app actually renders.">
+            拖入源码或构建好的 .app，直接读取应用实际渲染的界面。
           </p>
           <p class="support-tags"
              data-zh-html="<code>React</code><code>Vue</code><code>Svelte</code><code>Angular</code><code>Chromium</code>"
@@ -84,10 +84,10 @@
           </p>
         </article>
         <article class="support-card">
-          <h3 data-zh="SwiftUI 应用" data-en="SwiftUI apps">SwiftUI 应用</h3>
-          <p data-zh="打开 Xcode 项目，逐个界面渲染。渲染出来什么样，Figma 里就是什么样，能可靠对上的元素再换成原生可编辑图层。"
-             data-en="Point it at an Xcode project and it renders screen by screen. Figma gets exactly what rendered, and elements it can match reliably become native editable layers.">
-            打开 Xcode 项目，逐个界面渲染。渲染出来什么样，Figma 里就是什么样，能可靠对上的元素再换成原生可编辑图层。
+          <h3 data-zh="SwiftUI 应用 · Beta" data-en="SwiftUI apps · Beta">SwiftUI 应用 · Beta</h3>
+          <p data-zh="给它一个 iOS 项目。Crank 会在模拟器中运行，并导出能够可靠到达的页面。"
+             data-en="Give it an iOS project. Crank runs it in Simulator and exports every screen it can reach reliably.">
+            给它一个 iOS 项目。Crank 会在模拟器中运行，并导出能够可靠到达的页面。
           </p>
           <p class="support-tags"
              data-zh-html="<code>SwiftUI</code><code>Xcode</code><code>模拟器</code>"
@@ -96,15 +96,73 @@
           </p>
         </article>
         <article class="support-card">
-          <h3 data-zh="本地优先" data-en="Local-first">本地优先</h3>
-          <p data-zh="数据留在你自己的机器上，只有你主动同步时，才会把结构发给 Figma。"
-             data-en="Everything stays on your machine. Nothing goes to Figma until you sync.">
-            数据留在你自己的机器上，只有你主动同步时，才会把结构发给 Figma。
+          <h3 data-zh="本地优先" data-en="Local by default">本地优先</h3>
+          <p data-zh="扫描在本机完成。源码不会上传；只有你主动同步时，才发送标准化的视觉结构。"
+             data-en="Capture runs on your Mac. Your source is never uploaded; normalized visual structure is sent only when you choose to sync.">
+            扫描在本机完成。源码不会上传；只有你主动同步时，才发送标准化的视觉结构。
           </p>
           <p class="support-tags"
-             data-zh-html="<code>本地优先</code><code>免费</code>"
-             data-en-html="<code>Local-first</code><code>Free</code>">
-            <code>本地优先</code><code>免费</code>
+             data-zh-html="<code>源码留在本机</code><code>主动同步</code><code>不用 AI</code>"
+             data-en-html="<code>Source stays local</code><code>Explicit sync</code><code>No AI</code>">
+            <code>源码留在本机</code><code>主动同步</code><code>不用 AI</code>
+          </p>
+        </article>
+      </div>
+    </section>
+    <section class="supports" aria-labelledby="flow-title">
+      <h2 id="flow-title" data-zh="页面怎么到达" data-en="How screens connect">页面怎么到达</h2>
+      <div class="supports-grid supports-grid--wide">
+        <article class="support-card">
+          <h3 data-zh="保留每一步点击路径" data-en="Every click path, preserved">保留每一步点击路径</h3>
+          <p data-zh="屏幕之间的连线会标出触发跳转的操作。点击即可打开目标屏，并按原路径再次到达它。"
+             data-en="Connections show which action led from one screen to the next. Click to open the destination and follow the same path again.">
+            屏幕之间的连线会标出触发跳转的操作。点击即可打开目标屏，并按原路径再次到达它。
+          </p>
+          <p class="support-tags"
+             data-zh-html="<code>点击路径</code><code>可重复到达</code>"
+             data-en-html="<code>Click paths</code><code>Repeatable</code>">
+            <code>点击路径</code><code>可重复到达</code>
+          </p>
+        </article>
+      </div>
+    </section>
+    <section class="supports" aria-labelledby="lands-title">
+      <h2 id="lands-title" data-zh="图层去哪里" data-en="Where the layers land">图层去哪里</h2>
+      <div class="supports-grid supports-grid--three">
+        <article class="support-card">
+          <h3 data-zh="Figma" data-en="Figma">Figma</h3>
+          <p data-zh="图层能选、能改。再次扫描会更新原来的画框，不会重复创建一套。"
+             data-en="Layers are selectable and editable. Scan again and Crank updates the same frames instead of creating another set.">
+            图层能选、能改。再次扫描会更新原来的画框，不会重复创建一套。
+          </p>
+          <p class="support-tags"
+             data-zh-html="<code>插件</code><code>可编辑图层</code>"
+             data-en-html="<code>Plugin</code><code>Editable layers</code>">
+            <code>插件</code><code>可编辑图层</code>
+          </p>
+        </article>
+        <article class="support-card">
+          <h3><span data-zh="Paper Desktop" data-en="Paper Desktop">Paper Desktop</span><span class="tag-new" data-zh="新" data-en="New">新</span></h3>
+          <p data-zh="屏幕直接画进当前打开的 Paper 文件，无需插件或配对；也可以复制后粘贴。"
+             data-en="Draw screens straight into the Paper file you have open—no plugin or pairing required. You can also copy and paste them.">
+            屏幕直接画进当前打开的 Paper 文件，无需插件或配对；也可以复制后粘贴。
+          </p>
+          <p class="support-tags"
+             data-zh-html="<code>免插件</code><code>免配对</code><code>复制粘贴</code>"
+             data-en-html="<code>No plugin</code><code>No pairing</code><code>Copy &amp; paste</code>">
+            <code>免插件</code><code>免配对</code><code>复制粘贴</code>
+          </p>
+        </article>
+        <article class="support-card">
+          <h3 data-zh="交接页" data-en="Handoff page">交接页</h3>
+          <p data-zh="导出一个自带图片的 HTML 文件，任何浏览器都能离线打开，对方无需安装 Crank。"
+             data-en="Export one self-contained HTML file that opens offline in any browser. The recipient does not need Crank.">
+            导出一个自带图片的 HTML 文件，任何浏览器都能离线打开，对方无需安装 Crank。
+          </p>
+          <p class="support-tags"
+             data-zh-html="<code>单文件</code><code>离线</code>"
+             data-en-html="<code>One file</code><code>Offline</code>">
+            <code>单文件</code><code>离线</code>
           </p>
         </article>
       </div>

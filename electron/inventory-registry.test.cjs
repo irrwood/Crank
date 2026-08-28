@@ -30,10 +30,23 @@ test("remembers a target so it need not be dragged in again", async () => {
   });
 });
 
+test("remembers the Figma file and platform when the target list is read again", async () => {
+  await withRegistry(async (registry) => {
+    await registry.remember("folder", "/Users/me/app", {
+      figmaUrl: "https://www.figma.com/design/abc123/App",
+      platform: "web"
+    });
+
+    const [entry] = await registry.list();
+    assert.equal(entry.figmaUrl, "https://www.figma.com/design/abc123/App");
+    assert.equal(entry.platform, "web");
+  });
+});
+
 test("keeps the scan so reopening does not mean rescanning", async () => {
   await withRegistry(async (registry) => {
-    const inventory = { ok: true, origin: "http://x", pages: [{ id: "a" }, { id: "b" }] };
-    const id = await registry.saveInventory("folder", "/Users/me/app", inventory);
+    const inventory = { ok: true, origin: "http://x", pages: [{ id: "a", snapshot: null }, { id: "b", snapshot: null }] };
+    const { id } = await registry.saveInventory("folder", "/Users/me/app", inventory);
     assert.deepEqual(await registry.loadInventory(id), inventory);
     const [entry] = await registry.list();
     assert.equal(entry.pageCount, 2, "the saved page count shows without loading the whole inventory");
@@ -41,9 +54,27 @@ test("keeps the scan so reopening does not mean rescanning", async () => {
   });
 });
 
+test("a scan is replaced in one step, never emptied first", async () => {
+  await withRegistry(async (registry, directory) => {
+    const { readdir } = require("node:fs/promises");
+    const path = require("node:path");
+    const first = { ok: true, pages: [{ id: "a", snapshot: null }] };
+    const { id } = await registry.saveInventory("folder", "/repos/site", first);
+    await registry.saveInventory("folder", "/repos/site", { ok: true, pages: [{ id: "a", snapshot: null }, { id: "b", snapshot: null }] });
+    // `writeFile` truncates before it writes, so a process stopped mid-save
+    // used to leave nothing where a scan had been — a 167MB scan was found at
+    // zero bytes with its entry still claiming sixty pages. The replacement is
+    // written beside the file and renamed over it, so nothing half-written is
+    // ever at the name a reader opens.
+    const files = await readdir(path.join(directory, "inventories"));
+    assert.deepEqual(files, [`${id}.json`], "no half-written file is left behind");
+    assert.equal((await registry.loadInventory(id)).pages.length, 2);
+  });
+});
+
 test("forgetting a target drops its stored scan too", async () => {
   await withRegistry(async (registry) => {
-    const id = await registry.saveInventory("url", "http://localhost:8787", { pages: [{ id: "a" }] });
+    const { id } = await registry.saveInventory("url", "http://localhost:8787", { pages: [{ id: "a" }] });
     await registry.forget(id);
     assert.deepEqual(await registry.list(), []);
     assert.equal(await registry.loadInventory(id), null, "the cache must not outlive the entry");
@@ -145,7 +176,7 @@ test("replaces the sent baseline with what Figma says it holds, and names the fr
 
 test("a dropped page stays dropped, and is forgotten with its project", async () => {
   await withRegistry(async (registry) => {
-    const id = await registry.saveInventory("url", "http://localhost:5173", { ok: true, pages: [] });
+    const { id } = await registry.saveInventory("url", "http://localhost:5173", { ok: true, pages: [] });
     assert.deepEqual(await registry.dropped(id), [], "nothing is dropped to begin with");
 
     await registry.drop(id, "page-404");
@@ -209,7 +240,7 @@ test("a scan saved before the rename still has its layers", async () => {
 test("a picture repeated across pages is saved once, and reopens whole", async () => {
   await withRegistry(async (registry, directory) => {
     const shared = `data:image/webp;base64,${Buffer.from("one screenshot").toString("base64")}`;
-    const id = await registry.saveInventory("url", "http://app.test", {
+    const { id } = await registry.saveInventory("url", "http://app.test", {
       ok: true,
       pages: [
         { id: "a", thumbnail: { dataUrl: shared, width: 1220 } },
@@ -256,7 +287,7 @@ test("a swept store keeps what the remembered projects still use", async () => {
     });
     await registry.forget(targetId("url", "http://gone.test"));
 
-    assert.deepEqual(await registry.sweepAssets(), { removed: 1 });
+    assert.deepEqual(await registry.sweepAssets(), { removed: 1, removedSnapshots: 0, skipped: false });
     assert.equal((await readdir(path.join(directory, "assets"))).length, 1);
     const loaded = await registry.loadInventory(targetId("url", "http://kept.test"));
     assert.equal(await registry.assets.dataUrl(loaded.pages[0].thumbnail.dataUrl), kept);
@@ -289,11 +320,12 @@ test("an older scan keeps its markup, under the current names", async () => {
     assert.equal(loaded.pages[0].name, "Home");
     assert.equal(loaded.pages[0].layerTree.tree.id, "root", "the layers, under their current name");
     assert.equal(loaded.pages[0].variants[0].layerTree.tree.id, "dark-root", "a re-skinned page's too");
-    // The markup stays: it is the one view of a page that is not an
-    // approximation, and its pictures cost nothing extra now that they are
-    // stored by content alongside everyone else's.
-    assert.match(loaded.pages[0].snapshot.html, /^<html><img src="crank-asset:\/\//);
-    assert.equal(loaded.pages[0].variants[0].snapshot.html, "<html>dark</html>");
+    // The markup stays, in a file of its own: it is the one view of a page
+    // that is not an approximation, and it is far too heavy to carry in the
+    // scan that has to be read to open a project.
+    assert.equal(loaded.pages[0].snapshot.html, undefined, "not in the scan itself");
+    assert.match(await registry.readSnapshot(loaded.pages[0].snapshot.ref), /^<html><img src="crank-asset:\/\//);
+    assert.equal(await registry.readSnapshot(loaded.pages[0].variants[0].snapshot.ref), "<html>dark</html>");
     assert.equal(loaded.pages[0].name, "Home", "and everything else is not");
     assert.equal(loaded.pages[0].layerTree.tree.id, "root", "including the layers, under their current name");
 
@@ -320,12 +352,53 @@ test("a page kept against the threshold stays kept", async () => {
 
 test("forgetting a project forgets what it kept and what it dropped", async () => {
   await withRegistry(async (registry) => {
-    const id = await registry.saveInventory("folder", "/repos/site", { ok: true, pages: [{ id: "a" }] });
+    const { id } = await registry.saveInventory("folder", "/repos/site", { ok: true, pages: [{ id: "a" }] });
     await registry.keep(id, "page-abc123");
     await registry.drop(id, "page-zzz999");
 
     await registry.forget(id);
     assert.deepEqual(await registry.kept(id), [], "or a folder scanned again later inherits decisions about a different scan");
     assert.deepEqual(await registry.dropped(id), []);
+  });
+});
+
+test("nothing is swept while any scan cannot be read", async () => {
+  await withRegistry(async (registry, directory) => {
+    const kept = `data:image/png;base64,${Buffer.from("used by the unreadable scan").toString("base64")}`;
+    await registry.saveInventory("url", "http://good.test", { ok: true, pages: [{ id: "a", thumbnail: { dataUrl: kept } }] });
+    // A file too large to parse, or written by a version this one does not
+    // know, is not a file with no pictures in it. Sweeping on that assumption
+    // deletes images there is no way to get back.
+    await writeFile(path.join(directory, "inventories", `${targetId("url", "http://broken.test")}.json`), "{ not json");
+
+    const outcome = await registry.sweepAssets();
+    assert.deepEqual(outcome, { removed: 0, skipped: true, unread: 1 });
+    assert.equal((await readdir(path.join(directory, "assets"))).length, 1, "and the pictures are all still there");
+  });
+});
+
+test("a scan whose list entry is gone still keeps its pictures", async () => {
+  await withRegistry(async (registry, directory) => {
+    const orphaned = `data:image/png;base64,${Buffer.from("in an unlisted scan").toString("base64")}`;
+    await registry.saveInventory("url", "http://listed.test", { ok: true, pages: [{ id: "a" }] });
+    await registry.saveInventory("url", "http://unlisted.test", { ok: true, pages: [{ id: "a", thumbnail: { dataUrl: orphaned } }] });
+    // The list loses the entry but the scan stays: a half-finished forget, or a
+    // hand-edited list. Reading the list alone would call these unreferenced.
+    await writeFile(path.join(directory, "inventory-targets.json"),
+      JSON.stringify((await registry.list()).filter((entry) => entry.name !== "unlisted.test")));
+
+    assert.deepEqual(await registry.sweepAssets(), { removed: 0, removedSnapshots: 0, skipped: false });
+    assert.equal((await readdir(path.join(directory, "assets"))).length, 1);
+  });
+});
+
+test("dropping a page undoes having kept it", async () => {
+  await withRegistry(async (registry) => {
+    const id = targetId("folder", "/repos/site");
+    await registry.keep(id, "page-abc123");
+    await registry.drop(id, "page-abc123");
+
+    assert.deepEqual(await registry.kept(id), [], "the two are opposite answers to the same question");
+    assert.deepEqual(await registry.dropped(id), ["page-abc123"]);
   });
 });
