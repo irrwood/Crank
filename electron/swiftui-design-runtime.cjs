@@ -13,6 +13,7 @@ const { sourceVectorEffectSchema } = require("./swift-vector-effects.cjs");
 const { appleDesignKitForMacOs, detectSchemePlatform, platformBuildArguments } = require("./xcode-platform.cjs");
 const { launchMacApp } = require("./macos-app-host.cjs");
 const { attachDisplayListAgent, startDisplayListCapture } = require("./swift-display-list-agent.cjs");
+const { claimWorkspace } = require("./design-build-lock.cjs");
 
 const DEFAULT_RUNTIME_PORT = 38458;
 const runtimeFrameSchema = z.object({
@@ -1891,6 +1892,9 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
   // Held outside the run so a build that fails halfway still leaves no app of
   // ours running on the user's Mac.
   const macHost = { app: null };
+  // Held outside the run for the same reason `macHost` is: the workspace has to
+  // be given back whether the build finishes, fails, or throws on the way in.
+  let releaseWorkspace = null;
   return (async () => {
   // One workspace per project, reused across runs, with Xcode's DerivedData
   // inside it. A second export is then an incremental build rather than a full
@@ -1901,6 +1905,13 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
     createHash("sha256").update(root).digest("hex").slice(0, 24)
   );
   await mkdir(workspaceRoot, { recursive: true });
+  // Claimed before anything is copied or built. Crank also runs as an MCP
+  // runtime out of its own copy, so a second process can reach this same
+  // directory — and two builds in one DerivedData is a locked `build.db` and a
+  // wall of Xcode log that never says what actually went wrong.
+  releaseWorkspace = await claimWorkspace(workspaceRoot, {
+    label: process.argv.includes("--mcp-runtime") ? "an agent through MCP" : "the Crank window"
+  });
   const copiedRoot = path.join(workspaceRoot, path.basename(root));
   await copyProject(root, copiedRoot);
   const byFile = new Map();
@@ -2368,6 +2379,7 @@ async function runSwiftUiDesignBuild({ root, cacheDirectory, runtimeServer, simu
   })().finally(async () => {
     await macHost.app?.stop();
     runtimeServer.endSession(session.token);
+    await releaseWorkspace?.();
   });
 }
 
