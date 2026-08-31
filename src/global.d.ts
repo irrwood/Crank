@@ -57,11 +57,16 @@ declare global {
       forgetInventoryTarget: (id: string) => Promise<Array<InventoryTarget | InventoryGroup>>;
       onScanStatus: (callback: (value: ScanStatus) => void) => () => void;
       onScanLifecycle: (callback: (value: ScanLifecycle) => void) => () => void;
+      onShowFlow: (callback: () => void) => () => void;
       exportHandoffPage: (inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] }, title?: string) => Promise<{ saved: boolean; filePath?: string }>;
       readPageSnapshot: (reference: string) => Promise<string | null>;
       copyForPaper: (
         inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] },
         options?: { pageId?: string | null; title?: string }
+      ) => Promise<{ ok: boolean; message?: string; screens?: string[]; missing?: string[]; dropped?: string[] }>;
+      copyForFigma: (
+        inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] },
+        options?: { pageId?: string | null }
       ) => Promise<{ ok: boolean; message?: string; screens?: string[]; missing?: string[]; dropped?: string[] }>;
       pushToPaper: (
         inventory: { origin?: string; pages: DiscoveredPage[]; filtered?: PageInventoryFiltered[] },
@@ -75,6 +80,7 @@ declare global {
         failed?: Array<{ name: string; reason: string }>;
         missing?: string[];
       }>;
+      refreshFolder: (root: string) => Promise<{ found: number; targets: (InventoryTarget | InventoryGroup)[] }>;
       getCapturePipeline: () => Promise<CapturePipeline>;
       setCapturePipeline: (pipeline: CapturePipeline) => Promise<CapturePipeline>;
       revealFile: (filePath: string) => Promise<void>;
@@ -88,6 +94,7 @@ declare global {
       applyPull: (root: string) => Promise<PullApplyResult>;
       syncFromFigmaWithCodex: (root: string) => Promise<CodexSyncResult>;
       openCodexConversation: (root: string) => Promise<{ project: ProjectInfo; needsSend: boolean }>;
+      openFlowChangeInCodex: (root: string, prompt: string) => Promise<void>;
       onCodexThreadStarted: (callback: (value: { root: string; threadId: string }) => void) => () => void;
       openCodexThread: (threadId: string) => Promise<void>;
       getAutomaticMappingStatus: (root: string, pairingCode: string) => Promise<AutomaticMappingStatus>;

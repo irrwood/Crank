@@ -4364,6 +4364,30 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
   margin-bottom: 4px;
 }
 
+/* The folder's own name and its rescan, on one line. The name stays the
+   collapse control it always was; the button beside it is a second target, so
+   clicking one cannot do the other. */
+.target-group-head-row {
+  display: flex;
+  align-items: center;
+}
+
+.target-group-head-row .icon-button {
+  flex: none;
+  margin-right: 4px;
+  opacity: 0;
+}
+
+.target-group-head-row:hover .icon-button,
+.target-group-head-row .icon-button:focus-visible {
+  opacity: 1;
+}
+
+.target-group-head-row .target-group-head {
+  flex: 1;
+  min-width: 0;
+}
+
 .target-group-head {
   display: flex; align-items: center; gap: 6px; width: 100%;
   min-height: 30px; padding: 0 8px; border: 0; border-radius: 9px;
@@ -4398,6 +4422,7 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
 /* ---------- screen flow ---------- */
 
 .screen-flow {
+  position: relative;
   min-height: 440px;
   height: min(680px, calc(100vh - 190px));
   overflow: hidden;
@@ -4408,15 +4433,69 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
 
 .screen-flow-header {
   display: flex;
-  min-height: 38px;
+  min-height: 48px;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 0 14px;
+  padding: 0 10px 0 14px;
   border-bottom: 1px solid rgba(32, 33, 31, 0.07);
   color: #777873;
   font-size: 11px;
 }
+
+.screen-flow-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.screen-flow-title strong {
+  overflow: hidden;
+  color: #40413d;
+  font-size: 11.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen-flow-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.flow-tool-button,
+.flow-apply-button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid rgba(32, 33, 31, 0.1);
+  border-radius: 7px;
+  background: #fff;
+  color: #62635f;
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.flow-tool-button:hover:not(:disabled) { color: #245fdc; border-color: rgba(59, 108, 246, 0.28); }
+.flow-tool-button:disabled { opacity: 0.38; cursor: default; }
+
+.flow-apply-button {
+  min-width: 96px;
+  border-color: #2f67dd;
+  background: #326bea;
+  color: #fff;
+  font-weight: 650;
+}
+
+.flow-apply-button:hover:not(:disabled) { background: #245fdc; }
+.flow-apply-button:disabled { border-color: rgba(32, 33, 31, 0.08); background: #ececea; color: #9a9b96; cursor: default; }
 
 .screen-flow-header small {
   overflow: hidden;
@@ -4428,7 +4507,7 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
 
 .screen-flow-canvas {
   position: relative;
-  height: 100%;
+  height: calc(100% - 48px);
 }
 
 .screen-flow .react-flow {
@@ -4436,8 +4515,10 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
 }
 
 .screen-flow .react-flow__node {
-  cursor: pointer;
+  cursor: grab;
 }
+
+.screen-flow .react-flow__node.dragging { cursor: grabbing; }
 
 .screen-flow .react-flow__node:focus-visible {
   outline: 0;
@@ -4543,13 +4624,20 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
 }
 
 .screen-flow-handle {
-  width: 1px !important;
-  min-width: 1px !important;
-  height: 1px !important;
-  min-height: 1px !important;
-  border: 0 !important;
+  width: 7px !important;
+  min-width: 7px !important;
+  height: 7px !important;
+  min-height: 7px !important;
+  border: 1.5px solid #fff !important;
+  background: #3b73ea !important;
   opacity: 0;
+  transition: opacity 100ms ease, transform 100ms ease;
 }
+
+.screen-flow .react-flow__node:hover .screen-flow-handle,
+.screen-flow .react-flow__node.selected .screen-flow-handle,
+.screen-flow .react-flow__node:focus-within .screen-flow-handle { opacity: 1; }
+.screen-flow-handle:hover { transform: scale(1.3); }
 
 .screen-flow .react-flow__edge-path.screen-flow-edge {
   stroke: #3b73ea;
@@ -4560,6 +4648,15 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
 
 .screen-flow .react-flow__edge-path.screen-flow-edge.is-route {
   stroke-width: 2.75;
+}
+
+.screen-flow .react-flow__edge-path.screen-flow-edge.is-proposed {
+  stroke: #7a54d8;
+  stroke-dasharray: 6 4;
+}
+
+.screen-flow .react-flow__edge-path.screen-flow-edge.is-modified {
+  stroke: #d77b2e;
 }
 
 .screen-flow .react-flow__edge.selected .screen-flow-edge,
@@ -4653,6 +4750,83 @@ img.inventory-frame { width: auto; max-width: min(1240px, 92vw); max-height: 78v
   font-size: 10.5px;
   text-align: center;
   pointer-events: none;
+}
+
+.screen-flow-edit-hint {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 3;
+  max-width: min(420px, calc(100% - 190px));
+  margin: 0;
+  color: #9a9b96;
+  font-size: 9.5px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.flow-review-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgba(35, 36, 33, 0.22);
+  backdrop-filter: blur(2px);
+}
+
+.flow-review {
+  width: min(520px, calc(100% - 20px));
+  max-height: calc(100% - 20px);
+  overflow: auto;
+  border: 1px solid rgba(32, 33, 31, 0.12);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 28px 70px rgba(15, 16, 14, 0.22);
+}
+
+.flow-review > header {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(32, 33, 31, 0.08);
+}
+
+.flow-review > header > div { display: flex; flex-direction: column; gap: 2px; }
+.flow-review > header strong { color: #343532; font-size: 13px; font-weight: 680; }
+.flow-review > header small { color: #969791; font-size: 9.5px; }
+.flow-review > header button { display: grid; width: 27px; height: 27px; padding: 0; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #777873; cursor: pointer; }
+.flow-review > header button:hover { background: #f0f0ed; color: #343532; }
+.flow-review > p { margin: 15px 16px 8px; color: #484945; font-size: 11.5px; line-height: 1.45; }
+.flow-review > ol { margin: 0; padding: 0 24px 0 34px; color: #62635f; font-size: 10.5px; line-height: 1.5; }
+.flow-review > ol li + li { margin-top: 5px; }
+
+.flow-manifest-json {
+  margin: 14px 16px 0;
+  overflow: hidden;
+  border: 1px solid rgba(32, 33, 31, 0.08);
+  border-radius: 8px;
+  background: #f7f7f5;
+}
+
+.flow-manifest-json summary { padding: 8px 10px; color: #6f706b; font-size: 9.5px; cursor: pointer; }
+.flow-manifest-json pre { max-height: 180px; margin: 0; padding: 10px; overflow: auto; border-top: 1px solid rgba(32, 33, 31, 0.07); color: #555651; font-family: "SFMono-Regular", Consolas, monospace; font-size: 8px; line-height: 1.5; white-space: pre-wrap; }
+.flow-review-note,
+.flow-review-error { display: block; margin: 10px 16px 0; color: #858681; font-size: 9.5px; line-height: 1.4; }
+.flow-review-error { color: #b6493d; }
+
+.flow-review > footer {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 16px;
+  margin-top: 14px;
+  border-top: 1px solid rgba(32, 33, 31, 0.08);
 }
 
 @media (prefers-reduced-motion: reduce) {

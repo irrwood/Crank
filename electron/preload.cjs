@@ -47,9 +47,16 @@ contextBridge.exposeInMainWorld("uiSync", {
       ipcRenderer.removeListener("inventory:finished", finished);
     };
   },
+  onShowFlow: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("inventory:show-flow", listener);
+    return () => ipcRenderer.removeListener("inventory:show-flow", listener);
+  },
   exportHandoffPage: (inventory, title) => ipcRenderer.invoke("inventory:export", inventory, title),
   readPageSnapshot: (reference) => ipcRenderer.invoke("inventory:snapshot", reference),
   copyForPaper: (inventory, options) => ipcRenderer.invoke("inventory:copy-for-paper", inventory, options),
+  copyForFigma: (inventory, options) => ipcRenderer.invoke("inventory:copy-for-figma", inventory, options),
+  refreshFolder: (root) => ipcRenderer.invoke("inventory:refresh-folder", root),
   pushToPaper: (inventory, options) => ipcRenderer.invoke("inventory:push-to-paper", inventory, options),
   getCapturePipeline: () => ipcRenderer.invoke("settings:capture-pipeline"),
   setCapturePipeline: (pipeline) => ipcRenderer.invoke("settings:set-capture-pipeline", pipeline),
@@ -72,6 +79,7 @@ contextBridge.exposeInMainWorld("uiSync", {
   applyPull: (root) => ipcRenderer.invoke("projects:apply-pull", root),
   syncFromFigmaWithCodex: (root) => ipcRenderer.invoke("projects:sync-from-figma-with-codex", root),
   openCodexConversation: (root) => ipcRenderer.invoke("projects:open-codex-conversation", root),
+  openFlowChangeInCodex: (root, prompt) => ipcRenderer.invoke("codex:open-flow-change", root, prompt),
   onCodexThreadStarted: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on("projects:codex-thread-started", listener);

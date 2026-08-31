@@ -11,11 +11,15 @@ function fakeOperations() {
     getInventory: async (id) => ({ ok: true, id }),
     getPage: async (_id, pageId) => ({ id: pageId }),
     getPageImage: async () => null,
+    getPageDocument: async (_id, pageId) => ({ kind: "layers", pageId }),
+    openFlow: async () => ({ opened: true, mode: "focused" }),
     scanProject: async (root) => ({ ok: true, root }),
     scanUrl: async (url) => ({ ok: true, url }),
     scanAttached: async (port) => ({ ok: true, port }),
     sendToFigma: async () => ({ ok: true, pairingCode: "123456" }),
-    getFigmaStatus: async () => ({ state: "waiting" })
+    getFigmaStatus: async () => ({ state: "waiting" }),
+    copyForPaper: async (_id, pageIds) => ({ ok: true, screens: pageIds ?? ["all"] }),
+    pushToPaper: async (_id, pageIds) => ({ ok: true, created: pageIds ?? ["all"] })
   };
 }
 
@@ -29,6 +33,10 @@ test("an MCP process delegates to the Crank instance that owns the bridges", asy
     assert.ok(client);
     assert.deepEqual(await client.listProjects(), [{ id: "one", name: "Example" }]);
     assert.deepEqual(await client.scanProject("/Example", null), { ok: true, root: "/Example" });
+    assert.deepEqual(await client.openFlow(), { opened: true, mode: "focused" });
+    assert.deepEqual(await client.getPageDocument("one", "home"), { kind: "layers", pageId: "home" });
+    assert.deepEqual(await client.copyForPaper("one", ["home"], "Example"), { ok: true, screens: ["home"] });
+    assert.deepEqual(await client.pushToPaper("one", ["home"]), { ok: true, created: ["home"] });
   } finally {
     await server.stop();
     await rm(directory, { recursive: true, force: true });

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "crank": {
+      "command": "node",
+      "args": ["./scripts/start-crank-mcp.cjs"],
+      "cwd": "."
+    }
+  }
+}

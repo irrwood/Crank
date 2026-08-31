@@ -6,6 +6,7 @@ const path = require("node:path");
 const { z } = require("zod");
 const { collectFiles, createJavascriptScreen, discoverJavascriptProjectRoots, discoverSwiftUiProjectRoots, omitWorkspaceContainers, scanJavascriptProject, scanSwiftUiProject } = require("./project-scanner.cjs");
 const { exploreFromPage, exploreInApp, listTargets, looksLikeAppBundle, normalizeTargetUrl, recaptureInApp, recapturePage, scanAttached, scanFolder, scanSelf, scanUrl, startProjectServer, withProjectServer } = require("./page-inventory.cjs");
+const { isCrankSourceRoot } = require("./crank-source-root.cjs");
 const { readAppIcon } = require("./app-bundle.cjs");
 const { shippedPath } = require("./packaged-path.cjs");
 const { renderHandoffPage } = require("./handoff-page.cjs");
@@ -17,6 +18,9 @@ const { createRecordingSession } = require("./recording-session.cjs");
 const { buildFigmaJob, projectIdFor } = require("./figma-export.cjs");
 const { createInventoryRegistry, nameFor, targetId } = require("./inventory-registry.cjs");
 const { readCapturePipeline, settingsSchema: captureSettingsSchema, usesDisplayList, writeCapturePipeline } = require("./capture-pipeline.cjs");
+const { createSingleFlight } = require("./single-flight.cjs");
+const { renderFigmaSvg } = require("./figma-clipboard.cjs");
+const { projectsInside } = require("./folder-projects.cjs");
 const { createDisplayListServer } = require("./swift-display-list-session.cjs");
 const { identityOf } = require("./state-discovery.cjs");
 const { replayClickScript } = require("./replay-locator.cjs");
@@ -43,12 +47,18 @@ const { probeUrl, resolveDevCommand, startDevServer } = require("./dev-server.cj
 const { startCrankMcpServer } = require("./mcp-server.cjs");
 const { createMcpRpcClient, createMcpRpcServer } = require("./mcp-rpc.cjs");
 
-// `Crank --mcp` keeps stdout exclusively for MCP JSON-RPC, so every diagnostic
-// goes to stderr in that mode. When the window already owns the capture and
-// Figma ports, MCP relays to it over the authenticated loopback server; without
-// a running window the MCP process owns the same Electron runtime headlessly.
+// `Crank --mcp` keeps stdout exclusively for MCP JSON-RPC. The Codex plugin's
+// bundled `--mcp-runtime` process owns capture without a window and talks only
+// over its private authenticated loopback endpoint, so neither mode may put
+// diagnostics on stdout.
 const mcpMode = process.argv.includes("--mcp");
-const runtimeLog = (...values) => (mcpMode ? console.error(...values) : console.log(...values));
+const mcpRuntimeMode = process.argv.includes("--mcp-runtime");
+const runtimeLog = (...values) => (mcpMode || mcpRuntimeMode ? console.error(...values) : console.log(...values));
+
+if (mcpRuntimeMode && process.env.CRANK_USER_DATA_DIR) {
+  const runtimeDataDirectory = z.string().min(1).max(4096).refine(path.isAbsolute).parse(process.env.CRANK_USER_DATA_DIR);
+  app.setPath("userData", runtimeDataDirectory);
+}
 
 const visualBaselineNodeSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_:/-]{1,500}$/),
@@ -340,7 +350,7 @@ const deviceConnectionPath = () => path.join(app.getPath("userData"), "figma-dev
 // ready, and a push completes long after the IPC handler that started it.
 let inventoryStore = null;
 const inventoryRegistry = () => (inventoryStore ??= createInventoryRegistry(app.getPath("userData")));
-const hasSingleInstanceLock = mcpMode ? true : app.requestSingleInstanceLock();
+const hasSingleInstanceLock = mcpMode || mcpRuntimeMode ? true : app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
   app.quit();
@@ -488,7 +498,45 @@ async function keepWanted(id, pages) {
  * immediately, the same dropped-page decisions apply, and the same Swift
  * capture remains on disk for the later Figma step.
  */
-async function scanInventoryFolder(root, workspaceRoot = null, { onEvent = () => {}, onProgress = () => {} } = {}) {
+/**
+ * Scans in flight, by the folder being scanned.
+ *
+ * Asking for the same project twice does not mean doing the work twice. It
+ * means the second caller wants what the first one is already producing — and
+ * running both is worse than pointless: a scan starts a project, drives it, and
+ * for an Xcode project builds into a workspace of its own, so two of them share
+ * a DerivedData and collide. The sidebar can start a second one from a single
+ * click when a project is its own workspace parent, and Xcode's report of that
+ * is "database is locked", several seconds into a build log.
+ */
+const scansInFlight = createSingleFlight();
+
+/**
+ * Records every project a folder holds, so each has a row of its own.
+ *
+ * Registering is not scanning: this reads directory names, and leaves each
+ * project unscanned until someone asks for it. A folder with six packages in
+ * it should list six projects immediately, not sit through six captures first.
+ */
+async function rememberProjectsInside(root) {
+  const inside = await projectsInside(root).catch(() => []);
+  for (const nested of inside) {
+    await inventoryRegistry().remember("folder", nested, { parent: root });
+  }
+  return inside;
+}
+
+function scanInventoryFolder(root, workspaceRoot = null, options = {}) {
+  // Joined rather than queued: the second caller wants this project scanned,
+  // and it is being scanned. Its progress callbacks are not wired to the run
+  // already going, so it gets the result without the commentary.
+  return scansInFlight.run(
+    path.resolve(projectRootSchema.parse(root)),
+    () => runInventoryScan(root, workspaceRoot, options)
+  );
+}
+
+async function runInventoryScan(root, workspaceRoot = null, { onEvent = () => {}, onProgress = () => {} } = {}) {
   const safeRoot = projectRootSchema.parse(root);
   const parent = workspaceRoot ? projectRootSchema.parse(workspaceRoot) : null;
   const id = targetId("folder", safeRoot);
@@ -496,6 +544,12 @@ async function scanInventoryFolder(root, workspaceRoot = null, { onEvent = () =>
     parent,
     icon: looksLikeAppBundle(safeRoot) ? await readAppIcon(safeRoot) : null
   });
+  // An Xcode project inside a folder that is a project in its own right gets a
+  // row of its own. Dropping a folder already registers both; scanning one did
+  // not, so a repository whose top level is a Python app and whose subfolder is
+  // the iOS client scanned as the Python app and left the client with nowhere
+  // to appear at all.
+  await rememberProjectsInside(safeRoot);
   onEvent({ channel: "inventory:started", id, kind: "folder", target: safeRoot });
   const scanning = {
     keepAnyway: await inventoryRegistry().kept(id),
@@ -506,7 +560,9 @@ async function scanInventoryFolder(root, workspaceRoot = null, { onEvent = () =>
       onEvent({ channel: "inventory:progress", id, ...value });
     }
   };
-  const scanned = path.resolve(safeRoot) === path.resolve(app.getAppPath())
+  const scansCrankItself = path.resolve(safeRoot) === path.resolve(app.getAppPath())
+    || await isCrankSourceRoot(safeRoot);
+  const scanned = scansCrankItself
     ? await scanSelf({ appRoot: safeRoot, ...scanning })
     : await scanFolder(safeRoot, { ...scanning, swift: await swiftScanOptions(safeRoot) });
   if (scanned.ok && scanned.capture) {
@@ -798,7 +854,7 @@ async function inspectProject(root, metadata) {
   }
   const javascript = await scanJavascriptProject(safeRoot);
   if (javascript) {
-    if (path.resolve(safeRoot) === path.resolve(app.getAppPath())) {
+    if (path.resolve(safeRoot) === path.resolve(app.getAppPath()) || await isCrankSourceRoot(safeRoot)) {
       const registered = await readRegistry();
       const available = [];
       for (const entry of registered) {
@@ -2053,6 +2109,39 @@ function registerIpc() {
    * connection is set up or remembered: unlike the Figma bridge there is
    * nothing to pair, so the whole export is this one call.
    */
+  /**
+   * The scan as SVG on the clipboard, for pasting straight into Figma.
+   *
+   * Beside the plugin rather than instead of it. The plugin builds real Figma
+   * nodes and remembers which frame a screen is, so a second scan updates it;
+   * a paste is new layers every time. What a paste gives is a file that is
+   * already open and nothing to install.
+   */
+  /**
+   * Looks again at what a folder holds, without scanning any of it.
+   *
+   * The rescan on a project row captures that project, which takes minutes.
+   * The one on a folder answers a different question — what is in here now —
+   * and adding a package should not mean sitting through every project in the
+   * repository being captured again.
+   */
+  ipcMain.handle("inventory:refresh-folder", async (_event, root) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const found = await rememberProjectsInside(safeRoot);
+    return { found: found.length, targets: await inventoryRegistry().grouped() };
+  });
+
+  ipcMain.handle("inventory:copy-for-figma", async (_event, inventory, options) => {
+    const asked = paperCopySchema.parse(options ?? {});
+    const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
+    const drawing = await renderFigmaSvg(parsed, { pageId: asked.pageId ?? null });
+    if (!drawing.ok) return { ok: false, message: drawing.message, missing: drawing.missing };
+    // Figma reads the text flavour; the html one is there because a paste
+    // handler may prefer it, and the markup is its own honest plain text.
+    clipboard.write({ text: drawing.svg, html: drawing.svg });
+    return { ok: true, screens: drawing.screens, missing: drawing.missing, dropped: drawing.dropped };
+  });
+
   ipcMain.handle("inventory:copy-for-paper", async (_event, inventory, options) => {
     const asked = paperCopySchema.parse(options ?? {});
     const parsed = await internalise(handoffInventorySchema.parse(inventory), inventoryRegistry().assets);
@@ -2762,8 +2851,14 @@ function registerIpc() {
     await shell.openExternal(`codex://threads/${safeThreadId}`);
   });
 
+  ipcMain.handle("codex:open-flow-change", async (_event, root, prompt) => {
+    const safeRoot = projectRootSchema.parse(root);
+    const safePrompt = z.string().min(1).max(100000).parse(prompt);
+    await shell.openExternal(buildCodexNewThreadUrl({ root: safeRoot, prompt: safePrompt }));
+  });
+
   ipcMain.handle("clipboard:write", (_event, value) => {
-    clipboard.writeText(z.string().max(2048).parse(value));
+    clipboard.writeText(z.string().max(100000).parse(value));
   });
 
   /**
@@ -2854,6 +2949,22 @@ function createMcpOperations() {
   return {
     listProjects: async () => (await inventoryRegistry().grouped()).map(withoutIcon),
     getInventory: (id) => inventoryRegistry().loadInventory(safeInventoryId(id)),
+    openFlow: async () => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (window) {
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+        window.webContents.send("inventory:show-flow");
+        return { opened: true, mode: "focused" };
+      }
+
+      // A standalone MCP process already owns the capture and Figma bridges.
+      // Opening its own sandboxed renderer keeps one inventory owner instead
+      // of starting a second Crank process that would compete for those ports.
+      createWindow({ openFlow: true });
+      return { opened: true, mode: "launched" };
+    },
     async getPage(id, pageId) {
       const inventory = await inventoryRegistry().loadInventory(safeInventoryId(id));
       return inventory?.ok ? inventory.pages.find((page) => page.id === pageId) ?? null : null;
@@ -2865,6 +2976,39 @@ function createMcpOperations() {
       return reference.startsWith("crank-asset://")
         ? inventoryRegistry().assets.dataUrl(reference)
         : reference;
+    },
+    async getPageDocument(id, pageId) {
+      const inventory = await inventoryRegistry().loadInventory(safeInventoryId(id));
+      const page = inventory?.ok ? inventory.pages.find((candidate) => candidate.id === pageId) : null;
+      if (!page) return null;
+      // The desktop detail view draws this same captured layer tree. Resolve
+      // asset-store references before it crosses MCP because crank-asset:// is
+      // intentionally private to Electron and cannot load in a Codex sandbox.
+      if (page.layerTree?.tree) {
+        const layerTree = await internalise(page.layerTree, inventoryRegistry().assets);
+        const reference = page.thumbnail?.dataUrl;
+        const dataUrl = reference?.startsWith("crank-asset://")
+          ? await inventoryRegistry().assets.dataUrl(reference)
+          : reference;
+        return {
+          kind: "layers",
+          width: layerTree.width,
+          height: layerTree.height,
+          layerTree,
+          ...(dataUrl ? { dataUrl } : {})
+        };
+      }
+      const reference = page.thumbnail?.dataUrl;
+      if (!reference) return null;
+      const dataUrl = reference.startsWith("crank-asset://")
+        ? await inventoryRegistry().assets.dataUrl(reference)
+        : reference;
+      return dataUrl ? {
+        kind: "image",
+        width: page.thumbnail.width,
+        height: page.thumbnail.height,
+        dataUrl
+      } : null;
     },
     scanProject: (root, workspaceRoot, progress) => scanInventoryFolder(root, workspaceRoot, progressOptions(progress)),
     scanUrl: (url, seeds, progress) => scanInventoryUrl(url, seeds, progressOptions(progress)),
@@ -2882,11 +3026,38 @@ function createMcpOperations() {
     getFigmaStatus(pairingCode) {
       if (!figmaBridge || !figmaBridgeRunning) throw new Error("The local Figma bridge is not running.");
       return figmaBridge.getStatus(pairingCodeSchema.parse(pairingCode));
+    },
+    async copyForPaper(id, pageIds, title) {
+      const safeId = safeInventoryId(id);
+      const inventory = await inventoryRegistry().loadInventory(safeId);
+      if (!inventory?.ok) throw new Error("No stored inventory has that ID. Scan the project first.");
+      const wanted = pageIds ? new Set(z.array(z.string().min(1).max(200)).max(120).parse(pageIds)) : null;
+      const pages = wanted ? inventory.pages.filter((page) => wanted.has(page.id)) : inventory.pages;
+      if (pages.length === 0) throw new Error("None of the requested pages are present in this inventory.");
+      if (wanted && pages.length !== wanted.size) throw new Error("At least one requested page is no longer present in this inventory.");
+      const parsed = await internalise(handoffInventorySchema.parse({ ...inventory, pages }), inventoryRegistry().assets);
+      const document = await renderPaperDocument(parsed, {
+        title: z.string().min(1).max(160).parse(title || "Crank")
+      });
+      if (!document.ok) return document;
+      clipboard.write({ html: document.html, text: document.html });
+      return { ok: true, screens: document.screens, missing: document.missing, dropped: document.dropped };
+    },
+    async pushToPaper(id, pageIds) {
+      const safeId = safeInventoryId(id);
+      const inventory = await inventoryRegistry().loadInventory(safeId);
+      if (!inventory?.ok) throw new Error("No stored inventory has that ID. Scan the project first.");
+      const wanted = pageIds ? new Set(z.array(z.string().min(1).max(200)).max(120).parse(pageIds)) : null;
+      const pages = wanted ? inventory.pages.filter((page) => wanted.has(page.id)) : inventory.pages;
+      if (pages.length === 0) throw new Error("None of the requested pages are present in this inventory.");
+      if (wanted && pages.length !== wanted.size) throw new Error("At least one requested page is no longer present in this inventory.");
+      const parsed = await internalise(handoffInventorySchema.parse({ ...inventory, pages }), inventoryRegistry().assets);
+      return pushToPaper(parsed);
     }
   };
 }
 
-function createWindow() {
+function createWindow({ openFlow = process.argv.includes("--open-flow") } = {}) {
   const window = new BrowserWindow({
     width: 1220,
     height: 790,
@@ -2922,10 +3093,15 @@ function createWindow() {
   });
 
   if (process.env.UI_SYNC_DEV_SERVER_URL) {
-    window.loadURL(process.env.UI_SYNC_DEV_SERVER_URL);
+    const target = new URL(process.env.UI_SYNC_DEV_SERVER_URL);
+    if (openFlow) target.searchParams.set("view", "flow");
+    window.loadURL(target.toString());
   } else {
-    window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    window.loadFile(path.join(__dirname, "..", "dist", "index.html"), openFlow
+      ? { query: { view: "flow" } }
+      : undefined);
   }
+  return window;
 }
 
 // Pictures live on disk under the hash of their bytes; the window asks for
@@ -2957,8 +3133,14 @@ app.whenReady().then(async () => {
     app.getPath("userData")
   );
   if (carried.carried.length > 0) runtimeLog("Carried forward from UI Sync:", carried.carried.join(", "));
-  if (!mcpMode && process.platform === "darwin") app.dock.setIcon(appIconPath);
-  const mcpTokenPath = path.join(app.getPath("userData"), "mcp-rpc-token");
+  if (mcpRuntimeMode && process.platform === "darwin") app.dock.hide();
+  else if (!mcpMode && process.platform === "darwin") app.dock.setIcon(appIconPath);
+  const mcpTokenPath = mcpRuntimeMode && process.env.CRANK_MCP_RPC_TOKEN_PATH
+    ? z.string().min(1).max(4096).refine(path.isAbsolute).parse(process.env.CRANK_MCP_RPC_TOKEN_PATH)
+    : path.join(app.getPath("userData"), "mcp-rpc-token");
+  const mcpRuntimePort = mcpRuntimeMode
+    ? z.coerce.number().int().min(1).max(65535).parse(process.env.CRANK_MCP_RPC_PORT)
+    : undefined;
 
   // When the window is already running it owns the browser sessions, registry,
   // and bridge ports. The stdio process becomes a thin authenticated proxy to
@@ -3015,13 +3197,18 @@ app.whenReady().then(async () => {
     process.stdin.on("end", () => app.quit());
     return;
   }
-  mcpRpcServer = createMcpRpcServer({ operations: createMcpOperations(), tokenPath: mcpTokenPath });
+  mcpRpcServer = createMcpRpcServer({
+    operations: createMcpOperations(),
+    tokenPath: mcpTokenPath,
+    ...(mcpRuntimePort ? { port: mcpRuntimePort } : {})
+  });
   try {
     await mcpRpcServer.start();
   } catch (error) {
     console.error("Could not start the local MCP relay", error);
     mcpRpcServer = null;
   }
+  if (mcpRuntimeMode) return;
   registerIpc();
   createWindow();
   app.on("activate", () => {

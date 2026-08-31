@@ -18,8 +18,9 @@ const { z } = require("zod");
 const DEFAULT_PORT = 38459;
 const TOKEN = /^[a-f0-9]{64}$/;
 const METHODS = new Set([
-  "listProjects", "getInventory", "getPage", "getPageImage",
-  "scanProject", "scanUrl", "scanAttached", "sendToFigma", "getFigmaStatus"
+  "listProjects", "getInventory", "getPage", "getPageImage", "getPageDocument", "openFlow",
+  "scanProject", "scanUrl", "scanAttached", "sendToFigma", "getFigmaStatus",
+  "copyForPaper", "pushToPaper"
 ]);
 const requestSchema = z.object({
   method: z.string().refine((value) => METHODS.has(value)),
@@ -128,11 +129,15 @@ async function createMcpRpcClient({ tokenPath, port = DEFAULT_PORT, host = "127.
     getInventory: (id) => call("getInventory", [id]),
     getPage: (id, pageId) => call("getPage", [id, pageId]),
     getPageImage: (id, pageId) => call("getPageImage", [id, pageId]),
+    getPageDocument: (id, pageId) => call("getPageDocument", [id, pageId]),
+    openFlow: () => call("openFlow", []),
     scanProject: (root, workspaceRoot) => call("scanProject", [root, workspaceRoot]),
     scanUrl: (url, seeds) => call("scanUrl", [url, seeds]),
     scanAttached: (debugPort) => call("scanAttached", [debugPort]),
     sendToFigma: (id, figmaUrl, pageIds) => call("sendToFigma", [id, figmaUrl, pageIds]),
-    getFigmaStatus: (pairingCode) => call("getFigmaStatus", [pairingCode])
+    getFigmaStatus: (pairingCode) => call("getFigmaStatus", [pairingCode]),
+    copyForPaper: (id, pageIds, title) => call("copyForPaper", [id, pageIds, title]),
+    pushToPaper: (id, pageIds) => call("pushToPaper", [id, pageIds])
   };
 }
 

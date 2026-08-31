@@ -1,0 +1,31 @@
+{
+  "name": "crank",
+  "version": "0.4.0",
+  "description": "Use a repo-bound visual canvas in Codex, with selections and flow edits linked back to source code.",
+  "author": {
+    "name": "Crank",
+    "url": "https://github.com/irrwood/Crank"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Crank",
+    "shortDescription": "A source-linked visual workspace for Codex.",
+    "longDescription": "Open a repository-bound infinite canvas directly in Codex. Inspect real captured screens, select source-linked UI nodes, edit screen flow intent, and hand a bounded change manifest back to Codex. The plugin includes its own windowless capture runtime; Crank.app is not required.",
+    "developerName": "Crank",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "brandColor": "#326BEA",
+    "composerIcon": "./assets/app-icon.png",
+    "logo": "./assets/app-icon.png",
+    "defaultPrompt": [
+      "Open the Crank canvas for this repository without rescanning.",
+      "打开当前仓库的 Crank Canvas，不要重新扫描。",
+      "Sync this repository from code and reopen its Crank canvas."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

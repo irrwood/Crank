@@ -71,10 +71,11 @@ const [built] = await packager({
     // `/swift-sdk` holds the capture agent that is appended into a copy of a
     // SwiftUI project at scan time. Left out, a packaged build could open an
     // iOS project and never read a display list from it.
-    const shipped = ["/package.json", "/electron", "/dist", "/assets", "/figma-plugin", "/swift-sdk", "/swift-tools", "/shared", "/node_modules"];
+    const shipped = ["/package.json", "/electron", "/dist", "/codex/dist", "/assets", "/figma-plugin", "/swift-sdk", "/swift-tools", "/shared", "/node_modules"];
     if (/\.test\.cjs$/.test(file)) return true;
     // Compiled above and shipped from swift-tools/prebuilt instead.
     if (/^\/swift-tools\/.*\.swift$/.test(file)) return true;
+    if (file === "/codex") return false;
     return !shipped.some((entry) => file === entry || file.startsWith(`${entry}/`));
   },
   appBundleId: "com.crank.desktop",

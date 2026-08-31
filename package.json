@@ -10,11 +10,15 @@
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && UI_SYNC_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "mcp": "electron . --mcp",
     "typecheck": "tsc --noEmit",
+    "typecheck:codex": "tsc --project codex/tsconfig.json --noEmit",
     "typecheck:plugin": "tsc --allowJs --checkJs --noEmit --strict false --skipLibCheck --target ES2022 --lib ES2022,DOM --types @figma/plugin-typings figma-plugin/code.js",
     "test": "node --test electron/*.test.cjs",
-    "build": "npm run typecheck && npm run typecheck:plugin && vite build",
+    "build:codex": "npm run typecheck:codex && node scripts/build-codex-widget.mjs",
+    "deploy:canvas": "npm run build:codex && wrangler pages deploy codex/network-dist --project-name crank-canvas --branch main",
+    "build:crank-plugin": "npm run build:codex && node scripts/build-crank-plugin.mjs",
+    "build": "npm run typecheck && npm run typecheck:plugin && vite build && npm run build:codex && node scripts/build-crank-plugin.mjs",
     "start": "npm run build && electron .",
-    "package": "vite build && node scripts/package.mjs"
+    "package": "npm run build && node scripts/package.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",

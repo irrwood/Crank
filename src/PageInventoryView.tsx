@@ -434,11 +434,12 @@ function LanguageBubble() {
   );
 }
 
-function Sidebar({ entries, activeId, busyIds, figmaConnected, onOpen, onRescan, onForget, onAdd, onDropFolder, onOpenPlugin }: {
+function Sidebar({ entries, activeId, busyIds, figmaConnected, onOpen, onRescan, onRefreshFolder, onForget, onAdd, onDropFolder, onOpenPlugin }: {
   entries: Entry[]; activeId: string | null; busyIds: string[];
   figmaConnected: boolean | null;
   onOpen: (target: InventoryTarget) => void;
   onRescan: (target: InventoryTarget) => void;
+  onRefreshFolder: (root: string) => void;
   onForget: (target: InventoryTarget) => void;
   onAdd: () => void;
   onDropFolder: (event: React.DragEvent) => void;
@@ -485,15 +486,32 @@ function Sidebar({ entries, activeId, busyIds, figmaConnected, onOpen, onRescan,
         {entries.length === 0 && !over && <p className="target-empty">{t("sidebar.empty")}</p>}
         {entries.map((entry) => (isGroup(entry) ? (
           <div className="target-group" key={entry.id}>
-            <button
-              aria-expanded={!collapsed[entry.id]}
-              className="target-group-head"
-              onClick={() => setCollapsed((current) => ({ ...current, [entry.id]: !current[entry.id] }))}
-              type="button"
-            >
-              <ChevronRight className={collapsed[entry.id] ? "" : "is-open"} size={13} />
-              <span className="target-group-name">{entry.name}</span>
-            </button>
+            <div className="target-group-head-row">
+              <button
+                aria-expanded={!collapsed[entry.id]}
+                className="target-group-head"
+                onClick={() => setCollapsed((current) => ({ ...current, [entry.id]: !current[entry.id] }))}
+                type="button"
+              >
+                <ChevronRight className={collapsed[entry.id] ? "" : "is-open"} size={13} />
+                <span className="target-group-name">{entry.name}</span>
+              </button>
+              {/* A row captures its own project; this only looks at what the
+                  folder holds now. Adding a package to a repository should show
+                  up straight away, not after every project in it has been
+                  captured again. */}
+              <span
+                className="icon-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRefreshFolder(entry.target);
+                }}
+                role="button"
+                title={t("inventory.actions.refreshFolder")}
+              >
+                <RefreshCw size={13} />
+              </span>
+            </div>
             {!collapsed[entry.id] && entry.root && (
               <TargetRow
                 active={entry.root.id === activeId} busy={busyIds.includes(entry.root.id)} nested
@@ -542,9 +560,10 @@ function Sidebar({ entries, activeId, busyIds, figmaConnected, onOpen, onRescan,
   );
 }
 
-function ProjectMore({ ignoredCount, ignoredOpen, onCopyForPaper, onExport, onPushToPaper, onToggleIgnored, showsCapturePipeline }: {
+function ProjectMore({ ignoredCount, ignoredOpen, onCopyForFigma, onCopyForPaper, onExport, onPushToPaper, onToggleIgnored, showsCapturePipeline }: {
   ignoredCount: number;
   ignoredOpen: boolean;
+  onCopyForFigma: () => void;
   onCopyForPaper: () => void;
   onExport: () => void;
   onPushToPaper: () => void;
@@ -614,6 +633,9 @@ function ProjectMore({ ignoredCount, ignoredOpen, onCopyForPaper, onExport, onPu
           </button>
           <button onClick={() => { setOpen(false); onPushToPaper(); }} role="menuitem" type="button">
             <PenLine size={14} /> {t("inventory.pushToPaper")}
+          </button>
+          <button onClick={() => { setOpen(false); onCopyForFigma(); }} role="menuitem" type="button">
+            <ClipboardCopy size={14} /> {t("inventory.copyForFigma")}
           </button>
           <button onClick={() => { setOpen(false); onCopyForPaper(); }} role="menuitem" type="button">
             <ClipboardCopy size={14} /> {t("inventory.copyForPaper")}
@@ -917,7 +939,9 @@ export default function PageInventoryView() {
   const filledFor = useRef<string | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [view, setView] = useState<"gallery" | "flow">("gallery");
+  const [view, setView] = useState<"gallery" | "flow">(() => (
+    new URLSearchParams(window.location.search).get("view") === "flow" ? "flow" : "gallery"
+  ));
   const [figmaOpen, setFigmaOpen] = useState(false);
   const [menu, setMenu] = useState<{ page: DiscoveredPage; at: { x: number; y: number } } | null>(null);
   const [busyPage, setBusyPage] = useState<string | null>(null);
@@ -948,6 +972,7 @@ export default function PageInventoryView() {
   // Read once at startup, and again when a sync completes: a sync is the other
   // moment "not connected" becomes "connected".
   useEffect(() => { void readConnection(); }, []);
+  useEffect(() => window.uiSync?.onShowFlow?.(() => setView("flow")), []);
   useEffect(() => {
     if (figmaStatus.state === "complete") void readConnection();
   }, [figmaStatus.state]);
@@ -1433,6 +1458,28 @@ export default function PageInventoryView() {
     else { setAddress(target.target); void scan(target.target); }
   };
 
+  /**
+   * Looks again at what a folder holds, without scanning any of it.
+   *
+   * A project row's rescan captures that project, which takes minutes. A
+   * folder's asks a different question — what is in here now — so adding a
+   * package to a repository shows up straight away instead of after every
+   * project in it has been captured again.
+   */
+  const refreshFolder = async (root: string) => {
+    if (!window.uiSync?.refreshFolder) {
+      notify("error", t("toast.requiresRestart"));
+      return;
+    }
+    try {
+      const outcome = await window.uiSync.refreshFolder(root);
+      if (outcome?.targets) setEntries(outcome.targets as Entry[]);
+      notify("done", t("toast.folderRefreshed", { count: outcome?.found ?? 0 }));
+    } catch (cause) {
+      notify("error", cause instanceof Error ? cause.message : t("toast.scanFailedGeneric"));
+    }
+  };
+
   const forget = async (target: InventoryTarget) => {
     const next = await window.uiSync?.forgetInventoryTarget?.(target.id);
     if (next) setEntries(next);
@@ -1478,6 +1525,30 @@ export default function PageInventoryView() {
       else notify("done", t("toast.copiedForPaper", { count: outcome.screens?.length ?? 0 }));
     } catch (cause) {
       notify("error", cause instanceof Error ? cause.message : t("toast.paperFailed"));
+    }
+  };
+
+  /**
+   * The scan as SVG on the clipboard, to paste into whichever Figma file is
+   * open. Beside **Send to Figma** rather than instead of it: the plugin builds
+   * real Figma nodes and updates the same frames on a second scan, where a
+   * paste is new layers every time.
+   */
+  const copyForFigma = async (pageId?: string) => {
+    if (!result?.ok) return;
+    if (!window.uiSync?.copyForFigma) {
+      notify("error", t("toast.requiresRestart"));
+      return;
+    }
+    try {
+      const outcome = await window.uiSync.copyForFigma(
+        { filtered: result.filtered, origin: result.origin, pages: result.pages },
+        { pageId: pageId ?? null }
+      );
+      if (!outcome.ok) notify("error", outcome.message ?? t("toast.figmaCopyFailed"));
+      else notify("done", t("toast.copiedForFigma", { count: outcome.screens?.length ?? 0 }));
+    } catch (cause) {
+      notify("error", cause instanceof Error ? cause.message : t("toast.figmaCopyFailed"));
     }
   };
 
@@ -1607,6 +1678,7 @@ export default function PageInventoryView() {
         onOpen={(target) => void openSaved(target)}
         onOpenPlugin={() => { void readConnection(); setPluginOpen(true); }}
         onRescan={rescan}
+        onRefreshFolder={(root) => void refreshFolder(root)}
       />
 
       {pluginOpen && connection && (
@@ -1855,7 +1927,15 @@ export default function PageInventoryView() {
                 <button
                   aria-label={t("inventory.actions.rescan")}
                   className="secondary-button"
-                  onClick={() => { if (source) source.startsWith("http") ? void scan(source) : void scanFolder(source); }}
+                  // The project, not the address it happened to be served at.
+                  // A folder scan puts the dev server's URL in `origin`, so
+                  // rescanning by origin re-crawled that one server and never
+                  // looked at the folder again — a project added or removed
+                  // inside it could not be found by pressing Rescan.
+                  onClick={() => {
+                    if (scannedFolder) void scanFolder(scannedFolder);
+                    else if (source) void scan(source);
+                  }}
                   title={t("inventory.actions.rescan")}
                   type="button"
                 >
@@ -1881,6 +1961,7 @@ export default function PageInventoryView() {
                 <ProjectMore
                   ignoredCount={leftOut}
                   ignoredOpen={showFiltered}
+                  onCopyForFigma={() => void copyForFigma()}
                   onCopyForPaper={() => void copyForPaper()}
                   onExport={() => void exportPage()}
                   onPushToPaper={() => void drawInPaper()}
@@ -1965,7 +2046,12 @@ export default function PageInventoryView() {
           )}
 
           {view === "flow" ? (
-            <ScreenFlow onOpen={setFocused} pages={pages} />
+            <ScreenFlow
+              onOpen={setFocused}
+              pages={pages}
+              projectName={source?.split("/").filter(Boolean).pop() ?? result.origin}
+              projectRoot={result.source?.kind === "folder" ? result.source.target : null}
+            />
           ) : (
             <div className={`inventory-grid${pages.length > 0 && pages.every(isPhonePortrait) ? " is-portrait" : ""}`}>
               {pages.map((page, index) => (
