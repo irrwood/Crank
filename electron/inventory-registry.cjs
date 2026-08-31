@@ -70,7 +70,12 @@ function groupTargets(targets) {
       name: nameFor("folder", parent),
       target: parent,
       root: root ?? null,
-      children: members.sort((a, b) => a.name.localeCompare(b.name))
+      // Never the workspace itself: a folder scanned as its own project is
+      // recorded as its own parent, and counting it among its children put the
+      // same project in the sidebar twice — once as the group's row and once
+      // beneath it, identical, and neither of them the other project people
+      // were looking for.
+      children: members.filter((member) => member.id !== root?.id).sort((a, b) => a.name.localeCompare(b.name))
     });
   }
 
@@ -162,7 +167,15 @@ function createInventoryRegistry(directory) {
     list: read,
     grouped: async () => groupTargets(await read()),
 
-    async remember(kind, target, { pageCount = null, scannedAt = null, parent = null, icon = null, figmaUrl = null, platform = null } = {}) {
+    /**
+     * `platform` defaults to undefined rather than null on purpose: a scan that
+     * found no platform has to be able to say so. It used to default to null
+     * and be applied with `??`, which cannot tell "the caller said nothing"
+     * from "the caller said none" — so a folder once mistaken for an Xcode
+     * project stayed marked `swiftui` for good, and kept a phone icon in the
+     * sidebar long after it had been rescanned as the web app it is.
+     */
+    async remember(kind, target, { pageCount = null, scannedAt = null, parent = null, icon = null, figmaUrl = null, platform = undefined } = {}) {
       const targets = await read();
       const id = targetId(kind, target);
       const existing = targets.find((entry) => entry.id === id);
@@ -177,8 +190,10 @@ function createInventoryRegistry(directory) {
         // answered.
         existing.figmaUrl = figmaUrl ?? existing.figmaUrl ?? null;
         // What kind of application this turned out to be, so the row can say so
-        // before its scan is loaded.
-        existing.platform = platform ?? existing.platform ?? null;
+        // before its scan is loaded. Replaced by whatever the last scan found,
+        // including nothing — a project does not keep being iOS because it once
+        // looked like it.
+        existing.platform = platform === undefined ? (existing.platform ?? null) : platform;
       } else {
         targets.push({
           id, kind, target,
@@ -189,7 +204,7 @@ function createInventoryRegistry(directory) {
           parent,
           icon,
           figmaUrl,
-          platform
+          platform: platform ?? null
         });
       }
       await write(targets);

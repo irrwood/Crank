@@ -402,3 +402,58 @@ test("dropping a page undoes having kept it", async () => {
     assert.deepEqual(await registry.dropped(id), ["page-abc123"]);
   });
 });
+
+test("a folder scanned as its own project appears once, not twice", () => {
+  // A folder recorded as its own parent is the group's row. Counting it among
+  // its own children put the same project in the sidebar twice — identical
+  // rows, neither of them the other project someone was looking for.
+  const workspace = {
+    id: "w", kind: "folder", name: "股票分析",
+    target: "/repo", parent: "/repo"
+  };
+  const client = {
+    id: "c", kind: "folder", name: "CatfolioIOS",
+    target: "/repo/CatfolioIOS", parent: "/repo"
+  };
+  const [group] = groupTargets([workspace, client]);
+
+  assert.equal(group.kind, "group");
+  assert.equal(group.root.id, "w");
+  assert.deepEqual(group.children.map((child) => child.id), ["c"]);
+});
+
+test("a workspace nobody scanned has no row of its own", () => {
+  const client = { id: "c", kind: "folder", name: "Client", target: "/repo/Client", parent: "/repo" };
+  const [group] = groupTargets([client]);
+  assert.equal(group.root, null);
+  assert.deepEqual(group.children.map((child) => child.id), ["c"]);
+});
+
+test("a rescan that finds no platform clears the one recorded before", async () => {
+  // A folder once mistaken for an Xcode project kept a phone icon in the
+  // sidebar for good, because "the caller said nothing" and "the caller said
+  // none" were the same value.
+  const directory = await mkdtemp(path.join(os.tmpdir(), "crank-registry-platform-"));
+  const registry = createInventoryRegistry(directory);
+
+  await registry.remember("folder", "/repo", { platform: "swiftui" });
+  assert.equal((await registry.list()).find((entry) => entry.target === "/repo").platform, "swiftui");
+
+  await registry.remember("folder", "/repo", { platform: null, pageCount: 13 });
+  const after = (await registry.list()).find((entry) => entry.target === "/repo");
+  assert.equal(after.platform, null);
+  assert.equal(after.pageCount, 13);
+});
+
+test("remembering without mentioning the platform leaves it alone", async () => {
+  // Scanning records the platform at the end; the call at the start of a scan
+  // says nothing about it and must not wipe what is there.
+  const directory = await mkdtemp(path.join(os.tmpdir(), "crank-registry-platform-keep-"));
+  const registry = createInventoryRegistry(directory);
+
+  await registry.remember("folder", "/repo", { platform: "swiftui" });
+  await registry.remember("folder", "/repo", { parent: "/workspace" });
+  const after = (await registry.list()).find((entry) => entry.target === "/repo");
+  assert.equal(after.platform, "swiftui");
+  assert.equal(after.parent, "/workspace");
+});
