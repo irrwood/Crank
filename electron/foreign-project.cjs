@@ -22,6 +22,23 @@ const markers = [
   { file: "build.gradle", kind: "Java" }
 ];
 
+/**
+ * Files whose presence means a folder is a project in its own right.
+ *
+ * Used to decide whether a folder can be claimed by something inside it. A
+ * repository with a Dockerfile and `requirements.txt` at the top is a Python
+ * app that happens to keep an iOS client in a subfolder; claiming the whole
+ * thing as that Xcode project hides the app the folder is actually for. The
+ * rule used to be written as "has a `package.json`", which is the same idea
+ * with only one language in it.
+ */
+const PROJECT_MANIFESTS = [
+  "package.json",
+  "Dockerfile",
+  "Procfile",
+  ...markers.map((marker) => marker.file)
+];
+
 const serverCommandPattern = /\b(?:uvicorn|gunicorn|hypercorn|daphne|flask run|rails server|rails s|php -S|python -m http\.server|python manage\.py runserver|go run|cargo run|bundle exec|npm|pnpm|yarn|air|mix phx\.server)\b/i;
 
 function readPort(text) {
@@ -126,4 +143,4 @@ async function describeForeignProject(root) {
   return { kind: kind ?? "Container", commands, port };
 }
 
-module.exports = { describeForeignProject, parseDockerCommand, readPort, readmeCommands };
+module.exports = { PROJECT_MANIFESTS, describeForeignProject, parseDockerCommand, readPort, readmeCommands };

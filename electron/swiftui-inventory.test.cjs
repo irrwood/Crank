@@ -273,3 +273,36 @@ test("the exported path still needs its converter", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.reason, "poppler");
 });
+
+/** A folder holding an Xcode project one level down, plus whatever `top` names. */
+async function repositoryWith(top) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "crank-claim-"));
+  await mkdir(path.join(root, "MobileClient", "MobileClient.xcodeproj"), { recursive: true });
+  await writeFile(path.join(root, "MobileClient", "MobileClient.xcodeproj", "project.pbxproj"), "// fixture");
+  for (const file of top) await writeFile(path.join(root, file), "fixture");
+  return root;
+}
+
+test("a folder with a project in it is claimed by that project", async () => {
+  const root = await repositoryWith([]);
+  assert.equal(await resolveXcodeProjectRoot(root), path.join(root, "MobileClient"));
+});
+
+test("a repository that is a project itself is not claimed by what it contains", async () => {
+  // Each of these means "the app this folder is for lives here", so the iOS
+  // client in a subfolder must not stand in for the whole repository.
+  for (const manifest of ["package.json", "Dockerfile", "requirements.txt", "pyproject.toml", "Gemfile", "go.mod", "Procfile"]) {
+    const root = await repositoryWith([manifest]);
+    assert.equal(await resolveXcodeProjectRoot(root), null, `${manifest} should keep the repository its own`);
+  }
+});
+
+test("a Python repository with an iOS client keeps both findable", async () => {
+  const root = await repositoryWith(["Dockerfile", "requirements.txt"]);
+  assert.equal(await resolveXcodeProjectRoot(root), null);
+  // The client is still an Xcode project when asked about directly.
+  assert.equal(
+    await resolveXcodeProjectRoot(path.join(root, "MobileClient")),
+    path.join(root, "MobileClient")
+  );
+});

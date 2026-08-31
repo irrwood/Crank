@@ -4,6 +4,7 @@ const { runSwiftUiDesignBuild } = require("./swiftui-design-runtime.cjs");
 const { resolvePdfToCairo } = require("./swift-pdf-vector.cjs");
 const { readXcodeAppIcon } = require("./xcode-app-icon.cjs");
 const { usesVectorPdf } = require("./capture-pipeline.cjs");
+const { PROJECT_MANIFESTS } = require("./foreign-project.cjs");
 
 /**
  * An Xcode project cannot be served and crawled: it has no address, and its
@@ -55,9 +56,12 @@ async function resolveXcodeProjectRoot(root) {
     return null;
   }
   // A repository with the app in a subfolder — but never one that is a project
-  // in its own right, which is what a manifest at the top means.
+  // in its own right, which is what a manifest at the top means. Any manifest:
+  // testing only for `package.json` let a Python repository with a Dockerfile
+  // at the top be claimed whole by the iOS client in one of its subfolders, and
+  // the app the repository is actually for then had nowhere to appear.
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  if (entries.some((entry) => entry.isFile() && entry.name === "package.json")) return null;
+  if (entries.some((entry) => entry.isFile() && PROJECT_MANIFESTS.includes(entry.name))) return null;
   const candidates = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name.endsWith(".xcodeproj")) continue;
