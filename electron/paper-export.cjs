@@ -46,8 +46,15 @@ function side(value) {
  * its own, because Paper makes the artboard itself. Both draw from here, so
  * neither can quietly start showing something the other does not.
  */
-async function paperScreens(inventory, { pageId = null } = {}) {
-  const paint = await import("../shared/layer-paint.js");
+/**
+ * Which pages of a scan can be pasted, and what to say about the rest.
+ *
+ * Separate from drawing them because two tools take the same screens in
+ * different shapes — Paper takes HTML, Figma takes SVG — and which pages are
+ * usable, and why the others are not, is the same question either way. Written
+ * once so the two exports cannot disagree about what a scan contains.
+ */
+async function usableScreens(inventory, { pageId = null, tool = "Paper" } = {}) {
   const all = inventory?.pages ?? [];
   const asked = pageId === null || pageId === undefined ? all : all.filter((page) => page?.id === pageId);
   if (asked.length === 0) {
@@ -71,26 +78,35 @@ async function paperScreens(inventory, { pageId = null } = {}) {
         : " Nothing was captured — rescan and the failure will be named.";
     return {
       ok: false,
-      message: `No page in this scan has captured layers for Paper.${reason}`,
+      message: `No page in this scan has captured layers for ${tool}.${reason}`,
       missing,
       missingReasons
     };
   }
 
-  const screens = usable.slice(0, MAX_SCREENS).map((page) => ({
-    id: String(page.id),
-    name: String(page.name || "Screen"),
-    width: side(page.layerTree.width),
-    height: side(page.layerTree.height),
-    html: drawLayer(page.layerTree.tree, paint)
-  }));
-
   return {
     ok: true,
-    screens,
+    pages: usable.slice(0, MAX_SCREENS),
     missing,
     missingReasons,
     dropped: usable.slice(MAX_SCREENS).map((page) => page.name)
+  };
+}
+
+async function paperScreens(inventory, { pageId = null } = {}) {
+  const found = await usableScreens(inventory, { pageId, tool: "Paper" });
+  if (!found.ok) return found;
+  const paint = await import("../shared/layer-paint.js");
+
+  return {
+    ...found,
+    screens: found.pages.map((page) => ({
+      id: String(page.id),
+      name: String(page.name || "Screen"),
+      width: side(page.layerTree.width),
+      height: side(page.layerTree.height),
+      html: drawLayer(page.layerTree.tree, paint)
+    }))
   };
 }
 
@@ -141,4 +157,4 @@ async function renderPaperDocument(inventory, { pageId = null, title = "Crank" }
   return { ok: true, bytes, dropped, html, missing, missingReasons, screens: screens.map((screen) => screen.name) };
 }
 
-module.exports = { GAP, MAX_BYTES, MAX_SCREENS, paperScreens, renderPaperDocument };
+module.exports = { GAP, MAX_BYTES, MAX_SCREENS, paperScreens, renderPaperDocument, side, usableScreens };
